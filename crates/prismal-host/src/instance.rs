@@ -1078,11 +1078,13 @@ fn view_state(v: &Json) -> ViewState {
     ViewState { id: id.into(), name: name.into(), kind, user: None, size: None }
 }
 
-/// The extent `[xmin, ymin, xmax, ymax]` of shapes in view coordinates, including the origin.
+/// The extent `[xmin, ymin, xmax, ymax]` of shapes in view coordinates, including the origin
+/// and the anchors of texts placed in the view (D-080).
 fn extent<'a>(shapes: impl Iterator<Item = &'a Shape>) -> [f64; 4] {
     fn walk(s: &Shape, add: &mut impl FnMut(&[f64; 2])) {
         match s {
-            Shape::Point { at } => add(at),
+            // A text placed in the view is framed by its anchor; it runs on from there.
+            Shape::Point { at } | Shape::Note { at, .. } => add(at),
             Shape::Arrow { from, to } | Shape::Segment { from, to } => {
                 add(from);
                 add(to);

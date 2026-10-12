@@ -1467,3 +1467,21 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** `text::superscripts`, applied to the values of `CKind::Text`; guide chapters 7 and 8; `examples/pythagoras.md`, `examples/README.md`. Not yet: superscripts in labels and control values when content shows a power there.
 - **History:**
   - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-080: Findings from the objects example: event detection cost, texts in the framing
+
+- **Status:** Accepted
+- **Original position:** PROJECT-STATE (2026-10-12) listed a model of objects and relations as the third complete example. `examples/chain.md` (a chain of beads and links between two hooks; links snap past a strength; the learner hangs weights by clicking beads and pulls the hooks apart) was written, and its stills and video were inspected.
+- **Raised by:** writing `examples/chain.md`.
+- **Builds on:** RC-7.1 to RC-7.7, D-058, D-064, D-076.
+- **Question:** The example ran as written, and showed two problems and one gap in the guide. What does each need?
+  1. **A slow run.** A 10 s run of the chain took 2.8 s in a release build, too close to real time for a lab in a browser. Event detection samples each crossing event's guard at four instants of every step, and each sample interpolated the state and computed every derived value again: with a `snap` event per link, 32 full updates of the derived values per step, against 7 evaluations of the flows.
+  2. **Texts cut off.** A view is framed by the extent of its shapes, and texts placed in it (`text(..., at: P)`, D-076) were left out, so a text beyond the shapes was cut at the edge of the view.
+  3. **A long formula broken before an operator.** The working syntax continues a line that ends in an operator, but the guide did not say so, and a line starting with `+` gives `expected der, found +`.
+- **Options considered:** for 1, compute the state at each sample instant once per step and share it among the events (taken), or compute only the derived values each guard depends on (a dependency closure per event; more work, and the shared samples already remove the factor of the number of events); for 2, include a text's anchor in the extent (taken), or measure its width (a medium's fonts are not known to the engine); for 3, a mistake in guide chapter 13 (taken), or a parser message for a line that starts with an operator (worth doing in the syntax review).
+- **Accepted position:** the options taken above, under the owner's standing delegation of 2026-09-30. Sample states are computed lazily, in the order events ask for them, so a status raised at a sample is reported exactly as before; results are unchanged. A 10 s run of the chain now takes 1.5 s. A view's extent includes the anchors of its texts; a text runs on to the right of its anchor, inside the margin the renderers keep.
+- **Reason:** the first is a cost the language should not charge for repeating an event per member, the second is what an author placing a text expects, and the third documents an existing rule.
+- **Consequences:** `Runner::state_in_step`, `guard_in`; `extent` in `prismal-host`; guide chapter 13; `prismal-host/tests/text_and_titles.rs`; `examples/chain.md`, `examples/README.md`. Not yet: computing in each flow evaluation only the derived values the flows need (the chain computes its six presentation aggregates in every evaluation); text alignment at a point (texts start at their anchor, so a label left of a line is placed by hand); a parser message that names a line starting with an operator (syntax review).
+- **History:**
+  - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+

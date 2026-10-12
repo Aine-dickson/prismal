@@ -776,13 +776,17 @@ impl<'a> Engine<'a> {
             // Event detection on the dense output (RC-7.1 to RC-7.7).
             let mut found: Vec<(usize, f64)> = vec![];
             let mut new_refs = self.refs.clone();
+            // The state at each of the four sample instants, with its derived values, is
+            // computed once and shared by every event's guard.
+            let mut samples: [Option<Result<Vec<Value>, Status>>; 4] = Default::default();
             for ei in 0..cm.events.len() {
                 let Some(CTrigger::Crossing { dir, .. }) = &cm.events[ei].trigger else { continue };
                 let mut r = self.refs[ei];
                 let mut prev = self.t;
                 for k in 1..=4 {
                     let tk = if k == 4 { t1 } else { self.t + (t1 - self.t) * k as f64 / 4.0 };
-                    let g = self.guard_at(&step, &rhs.scratch, tk, ei).map_err(|s| self.diag(Category::Model, s.cause, None))?;
+                    let vals = samples[k - 1].get_or_insert_with(|| self.state_in_step(&step, &rhs.scratch, tk));
+                    let g = vals.as_ref().map_err(|s| s.clone()).and_then(|v| self.guard_in(v, tk, ei)).map_err(|s| self.diag(Category::Model, s.cause, None))?;
                     if let Some(s) = sign(g) {
                         match r {
                             Some(rs) if rs != s => {
@@ -851,12 +855,22 @@ impl<'a> Engine<'a> {
     }
 
     fn guard_at(&self, step: &Step, scratch: &[Value], t: f64, ei: usize) -> Result<f64, Status> {
+        self.guard_in(&self.state_in_step(step, scratch, t)?, t, ei)
+    }
+
+    /// The state at `t` inside a step, from its dense output, with its derived values.
+    fn state_in_step(&self, step: &Step, scratch: &[Value], t: f64) -> Result<Vec<Value>, Status> {
         let mut y = vec![0.0; self.cm.n_y()];
         step.eval(t, &mut y);
         let mut vals = scratch.to_vec();
         self.cm.load_y(&mut vals, &y);
         self.cm.update_derived(&mut vals, t, self.cfg.t0)?;
-        let c = Ctx { vals: &vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[] };
+        Ok(vals)
+    }
+
+    /// The guard of crossing event `ei` in a state at `t`.
+    fn guard_in(&self, vals: &[Value], t: f64, ei: usize) -> Result<f64, Status> {
+        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[] };
         match &self.cm.events[ei].trigger {
             Some(CTrigger::Crossing { guard, .. }) => Ok(guard.eval(&c)?.num()),
             _ => unreachable!(),
