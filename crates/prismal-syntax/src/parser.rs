@@ -163,6 +163,7 @@ impl<'a> Parser<'a> {
             return Err(Diag::new("SX-E02", format!("expected {what}, found `der(...)`. {}", belongs("der").unwrap_or_default()), self.span()));
         }
         match self.peek() {
+            Tok::Ident(s) if s == "%" => Err(Diag::new("SX-E02", format!("expected {what}, found `%`, the percent unit"), self.span())),
             Tok::Ident(s) if is_reserved(s) => Err(Diag::new(
                 "SX-E07",
                 format!("`{s}` is a reserved word and cannot be used as {what}"),

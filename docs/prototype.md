@@ -369,3 +369,4 @@ The energy drifts agree with the predictions of `tools/refvals.py` (RP-04: 7.8e-
 - 2026-10-01 `create` and `connect` through part paths, `create left.atoms { ... }` (D-074).
 - 2026-10-01 animated color, line style and scale, shape morphs, easing functions; cameras on plots (D-075).
 - 2026-10-01 authors' text with values, `when:` on representations, titles of presentations, views and panels (D-076).
+- 2026-10-12 words at a slider's ends, the percent unit, labels in display units (D-077); a banded label left to `text ... when:`.

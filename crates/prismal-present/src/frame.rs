@@ -203,6 +203,9 @@ pub enum Shape {
         display_unit: Option<DisplayUnit>,
         #[serde(skip_serializing_if = "Option::is_none")]
         unit: Option<String>,
+        /// Words at a slider's low and high ends (D-077).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ends: Option<[String; 2]>,
     },
     /// The source has no value at this instant (PK-3.3).
     Status { status: String },
@@ -448,13 +451,14 @@ pub enum CKind {
     Trace { pos: CExpr, every: f64, label: String },
     /// A scalar against elapsed time, sampled every `every` seconds (PK-6.3).
     Series { value: CExpr, every: f64, label: String },
-    Label { value: CExpr, ty: Type, label: String },
+    /// `idx`: the binding shown, whose display unit the text uses (MK-3.12).
+    Label { value: CExpr, ty: Type, label: String, idx: Option<usize> },
     /// An author's text: the pieces between values, the values with their types and, for a
     /// binding, its index (shown in its display unit), and where it is placed (D-076).
     Text { pieces: Vec<String>, values: Vec<(CExpr, Type, Option<usize>)>, at: Option<CExpr> },
     Title { value: String },
     Formula { lhs: String, rhs: Expr, params: Vec<String>, refs: Vec<(Id, usize)>, live: bool },
-    Control { control: String, binding: Id, idx: usize, min: Option<f64>, max: Option<f64>, step: Option<f64> },
+    Control { control: String, binding: Id, idx: usize, min: Option<f64>, max: Option<f64>, step: Option<f64>, ends: Option<[String; 2]> },
     Poly { points: Vec<CExpr>, closed: bool },
     /// `circle`, `ellipse` and `arc` (PK-6.3c): radii are lengths, angles numbers (radians);
     /// `ry` absent for a circle or an arc, `from` and `to` present for an arc only.
@@ -691,7 +695,12 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
         "label" => {
             let e = source(rep, 0).ok_or_else(|| needs("a value"))?;
             let (c, t) = ce(e, None)?;
-            CKind::Label { value: c, ty: t, label: label(e) }
+            // A binding is shown in its display unit, as controls show it (MK-3.12).
+            let idx = match e {
+                Expr::Ref { r#ref } => cm.index.get(r#ref).copied(),
+                _ => None,
+            };
+            CKind::Label { value: c, ty: t, label: label(e), idx }
         }
         // `text("bounced {n} times", at: P)` (D-076): the template's `{}` are its values.
         "text" => {
@@ -774,7 +783,13 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
                 Some(s) => Some(number(cm, s).map_err(|m| d("PK-E02", m))?),
                 None => None,
             };
-            CKind::Control { control: rep.kind.clone(), binding: r#ref.clone(), idx, min, max, step }
+            let ends = match rep.prop("ends") {
+                None => None,
+                Some(Arg::Texts { texts }) if texts.len() == 2 && rep.kind == "slider" => Some([texts[0].clone(), texts[1].clone()]),
+                Some(_) if rep.kind != "slider" => return Err(d("PK-E05", format!("a {} has no ends; `ends` names a slider's two ends (D-077)", rep.kind))),
+                Some(_) => return Err(needs("two words for its ends")),
+            };
+            CKind::Control { control: rep.kind.clone(), binding: r#ref.clone(), idx, min, max, step, ends }
         }
         "polyline" | "polygon" => {
             let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", format!("a {} belongs in a spatial view", rep.kind))) };
@@ -1115,9 +1130,12 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             }
         }
         CKind::Title { value } => (Shape::Title { value: value.clone() }, value.clone()),
-        CKind::Label { value, ty, label } => match eval(value) {
+        CKind::Label { value, ty, label, idx } => match eval(value) {
             Ok(v) => {
-                let s = fmt_value(&v, ty);
+                let s = match idx {
+                    Some(i) => fmt_binding(cm, *i, &v),
+                    None => fmt_value(&v, ty),
+                };
                 (Shape::Text { value: s.clone() }, format!("{label} = {s}"))
             }
             Err(s) => status(s),
@@ -1136,7 +1154,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             let layout = math::layout(&math::formula(lhs, rhs, cm, params));
             (Shape::Formula { lhs: lhs.clone(), rhs: rhs.clone(), symbols, layout }, text)
         }
-        CKind::Control { control, binding, idx, min, max, step } => {
+        CKind::Control { control, binding, idx, min, max, step, ends } => {
             let v = match &vals[*idx] {
                 Value::Num(x) => *x,
                 Value::Bool(b) => *b as u8 as f64,
@@ -1146,13 +1164,14 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 (Some(a), Some(b)) => format!(", from {} to {}", fmt_binding(cm, *idx, &Value::Num(*a)), fmt_binding(cm, *idx, &Value::Num(*b))),
                 _ => String::new(),
             };
-            let text = format!("{control} for {} = {}{range}", symbol(cm, binding), fmt_binding(cm, *idx, &vals[*idx]));
+            let words = ends.as_ref().map(|[a, b]| format!(", from {a} to {b}")).unwrap_or_default();
+            let text = format!("{control} for {} = {}{range}{words}", symbol(cm, binding), fmt_binding(cm, *idx, &vals[*idx]));
             let display_unit = cm.ir.binding(binding).and_then(|b| b.display.unit.as_ref()).and_then(|u| prismal_ir::Unit::parse(u).ok()).map(|u| DisplayUnit { text: u.text, scale: u.scale });
             let unit = match (&display_unit, &cm.bindings[*idx].ty) {
                 (None, Type::Quantity { dim }) if !dim.is_none() => Some(unit_text(dim)),
                 _ => None,
             };
-            let shape = Shape::Control { control: control.clone(), binding: binding.clone(), value: v, min: *min, max: *max, step: *step, symbol: symbol(cm, binding), display_unit, unit };
+            let shape = Shape::Control { control: control.clone(), binding: binding.clone(), value: v, min: *min, max: *max, step: *step, symbol: symbol(cm, binding), display_unit, unit, ends: ends.clone() };
             (shape, text)
         }
         CKind::Poly { points, closed } => {

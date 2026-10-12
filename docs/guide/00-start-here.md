@@ -28,13 +28,29 @@ Prismal checks that the units make sense, the way a careful science teacher woul
 
 The kind of thing a quantity measures (length, time, speed, mass) is its **dimension**. The **unit** is the scale it is written in (m, cm, km are all units of length). Most mistakes in scientific programs are unit mistakes, so catching them early saves a lot of confusion. [Chapter 2](02-quantities-and-units.md) covers units in full.
 
-## Three kinds of values
+## Model values: settings, state and calculations
 
-Every value in a model is one of three kinds. Think of a bathtub:
+The named values a model works with are its **model values**. (The reference chapters call them *bindings*: a name bound to a value.) Each plays one of three roles. Think of a bathtub:
 
 - A **parameter** is a setting chosen before things start, like how wide the drain is. It stays the same during a run unless the learner moves a slider. Written in a `param` block.
-- A **state** value is something that changes by itself as time passes, like the water level. Written in a `state` block, with its starting value.
-- A **derived** value is computed from the others and is always up to date, like "the level in centimetres" or "the amount of water". Written in a `derived` block.
+- **State** is the information the model carries forward from one moment to the next: its memory of how things are right now, like the water level. To know the level a second from now, the model needs the level now. Each state value is written with its starting value. State comes in two forms:
+  - **continuous state** changes smoothly as time passes, like the level falling. Written in a `state` block.
+  - **discrete state** changes only at particular moments, all at once, like a switch flipping from "draining" to "empty". Written in a `discrete` block (see Events, below).
+- A **derived** value is calculated from the others and is always up to date, like "the level in centimetres" or "the amount of water". It needs no memory: it can be worked out again at any moment. Written in a `derived` block.
+
+```
+                       MODEL VALUES
+                            |
+          +-----------------+-----------------+
+          |                 |                 |
+     Parameters           State            Derived
+     (settings)      (carried forward)   (calculated)
+                            |
+                    +-------+-------+
+                    |               |
+               continuous        discrete
+               (`state`)       (`discrete`)
+```
 
 ## Change over time: rates
 
@@ -52,6 +68,8 @@ der(h) = -h / tau
 ```
 
 reads: "the level `h` goes down (the minus sign) at a rate equal to the level divided by `tau`". When the tub is full, `h` is large, so it drains fast; as it empties, it drains more slowly. `tau` is a time (seconds), so `h / tau` is metres per second: a speed, as a rate of change of a length must be. Prismal checks this too.
+
+`tau` (the Greek letter τ) is the **time constant**: the time that sets how fast the whole story unfolds. A small `tau` empties the tub quickly, a large one slowly. It has a simple meaning you can check on the graph: after one `tau`, about 37% of the water is left; after two, about 14%; after three, about 5%. With `tau = 20 s`, a tub that starts at 50 cm is down to about 18 cm after 20 s. Many things in science change this way, with a time constant of their own: a cup of tea cooling, a capacitor discharging, a medicine leaving the body.
 
 The lines that give rates are called **flows** and are written in a `flow` block.
 
@@ -83,7 +101,7 @@ Here is the complete program. Every line is one of the ideas above.
 model Bathtub {
   param {
     h0:  Length = 50 cm     in [10 cm, 100 cm]   // the starting level
-    tau: Time   = 20 s      in [5 s, 60 s]       // a small drain makes this larger
+    tau: Time   = 20 s      in [5 s, 60 s]       // the time constant; a smaller drain makes it larger
   }
   state {
     h: Length = h0                                // the water level
@@ -152,8 +170,10 @@ run drains of Bathtub with BathLab {
 |---|---|
 | model | a description of what exists and how it behaves |
 | presentation | a description of how a model is shown and what the learner may change |
+| model value (binding) | any named value of a model: a parameter, state or a derived value |
 | parameter | a setting fixed for a run (unless a slider changes it) |
-| state | a value that changes by itself over time |
+| state | information the model carries forward from one moment to the next |
+| time constant (`tau`, τ) | the time that sets how fast a value changes; after one time constant about 37% of a decaying value is left |
 | derived value | a value computed from others, always up to date |
 | discrete value | a value that changes only at events |
 | quantity | a number with a unit, such as `3 m` |

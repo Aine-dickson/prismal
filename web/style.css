@@ -207,4 +207,5 @@ svg .rep-label { fill: var(--muted); font-family: var(--sans); }
 .author-text { font-family: var(--sans); }
 svg .note { fill: var(--ink); font-family: var(--sans); }
 svg .styled .note { fill: var(--c); }
-
+/* Words at a slider's ends (D-077). */
+.control .end { font-size: 12px; color: var(--muted); }

@@ -49,6 +49,8 @@ fn lookup(sym: &str) -> Option<(f64, Dim)> {
         "rad" => (1.0, Dim::NONE),
         "deg" => (std::f64::consts::PI / 180.0, Dim::NONE),
         "rev" => (2.0 * std::f64::consts::PI, Dim::NONE),
+        // A hundredth: `25 %` is 0.25; `unit %` shows a share as a percentage (D-077).
+        "%" => (0.01, Dim::NONE),
         _ => return None,
     })
 }

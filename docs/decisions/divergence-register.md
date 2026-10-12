@@ -1417,3 +1417,20 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-10-01 accepted under the owner's standing delegation of 2026-09-30 and implemented; finished by the owner after the session ended, with the SVG caption drawn from the `title` representation.
 
+## D-077: Words at a slider's ends, the percent unit, and values in words (lab authors' requests)
+
+- **Status:** Accepted
+- **Original position:** a lab author writing a "state of the system" lab asked for four presentation options: `ends:` on a slider (a caption at each end), `show:` on a slider (a 0 to 10 position in place of the value with its unit), `as: percent` on a label, and a label that maps a value to words by thresholds. None existed; the author worked around them by scaling values in the model. While checking, labels were found to ignore a binding's display unit, which the guide (chapter 2) said they used.
+- **Raised by:** third-party lab authors (feedback passed on by the owner, 2026-10-12).
+- **Builds on:** PK-6.3, PK-6.4, MK-3.12, D-061, D-076.
+- **Question:** Which of the four belong in the language, and in what form?
+- **Options considered:**
+  1. **Words in the presentation, units in the model.** `ends: ("cold", "hot")` on a slider; `%` as a unit (a hundredth, dimensionless), which as a display unit (`unit %`) shows a share as a percentage in every label, control and text, not only one label; values told in words by one `text` per band with `when:` (D-076), or by an enumeration of the model shown with `label`; `show:` not adopted.
+  2. **All four as presentation options,** as asked. `as: percent` would format one label while sliders and formulas of the same value showed a fraction; `show:` would display a scale that is not the model's value.
+  3. **A dedicated banded label** (`label(temp, bands: [288 K: "cold", ...])`). Shorter than three texts, but a second way to write what `text ... when:` writes; it can be added if lessons show the pattern is frequent.
+- **Accepted position:** option 1, under the owner's standing delegation of 2026-09-30. `ends` applies to sliders only (PK-E05 elsewhere), is drawn by both renderers beside the bar and read in the slider's text alternative (`from cold to hot`). `%` is lexed as a unit symbol and is never a name. A label of a binding shows it in the binding's display unit, as controls and texts do. `show:` is let go: a slider shows the value the model has, with its unit; a dial from 0 to 10 is a parameter of the model (`level: Real in [0, 10]`) from which the physical value is computed, which is what the lab author did.
+- **Reason:** words that help a learner read a control belong to the presentation; how a value is measured belongs to the model, where every view of it agrees. A scale that hides the unit would teach the learner a number the model does not have.
+- **Consequences:** PK-6.3f; IR argument kind `texts`; lexer (`%`), units, parser guard; lowering (`ends`), formatter; `CKind::Control { ends }`, `Shape::Control { ends }`, `CKind::Label { idx }`; the web player and the SVG renderer; guide chapters 2, 7 (Words for values), 10 and 14; `prismal-host/tests/feedback.rs`, `prismal-syntax/tests/glossary.rs`. Not yet: option 3.
+- **History:**
+  - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+

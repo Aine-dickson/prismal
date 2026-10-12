@@ -13,7 +13,7 @@ Physical values in Prismal carry their dimension. A length cannot be added to a 
 A number followed by a unit is a quantity: `120 km`, `1.5 h`, `9.81 m/s^2`, `4 N/m`, `0.01 /m`, `45 deg`.
 
 - Units are written with unit symbols, `*`, `/` and whole powers `^2`. A unit has no spaces inside it: `9.81 m/s^2` is one unit, while `4 / m` divides 4 by a binding named `m`.
-- Unit symbols known to the prototype: `m cm mm km`, `s ms min h`, `kg g`, `N J W Pa Hz`, `A K mol cd`, and the angle units `rad deg rev`.
+- Unit symbols known to the prototype: `m cm mm km`, `s ms min h`, `kg g`, `N J W Pa Hz`, `A K mol cd`, the angle units `rad deg rev`, and `%` (a hundredth: `25 %` is `0.25`, D-077).
 - Unit symbols are recognized only directly after a number. Elsewhere `m`, `s` and `g` are ordinary names, so a model may have a parameter `g` or `m`.
 - The value is converted to coherent SI when the program is read: `120 km` is stored as `120000` metres and `1.5 h` as `5400` seconds. Displays and test expectations compare SI values; a test may write its expected value in any unit of the right dimension.
 
@@ -69,6 +69,7 @@ model Trip {
 - `const { ... }` declares **constants**. Unlike parameters, a constant can never be changed by a case, a control or a lesson.
 - `where distance > 0 m` is a range written as a condition. `in [0 deg, 30 deg]` and `where` both reject a run that starts outside, and both reject a control that tries to leave the range. Note that the bound `0 m` carries its unit: `distance > 0` would also be accepted, since `0` has any dimension.
 - `unit deg` is a **display unit** (MK-3.12): `slope` is stored in radians like every angle, but controls, labels and live formulas show it in degrees.
+- A share or a ratio can be shown as a percentage the same way: `humidity: Real = 40 % in [0 %, 100 %] unit %` is stored as `0.4`, and controls, labels and texts show `40 %`.
 
 ```text
 presentation TripPanel for Trip {

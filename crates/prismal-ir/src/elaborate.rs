@@ -1204,7 +1204,7 @@ impl<'a> PCx<'a, '_> {
             Arg::Range { lo, hi } => Arg::Range { lo: self.e(s, lo), hi: self.e(s, hi) },
             Arg::Sampled { expr, every } => Arg::Sampled { expr: self.e(s, expr), every: self.e(s, every) },
             Arg::Scale { scale } => Arg::Scale { scale: crate::present::Scale { quantity: self.e(s, &scale.quantity), px: scale.px } },
-            Arg::Text { .. } | Arg::Word { .. } | Arg::Element { .. } => a.clone(),
+            Arg::Text { .. } | Arg::Word { .. } | Arg::Element { .. } | Arg::Texts { .. } => a.clone(),
         }
     }
 

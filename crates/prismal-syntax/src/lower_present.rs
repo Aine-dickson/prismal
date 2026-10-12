@@ -120,6 +120,17 @@ impl PresCx<'_, '_> {
         // `when: cond`: drawn only while the condition holds (D-076).
         let mut when = None;
         for a in &r.args {
+            // `ends: ("cold", "hot")`: words for a slider's two ends (D-077).
+            if let (Some(n), ExprKind::Tuple(items)) = (&a.name, &a.value.kind) {
+                if n.text == "ends" {
+                    let texts: Vec<String> = items.iter().filter_map(|e| if let ExprKind::Str(s) = &e.kind { Some(s.clone()) } else { None }).collect();
+                    if texts.len() != 2 || items.len() != 2 {
+                        self.err("SX-E02", "a slider's ends are two words in quotes: `ends: (\"cold\", \"hot\")`", a.value.span);
+                    }
+                    props.push(Prop { name: "ends".into(), value: Arg::Texts { texts } });
+                    continue;
+                }
+            }
             if a.name.as_ref().is_some_and(|n| n.text == "when") {
                 when = Some(self.expr(&a.value));
                 continue;

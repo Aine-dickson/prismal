@@ -168,3 +168,22 @@ presentation Lab for Drop {
     let again = prismal_syntax::compile(&out).unwrap_or_else(|ds| panic!("{:?}\n{out}", ds.iter().map(|d| &d.message).collect::<Vec<_>>()));
     assert_eq!(prismal_syntax::format::format(&again.doc), out);
 }
+
+/// Slider ends and the percent unit print back as written (D-077).
+#[test]
+fn slider_ends_and_percent_print_back() {
+    let src = "model Room {
+  param { humid: Real = 40 % in [0 %, 100 %] unit % }
+}
+presentation Lab for Room {
+  panel c { slider(humid, range: [0 %, 100 %], ends: (\"dry\", \"wet\")) }
+}
+";
+    let compiled = prismal_syntax::compile(src).unwrap_or_else(|ds| panic!("{:?}", ds.iter().map(|d| &d.message).collect::<Vec<_>>()));
+    let out = prismal_syntax::format::format(&compiled.doc);
+    for want in ["40 %", "unit %", "ends: (\"dry\", \"wet\")"] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+    let again = prismal_syntax::compile(&out).unwrap_or_else(|ds| panic!("{:?}\n{out}", ds.iter().map(|d| &d.message).collect::<Vec<_>>()));
+    assert_eq!(prismal_syntax::format::format(&again.doc), out);
+}
