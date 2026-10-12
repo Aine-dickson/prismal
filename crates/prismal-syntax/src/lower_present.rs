@@ -21,6 +21,82 @@ const KINDS: &[&str] = &[
     "equation", "formula", "table", "slider", "number_input", "toggle", "button", "group", "text", "title",
 ];
 
+/// The named options each representation kind takes, besides `when` (D-081). A name not in
+/// the list is an error, so a misspelled option is never ignored.
+fn options(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "marker" => &["at", "color", "label"],
+        "arrow" => &["from", "scale", "color", "line", "label"],
+        "function_graph" => &["color", "line", "label"],
+        "segment" | "polyline" | "polygon" | "circle" | "trace" | "series_plot" => &["color", "line"],
+        "ellipse" => &["rotate", "color", "line"],
+        "arc" => &["from", "to", "color", "line"],
+        "text" => &["at"],
+        "formula" | "equation" => &["live"],
+        "slider" => &["range", "step", "ends"],
+        "number_input" => &["range", "step"],
+        "button" => &["label"],
+        "group" => &["at", "rotate", "scale"],
+        _ => &[],
+    }
+}
+
+/// The named options of each view kind (D-081).
+fn view_options(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "spatial" => &["scale", "y"],
+        "plot" => &["x", "y", "follow", "x_unit", "y_unit", "window"],
+        _ => &[],
+    }
+}
+
+/// Edit distance, for suggesting the option an unknown name was meant to be.
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cur = row[j + 1];
+            row[j + 1] = (prev + usize::from(ca != *cb)).min(row[j] + 1).min(cur + 1);
+            prev = cur;
+        }
+    }
+    row[b.len()]
+}
+
+/// Checks the named options of a representation or view: each is one the kind takes, and
+/// each is given once. Returns the names to skip.
+fn check_options(args: &[ast::Arg], kind: &str, allowed: &[&str], diags: &mut Vec<(String, Span)>) -> Vec<usize> {
+    let mut skip = vec![];
+    let mut seen: Vec<&str> = vec![];
+    for (i, a) in args.iter().enumerate() {
+        let Some(n) = &a.name else { continue };
+        let name = n.text.as_str();
+        if !allowed.contains(&name) {
+            let near = allowed.iter().filter(|o| distance(name, o) <= 2).min_by_key(|o| distance(name, o));
+            let msg = match (near, allowed.is_empty()) {
+                (_, true) => format!("`{kind}` takes no option `{name}`: it has no named options"),
+                (Some(o), _) => format!("`{kind}` takes no option `{name}`; did you mean `{o}`? Its options are {}", list(allowed)),
+                (None, _) => format!("`{kind}` takes no option `{name}`; its options are {}", list(allowed)),
+            };
+            diags.push((msg, n.span));
+            skip.push(i);
+        } else if seen.contains(&name) {
+            diags.push((format!("the option `{name}` is given twice"), n.span));
+            skip.push(i);
+        } else {
+            seen.push(name);
+        }
+    }
+    skip
+}
+
+fn list(words: &[&str]) -> String {
+    words.iter().map(|w| format!("`{w}`")).collect::<Vec<_>>().join(", ")
+}
+
 struct PresCx<'a, 'b> {
     cx: ModelCx<'a>,
     /// Equations of the model by name, for `equation(name)`.
@@ -119,7 +195,17 @@ impl PresCx<'_, '_> {
         let mut props = vec![];
         // `when: cond`: drawn only while the condition holds (D-076).
         let mut when = None;
-        for a in &r.args {
+        let mut allowed = options(&kind).to_vec();
+        allowed.push("when");
+        let mut bad = vec![];
+        let skip = check_options(&r.args, &kind, &allowed, &mut bad);
+        for (m, s) in bad {
+            self.err("SX-E08", m, s);
+        }
+        for (i, a) in r.args.iter().enumerate() {
+            if skip.contains(&i) {
+                continue;
+            }
             // `ends: ("cold", "hot")`: words for a slider's two ends (D-077).
             if let (Some(n), ExprKind::Tuple(items)) = (&a.name, &a.value.kind) {
                 if n.text == "ends" {
@@ -265,6 +351,11 @@ impl PresCx<'_, '_> {
 
     fn view(&mut self, v: &ast::ViewDecl) -> Option<View> {
         let id = format!("{}.view.{}", self.pres, v.name.text);
+        let mut bad = vec![];
+        check_options(&v.args, &v.kind.text, view_options(&v.kind.text), &mut bad);
+        for (m, s) in bad {
+            self.err("SX-E08", m, s);
+        }
         let named = |n: &str| v.args.iter().find(|a| a.name.as_ref().is_some_and(|x| x.text == n)).map(|a| &a.value);
         let kind = match v.kind.text.as_str() {
             "spatial" => {

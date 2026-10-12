@@ -134,6 +134,8 @@ fn formatting_and_diagnostics() {
     assert_eq!(codes("circle(c, r) as disc", "circle(c) as disc"), vec!["PK-E05"], "a radius is needed");
     assert_eq!(codes(", to: turn) as quarter\n    ellipse", ") as quarter\n    ellipse"), vec!["PK-E05"], "an arc needs both ends");
     assert_eq!(codes("from: 0 deg, to: turn) as quarter\n    ellipse", "from: 0 m, to: turn) as quarter\n    ellipse"), vec!["PK-E04"], "an angle");
-    assert_eq!(codes("circle(c, r) as disc", "circle(c, r, rotate: turn) as disc"), vec!["PK-E05"], "a circle takes no rotate");
+    // An option the kind does not take is a syntax error (D-081).
+    let bad = prismal_syntax::compile(&SRC.replace("circle(c, r) as disc", "circle(c, r, rotate: turn) as disc")).unwrap_err();
+    assert!(bad.iter().any(|d| d.code == "SX-E08" && d.message.contains("`circle` takes no option `rotate`")), "{bad:?}");
     assert_eq!(codes("view down: spatial(Plane, scale: 1 m -> 100 px, y: down) {", "view down: plot(x: [0, 1], y: [0, 1]) {"), vec!["PK-E05"], "spatial only");
 }

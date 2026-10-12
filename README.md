@@ -6,7 +6,7 @@ One model, many representations: the same model can be a lab in the browser, a n
 
 ![A frame of the tour's lesson: a ball's path traced over the plane, the ball highlighted at its first bounce, and the caption "A bounce keeps 80 percent of the upward speed."](docs/images/tour-lesson.png)
 
-The language is young: the syntax is usable and tested, but not frozen.
+The language is young. Its syntax is at version 1 (D-081): programs written for version 1 keep compiling, with the same meaning, while the language grows.
 
 ## What a program looks like
 

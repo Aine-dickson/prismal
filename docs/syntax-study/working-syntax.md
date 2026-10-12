@@ -2,7 +2,7 @@
 
 Candidate A amended as accepted in D-028: A's keyword-led statements, with grouped declaration and flow blocks, interval ranges and the timeline shorthand (owner amendment), C's view trees, nested interactions, explicit sequences and named processes, and B's default space.
 
-- **Status:** working syntax, implemented by the prototype parser (`crates/prismal-syntax`). Non-binding until the syntax is frozen; keywords and spellings are subject to the keyword pass (comparison section 8.2).
+- **Status:** **version 1** (2026-10-12, D-081), implemented by the parser (`crates/prismal-syntax`). Stable for outside authors under the rules of section 1.7.
 - **Fixed parts:** the shared expression and type sublanguage of the study (`README.md`), with interval notation as the single range form.
 
 ## 1. Design
@@ -86,6 +86,27 @@ The formatter prints, from the IR: enumerations, then declarations grouped in bl
 - **Representation kinds** are read where a representation is expected; there `equation`, reserved elsewhere, is the representation kind of PK-6.3.
 - **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title`.
 - **Built-in names** (not reserved, but predefined): `t`, `t0`, `elapsed`, `origin`, `der`, `π` and `pi` (D-039), `inf` (only as an interval bound), the SI units and named dimensions of MK section 3. Named dimensions: `Length`, `Mass`, `Time`, `Current`, `Amount`, `Area`, `Volume`, `Velocity`, `Acceleration`, `Frequency`, `Momentum`, `Force`, `Energy`, `Power`, `Pressure`, and `Angle` (dimensionless, D-021); base symbols `L M T I Θ N J` inside `Quantity<...>`.
+
+
+### 1.6 Options and clauses (D-081)
+
+Details are added to a form in one of two ways, decided by where the form is written:
+
+- **Named options inside parentheses**, `name: value`, after the positional arguments of a representation, a view kind or a group: `marker(pos, color: red)`, `plot(x: I, y: I, follow: y)`, `group(at: P, rotate: θ)`. Each kind has a fixed list of options (guide chapter 10, Options and clauses); every representation also takes `when: c`. An option not on the list is SX-E08, with the nearest option suggested; an option given twice is SX-E09.
+- **Clauses after a statement's head**, a word and its value with no colon: ranges and modifiers of declarations (`in I`, `where c`, `intervenable`, `private`, `combine k`, `symbol "s"`, `unit u`), `within` and `policy` of a constraint, `checked within` of an equation, and the clauses of timeline actions (`for d`, `in view`, `to P`, `zoom z`, `ease e`, `until E`, `limit L`, `keep p, ...`). Clauses come in any order, each at most once (SX-E09 otherwise); the formatter prints them in one order. An event keeps the order `on trigger [if c] [{ ops }] [zeno ...]`, since its block sits among its clauses.
+
+The two families do not mix: a statement never takes `name: value`, and parentheses never take a clause word. A colon elsewhere labels rather than configures: a declaration's type (`x: Length`), a named equation or constraint (`equation energy: ...`), a learner step's time (`at 3 s: continue`). Inside parentheses, `every Δ` belongs to an argument (a sampled source), not to the representation.
+
+A line that starts with a binary operator (`+ - * / ^ == != < <= > >= -> => .`, `and`, `or`) where a statement is expected is reported with the rule of section 1.5: the operator belongs at the end of the line before.
+
+### 1.7 Version 1 and stability (D-081)
+
+The forms of sections 1.1 to 1.6 are version 1. From version 1:
+
+- A program that compiles under version 1 compiles under every later 1.x version, with the same meaning.
+- Additions are allowed in a 1.x version: new representation kinds, options, clauses, timeline actions, functions, units and contextual keywords. A new contextual keyword cannot break a program, since it is a word only where it is expected.
+- A new reserved word, a renamed or removed form, or a changed meaning breaks programs. Such a change needs a register entry that names the version it starts in and how programs are rewritten; where the rewrite is mechanical, the formatter performs it.
+- Diagnostic messages may improve in any version; their codes keep their meanings.
 
 ---
 
@@ -550,3 +571,4 @@ run A_keep of Projectile with ProjectileLesson {
 - 2026-10-01 `[max inf]`: collections without a declared limit (D-066).
 - 2026-10-01 `wait learner` (D-067); `animate`, `release`, `bind` defined (D-068).
 - 2026-10-01 learner step `press E`; runtime-control buttons; `press`, `undo` and `redo` added to the contextual keywords (D-069).
+- 2026-10-12 syntax stability review (D-081): options and clauses (section 1.6), closed option lists per kind, clauses in any order, a message for a line that starts with an operator; marked version 1 (section 1.7).

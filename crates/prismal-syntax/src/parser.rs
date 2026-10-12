@@ -28,6 +28,10 @@ pub const CONTEXTUAL: &[&str] = &[
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title",
 ];
 
+/// Operators that join two operands; a line that starts with one is reported with a hint
+/// (D-081).
+const BINARY: &[&str] = &["+", "-", "*", "/", "^", "==", "!=", "<", "<=", ">", ">=", "->", "=>", "."];
+
 pub fn is_reserved(w: &str) -> bool {
     RESERVED.contains(&w)
 }
@@ -149,11 +153,44 @@ impl<'a> Parser<'a> {
         }
     }
     fn unexpected(&self, wanted: &str) -> Diag {
+        // A line that starts with an operator: the line before it was a whole statement
+        // (D-081). The operator belongs at the end of the line before.
+        let line_start = self.pos > 0 && matches!(self.toks[self.pos - 1].tok, Tok::Newline);
+        let operator = match self.peek() {
+            Tok::Punct(p) => BINARY.contains(p),
+            Tok::Ident(w) => w == "and" || w == "or",
+            _ => false,
+        };
         let hint = match self.peek() {
+            _ if line_start && operator => format!(
+                ". A line cannot start with {op}: to continue an expression on the next line, end the line before with the operator (`a {op_word}` then `b` on the next line)",
+                op = Self::describe(self.peek()),
+                op_word = match self.peek() {
+                    Tok::Punct(p) => p.to_string(),
+                    Tok::Ident(w) => w.clone(),
+                    _ => String::new(),
+                }
+            ),
             Tok::Ident(w) => belongs(w).map(|b| format!(". {b}")).unwrap_or_default(),
             _ => String::new(),
         };
         Diag::new("SX-E02", format!("expected {wanted}, found {}{hint}", Self::describe(self.peek())), self.span())
+    }
+
+    /// A clause word after a statement's head (`for d`, `zoom z`, `policy p`): clauses come in
+    /// any order, each at most once (D-081). Returns the word read, or `None` at the end.
+    fn clause(&mut self, words: &[&'static str], seen: &mut Vec<&'static str>) -> P<Option<&'static str>> {
+        for w in words {
+            if self.is_word(w) {
+                if seen.contains(w) {
+                    return Err(Diag::new("SX-E09", format!("`{w}` is given twice"), self.span()));
+                }
+                seen.push(w);
+                self.bump();
+                return Ok(Some(w));
+            }
+        }
+        Ok(None)
     }
 
     /// A declared name: an identifier that is not a reserved word.
@@ -455,8 +492,14 @@ impl<'a> Parser<'a> {
                 None
             };
             let cond = self.expr()?;
-            let within = if self.eat_word("within") { Some(self.expr()?) } else { None };
-            let policy = if self.eat_word("policy") { Some(self.any_name("a policy")?) } else { None };
+            let (mut within, mut policy, mut seen) = (None, None, vec![]);
+            while let Some(w) = self.clause(&["within", "policy"], &mut seen)? {
+                if w == "within" {
+                    within = Some(self.expr()?);
+                } else {
+                    policy = Some(self.any_name("a policy")?);
+                }
+            }
             return Ok(vec![Member::Constraint(ConstraintDecl { name, cond, within, policy, span: self.since(start) })]);
         }
         if self.eat_word("object") {
@@ -521,37 +564,31 @@ impl<'a> Parser<'a> {
         self.expect_punct(":")?;
         let ty = self.type_expr()?;
         let value = if self.eat_punct("=") { Some(self.expr_no_in()?) } else { None };
-        let range = if self.eat_word("in") {
-            Some(Range::In(self.interval()?))
-        } else if self.eat_word("where") {
-            Some(Range::Where(self.expr()?))
-        } else {
-            None
-        };
-        let mut modifiers = vec![];
-        loop {
-            if self.eat_word("intervenable") {
-                modifiers.push(Modifier::Intervenable);
-            } else if self.eat_word("private") {
-                modifiers.push(Modifier::Private);
-            } else if self.eat_word("combine") {
+        // The range and the modifiers are clauses: any order, each once (D-081).
+        let (mut range, mut modifiers, mut seen) = (None, vec![], vec![]);
+        let words = ["in", "where", "intervenable", "private", "combine", "symbol", "unit"];
+        while let Some(w) = self.clause(&words, &mut seen)? {
+            match w {
+                "in" | "where" if range.is_some() => {
+                    return Err(Diag::new("SX-E09", "a declaration has one range: `in [a, b]` or `where cond`", self.toks[self.pos - 1].span));
+                }
+                "in" => range = Some(Range::In(self.interval()?)),
+                "where" => range = Some(Range::Where(self.expr()?)),
+                "intervenable" => modifiers.push(Modifier::Intervenable),
+                "private" => modifiers.push(Modifier::Private),
                 // `combine sum`: how contributions combine (MK-14.9, D-073).
-                modifiers.push(Modifier::Combine(self.any_name("a combination (`sum`, `max`, ...)")?));
-            } else if self.eat_word("symbol") {
-                match self.peek().clone() {
+                "combine" => modifiers.push(Modifier::Combine(self.any_name("a combination (`sum`, `max`, ...)")?)),
+                "symbol" => match self.peek().clone() {
                     Tok::Str(s) => {
                         self.bump();
                         modifiers.push(Modifier::Symbol(s));
                     }
                     _ => return Err(self.unexpected("a symbol in quotes")),
-                }
-            } else if self.eat_word("unit") {
-                match self.unit()? {
+                },
+                _ => match self.unit()? {
                     Some(u) => modifiers.push(Modifier::Unit(u)),
                     None => return Err(self.unexpected("a unit")),
-                }
-            } else {
-                break;
+                },
             }
         }
         Ok(Decl { role, name, params, ty, value, range, modifiers, notes, span: self.since(start) })
@@ -1600,16 +1637,28 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("reveal") {
             let style = self.any_name("`fade` or `draw`")?;
-            let duration = if self.eat_word("for") { Some(self.expr_no_in()?) } else { None };
-            let view = if self.eat_word("in") { Some(self.name("a view name")?) } else { None };
+            let (mut duration, mut view, mut seen) = (None, None, vec![]);
+            while let Some(w) = self.clause(&["for", "in"], &mut seen)? {
+                if w == "for" {
+                    duration = Some(self.expr_no_in()?);
+                } else {
+                    view = Some(self.name("a view name")?);
+                }
+            }
             let reps = self.block(|p| p.rep_item())?;
             return Ok(Action::Reveal { style, duration, view, reps });
         }
         if self.eat_word("camera") {
             let view = self.name("a view name")?;
-            let center = if self.eat_word("to") { Some(self.expr()?) } else { None };
-            let zoom = if self.eat_word("zoom") { Some(self.expr()?) } else { None };
-            let duration = if self.eat_word("for") { Some(self.expr()?) } else { None };
+            let (mut center, mut zoom, mut duration, mut seen) = (None, None, None, vec![]);
+            while let Some(w) = self.clause(&["to", "zoom", "for"], &mut seen)? {
+                let e = Some(self.expr()?);
+                match w {
+                    "to" => center = e,
+                    "zoom" => zoom = e,
+                    _ => duration = e,
+                }
+            }
             return Ok(Action::Camera { view, center, zoom, duration });
         }
         if self.eat_word("seek") {
@@ -1619,12 +1668,15 @@ impl<'a> Parser<'a> {
             return Ok(Action::Show(self.rep()?));
         }
         if self.eat_word("explore") {
-            let limit = if self.eat_word("limit") { Some(self.expr()?) } else { None };
-            let mut keep = vec![];
-            if self.eat_word("keep") {
-                keep.push(self.name("a binding name")?);
-                while self.eat_punct(",") {
+            let (mut limit, mut keep, mut seen) = (None, vec![], vec![]);
+            while let Some(w) = self.clause(&["limit", "keep"], &mut seen)? {
+                if w == "limit" {
+                    limit = Some(self.expr()?);
+                } else {
                     keep.push(self.name("a binding name")?);
+                    while self.eat_punct(",") {
+                        keep.push(self.name("a binding name")?);
+                    }
                 }
             }
             let reps = self.block(|p| p.rep_item())?;
@@ -1658,9 +1710,15 @@ impl<'a> Parser<'a> {
             let property = self.any_name("`opacity`, `offset`, `color`, `line`, `scale` or `morph`")?;
             self.expect_word("to")?;
             let to = self.expr()?;
-            let duration = if self.eat_word("for") { Some(self.expr()?) } else { None };
             // `ease linear`: the easing function (D-075).
-            let ease = if self.eat_word("ease") { Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?) } else { None };
+            let (mut duration, mut ease, mut seen) = (None, None, vec![]);
+            while let Some(w) = self.clause(&["for", "ease"], &mut seen)? {
+                if w == "for" {
+                    duration = Some(self.expr()?);
+                } else {
+                    ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?);
+                }
+            }
             return Ok(Action::Animate { target, property, to, duration, ease });
         }
         if self.eat_word("release") {

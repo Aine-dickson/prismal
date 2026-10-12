@@ -80,7 +80,7 @@ model Count {
 
 Choose another name (`events`, `count`). The reference lists the reserved words; words of presentations and lessons (`view`, `beat`, `scene` ...) are reserved only where they are used, so `process drag` or a binding named `scene` is fine.
 
-**A long formula broken before an operator.** A line ends a statement unless it ends in an operator, a comma or an open bracket. A line that starts with `+` is read as a new statement:
+**A long formula broken before an operator.** A line ends a statement unless it ends in an operator, a comma or an open bracket. A line that starts with `+` is read as a new statement, and the message says that a line cannot start with an operator:
 
 ```error
 // error: SX-E02
@@ -180,6 +180,23 @@ presentation Bad for Moving {
 ```
 
 Write `arrow(vel, from: origin, scale: 1 m/s -> 10 px)`.
+
+**A misspelled option.** Each representation and view takes a fixed list of named options. A name not on the list is an error, never ignored, and the message lists the options and suggests the nearest one:
+
+```error
+// error: SX-E08
+space Plane = euclidean(2)
+model Dot in Plane {
+  param { pos: Point = origin }
+}
+presentation Bad for Dot {
+  view scene: spatial(Plane, scale: 1 m -> 40 px, y: up) {
+    marker(pos, colour: red)
+  }
+}
+```
+
+The message is "`marker` takes no option `colour`; did you mean `color`?". The options of every kind are in the [reference](10-reference.md#options-and-clauses).
 
 ## Runs
 

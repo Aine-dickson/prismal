@@ -89,6 +89,18 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-067 | Continue points: `wait learner [limit d] [fallback { ... }]`, opened when the beat's other actions end; a pending point stops the player | Accepted |
 | D-068 | Animated properties and handover: `animate R opacity` or `offset to v [for d]`, `release R`, `bind R [for d]` | Accepted |
 | D-069 | Buttons in lessons and runtime-control buttons: an explore beat's `button(E)`, the learner step `press E`, `button(reset)`, `button(undo)`, `button(redo)` in labs | Accepted |
+| D-070 | Plot axes that follow the data, display units on plot axes, zoom and pan of plots | Accepted |
+| D-071 | Drag mode `live`, the interactive failure policy `pause`, and failures located inside a step | Accepted |
+| D-072 | Buttons whose event takes a payload | Accepted |
+| D-073 | Contributions to discrete state | Accepted |
+| D-074 | `create` and `connect` through part paths | Accepted |
+| D-075 | Animated color, line style and scale, shape morphs, easing, and cameras on plots | Accepted |
+| D-076 | Authors' text, conditions on representations, and titles | Accepted |
+| D-077 | Words at a slider's ends, the percent unit, and values in words (lab authors' requests) | Accepted |
+| D-078 | Findings from the first complete lesson: path breaks, rounding, labels, and `on E` | Accepted |
+| D-079 | Findings from the geometry example: powers in units, morph order | Accepted |
+| D-080 | Findings from the objects example: event detection cost, texts in the framing | Accepted |
+| D-081 | Syntax stability review: options and clauses, and version 1 | Accepted |
 
 ---
 
@@ -1485,3 +1497,28 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
 
+
+## D-081: Syntax stability review: options and clauses, and version 1
+
+- **Status:** Accepted
+- **Original position:** PROJECT-STATE (2026-10-12) planned a syntax stability review before outside authors write programs: one style for options (named arguments such as `follow: y`, `when: c`, `ends: (...)` against trailing words such as `combine sum`, `ease out`, `unit %`), a parser message for a line that starts with an operator (D-080), then marking the working syntax as version 1.
+- **Raised by:** the plan of 2026-10-12, after the three complete examples (D-078 to D-080).
+- **Builds on:** D-028, D-035, D-040, D-061, D-070, D-075, D-076, D-077, D-080.
+- **Question:** Should options have one spelling, and what has to hold before the syntax is called stable?
+- **Findings:** an inventory of the parser showed two families, each used consistently: named options `name: value` only inside parentheses (representations, view kinds, groups), and clause words with a value only after a statement's head (declarations, constraints, equations, events, timeline actions). No form mixed them. Three faults were found:
+  1. **Unknown options were ignored.** Named options passed through as generic properties, so `plot(..., folow: y)`, `marker(p, sise: 3)` or `series_plot(..., wen: c)` compiled and did nothing, and `marker(p, colour: red)` was reported as "unknown name `red`". An option written twice was accepted.
+  2. **Clause order was fixed and unstated.** `camera v to P zoom z for d` compiled; `camera v for d zoom z` did not, with "expected end of statement". The same held for `reveal`, `animate`, `explore`, a constraint's `within` and `policy`, and a declaration's range before its modifiers. A modifier given twice was accepted.
+  3. **A line that starts with an operator** gave `expected der, found +` (D-080).
+- **Options considered:**
+  1. One family everywhere, named options (`animate R scale to 2, for: 1 s, ease: out`; `param g: T = e, unit: deg`). Statements would read as calls, and every program would change.
+  2. One family everywhere, clause words (`marker(pos) color red`). Representations would lose the call form shared with functions, and a representation's options could no longer be told from the start of the next statement on a line.
+  3. Keep the two families with one rule, by place: options inside parentheses, clauses after a statement's head; make each family closed and order-free (taken).
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30.
+  - Each representation kind and view kind has a fixed list of named options (guide chapter 10, Options and clauses); every representation also takes `when`. An option not on the list is SX-E08 with the list and, within an edit distance of two, the nearest option; an option given twice is SX-E09. The value of a rejected option is not lowered, so no second, misleading error follows.
+  - Clauses after a statement's head come in any order, each at most once (SX-E09). A declaration has one range, `in` or `where`. The formatter keeps printing one order. An event keeps its order, since its block sits among its clauses.
+  - A statement expected where a line starts with a binary operator or `and`/`or` adds: "A line cannot start with `+`: to continue an expression on the next line, end the line before with the operator".
+  - The working syntax is version 1, with a stability rule (working syntax section 1.7): version 1 programs compile with the same meaning in every 1.x version; additions, including contextual keywords, are allowed; a new reserved word, a renamed or removed form or a changed meaning needs a register entry naming the version and the rewrite.
+- **Reason:** both families read naturally where they are used and are already consistent, so unifying them would cost every program for no gain in clarity; what outside authors need is that a mistake in either is reported, and that the order of clauses is not a rule to memorize. Version 1 gives authors and hosts a promise to build on without closing the language to additions.
+- **Consequences:** `Parser::clause`, `BINARY`, `Parser::unexpected` in `prismal-syntax/src/parser.rs`; `options`, `view_options`, `check_options` in `lower_present.rs`; `prismal-syntax/tests/options.rs`; the tests of a circle's `rotate` and a marker's `line` now expect SX-E08 (`prismal-present/tests/shapes.rs`, `prismal-svg/tests/styles.rs`); working syntax sections 1.6 and 1.7 and status; guide chapter 10 (Options and clauses, SX-E08 and SX-E09), chapter 13 (a misspelled option, the operator message); README, guide README, spec README and 01 status lines.
+- **History:**
+  - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
