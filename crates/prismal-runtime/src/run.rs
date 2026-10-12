@@ -139,6 +139,9 @@ pub struct Committed {
     pub t: f64,
     pub n: u32,
     pub vals: Vec<Value>,
+    /// Made by a logged action (an intervention or a request) and what it caused, not by the
+    /// model's own iteration: an observation `on E` stops before it (PK-3.1).
+    pub by_action: bool,
 }
 
 /// An accepted step and the committed state whose discrete values hold during it.
@@ -223,6 +226,8 @@ struct Engine<'a> {
     consumed: usize,
     /// The latest stop any step so far depended on (see `Snapshot::theta`).
     theta: f64,
+    /// While a logged action applies: the states it commits are marked `by_action`.
+    acting: bool,
 }
 
 /// The right-hand side over one segment: discrete state and parameters fixed.
@@ -329,6 +334,7 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
         h: None,
         consumed: 0,
         theta: f64::NEG_INFINITY,
+        acting: false,
     };
     if let Err(d) = e.schedule_time_events() {
         e.run.status = RunStatus::NotStarted(RunDiag { category: Category::Initialization, ..d });
@@ -407,6 +413,7 @@ pub fn resume(prev: &Run, cfg: Config) -> Run {
         h: snap.h,
         consumed: snap.consumed,
         theta: snap.theta,
+        acting: false,
     };
     if let Err(d) = e.advance() {
         e.run.status = RunStatus::Stopped(d);
@@ -500,7 +507,7 @@ impl<'a> Engine<'a> {
     }
 
     fn commit(&mut self) {
-        self.run.committed.push(Committed { t: self.t, n: self.n, vals: self.vals.clone() });
+        self.run.committed.push(Committed { t: self.t, n: self.n, vals: self.vals.clone(), by_action: self.acting });
     }
 
     fn guard_value(&self, vals: &[Value], ei: usize) -> Result<Option<f64>, Status> {
@@ -665,7 +672,10 @@ impl<'a> Engine<'a> {
             // RC-12.4: a static model has a single instant; only interventions apply.
             let actions: Vec<Scheduled> = self.cfg.log.clone();
             for s in actions {
-                self.intervene(&s.action)?;
+                self.acting = true;
+                let applied = self.intervene(&s.action);
+                self.acting = false;
+                applied?;
             }
             return Ok(());
         }
@@ -693,7 +703,10 @@ impl<'a> Engine<'a> {
                 }
                 let s = pending.pop_front().unwrap();
                 self.consumed += 1;
-                self.intervene(&s.action)?;
+                self.acting = true;
+                let applied = self.intervene(&s.action);
+                self.acting = false;
+                applied?;
                 acted = true;
             }
             if acted {
@@ -1312,7 +1325,12 @@ impl Run {
             .map(|l| {
                 let state = match microstep {
                     Some(n) => self.committed.iter().find(|s| s.t == l.t && s.n == n).expect("microstep"),
-                    None => self.committed.iter().rev().find(|s| s.t == l.t).expect("event instant"),
+                    // The event's final microstep (PK-3.1): the last state of the cascade it
+                    // belongs to, before any logged action applied at the same instant.
+                    None => {
+                        let at = || self.committed.iter().filter(|s| s.t == l.t);
+                        at().filter(|s| s.n >= l.n).take_while(|s| !s.by_action).last().or_else(|| at().last()).expect("event instant")
+                    }
                 };
                 self.eval_on(&c, &state.vals, l.t).expect("observation value")
             })

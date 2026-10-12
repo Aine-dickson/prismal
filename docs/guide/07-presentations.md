@@ -48,6 +48,8 @@ presentation Name for Model {
 | `label(e)` | a value as text | any |
 | `text("... {e} ...")` | an author's text, with values in braces (see Text and titles) | any; `at: P` in spatial and plot views |
 | `title("...")` | the caption of its view or panel | any |
+
+A marker, an arrow or a graph is labelled with its name (`as ball`) or its source. `label: "Ball"` writes another label, and `label: none` draws none: a representation named only so that a lesson can highlight it need not show its name (D-078). Its text alternative keeps the name.
 | `formula(f [, live: true])` | the definition of a derived binding or function, typeset | any |
 | `formula("R", expression [, live: true])` | a labeled expression, `R = ...`, typeset | any |
 | `equation(name [, live: true])` | a model equation, typeset, with its symbols' current values | any |
@@ -538,6 +540,7 @@ run drop of Dropped with DropLab {
 ```
 
 - Inside the quotes, `{...}` holds any value of the model: a binding, a component (`{pos.y}`), a calculation (`{|vel|}`). It is shown with its unit, in the binding's display unit when it has one. To write a brace itself, double it: `{{` and `}}`.
+- `{pos.y:.1}` shows the value with one decimal (`8.3 m`), `{angle:.0}` with none (`45 deg`). Without it a value has up to six significant digits, more than a learner usually needs.
 - `at: P` places a text in a spatial view (`P` a point) or a plot (`P` a pair of axis values); without it, the text is a line in the panel or below the view.
 - `when: c` works on every representation, not only text: `marker(pos, when: airborne)` hides the marker once the ball has landed, `slider(h, ..., when: not airborne)` offers the slider only then. The condition is read at the instant shown.
 - There is no text that is chosen by a condition inside one sentence; write one text per case, each with its `when`, as above.

@@ -129,6 +129,10 @@ pub struct RepFrame {
     /// dot and an arrow's head this much larger.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scale: Option<f64>,
+    /// For a path sampled over the run: the indices of points that start a new piece,
+    /// where the value jumped at an instant (a ball thrown again). Media lift the pen there.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub breaks: Vec<usize>,
 }
 
 /// Named colors an author may give a representation (D-061). Media map them to values that
@@ -455,7 +459,8 @@ pub enum CKind {
     Label { value: CExpr, ty: Type, label: String, idx: Option<usize> },
     /// An author's text: the pieces between values, the values with their types and, for a
     /// binding, its index (shown in its display unit), and where it is placed (D-076).
-    Text { pieces: Vec<String>, values: Vec<(CExpr, Type, Option<usize>)>, at: Option<CExpr> },
+    /// `places`: the decimals each value is shown with, when the author chose (D-078).
+    Text { pieces: Vec<String>, values: Vec<(CExpr, Type, Option<usize>)>, places: Vec<Option<usize>>, at: Option<CExpr> },
     Title { value: String },
     Formula { lhs: String, rhs: Expr, params: Vec<String>, refs: Vec<(Id, usize)>, live: bool },
     Control { control: String, binding: Id, idx: usize, min: Option<f64>, max: Option<f64>, step: Option<f64>, ends: Option<[String; 2]> },
@@ -705,7 +710,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
         // `text("bounced {n} times", at: P)` (D-076): the template's `{}` are its values.
         "text" => {
             let Some(Arg::Text { text }) = rep.sources.first() else { return Err(needs("a text in quotes: `text(\"Drag the ball\")`")) };
-            let pieces = split_template(text);
+            let (pieces, places) = split_template(text);
             let mut values = vec![];
             for a in &rep.sources[1..] {
                 let Arg::Expr { expr } = a else { return Err(needs("values in braces")) };
@@ -728,7 +733,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
                 }
                 (Some(_), ViewCtx::Panel) => return Err(d("PK-E05", "a text in a panel has no place to be put `at` (D-076)".into())),
             };
-            CKind::Text { pieces, values, at }
+            CKind::Text { pieces, values, places, at }
         }
         // `title("The flight")`: the caption of its view or panel (D-076).
         "title" => match rep.sources.first() {
@@ -1020,6 +1025,8 @@ pub fn project(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], 
 fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t: f64, tf: Tf) -> RepFrame {
     let eval = |c: &CExpr| run.eval_state(c, vals, t).map(|v| tf.apply(v));
     let status = |s: prismal_kernel::Status| (Shape::Status { status: s.cause.clone() }, format!("{}: not available ({})", r.rep.name.clone().unwrap_or(r.rep.kind.clone()), s.cause));
+    // Breaks of a sampled path (trace, series): where the value jumped between two samples.
+    let mut breaks = vec![];
     let (shape, text) = match &r.kind {
         CKind::Marker { pos, label } => match eval(pos) {
             Ok(v) => {
@@ -1035,7 +1042,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 Some(Ok(v)) => coords(&v),
                 Some(Err(s)) => {
                     let (sh, tx) = status(s);
-                    return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None };
+                    return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, breaks: vec![] };
                 }
                 None => vec![0.0, 0.0],
             };
@@ -1080,16 +1087,20 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
         },
         CKind::Trace { pos, every, label } => {
             // A member's trace starts when it is made and ends when it is destroyed (D-057).
-            let pts: Vec<[f64; 2]> = samples(run, t, *every)
-                .filter_map(|s| {
-                    let st = run.state_at(s);
-                    if !r.shown(run, &st, s) {
-                        return None;
-                    }
-                    run.eval_state(pos, &st, s).ok()
-                })
-                .map(|v| ctx.to_view(&coords(&v)))
-                .collect();
+            let mut prev: Option<f64> = None;
+            let mut pts: Vec<[f64; 2]> = vec![];
+            for s in samples(run, t, *every) {
+                let st = run.state_at(s);
+                if !r.shown(run, &st, s) {
+                    continue;
+                }
+                let Ok(v) = run.eval_state(pos, &st, s) else { continue };
+                if prev.is_some_and(|a| jumped(run, pos, a, s)) && !pts.is_empty() {
+                    breaks.push(pts.len());
+                }
+                prev = Some(s);
+                pts.push(ctx.to_view(&coords(&v)));
+            }
             let text = match (pts.first(), pts.last()) {
                 (Some(_), Some(_)) => format!("trace of {label}: {} samples every {} s up to t = {} s", pts.len(), fmt_num(*every), fmt_num(t - run.config.t0)),
                 _ => format!("trace of {label}: no samples"),
@@ -1098,25 +1109,31 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
         }
         CKind::Series { value, every, label } => {
             let t0 = run.config.t0;
-            let pts: Vec<[f64; 2]> = samples(run, t, *every)
-                .filter_map(|s| match run.eval_state(value, &run.state_at(s), s) {
-                    Ok(Value::Num(y)) => Some([s - t0, y]),
-                    _ => None,
-                })
-                .collect();
+            let mut prev: Option<f64> = None;
+            let mut pts: Vec<[f64; 2]> = vec![];
+            for s in samples(run, t, *every) {
+                if let Ok(Value::Num(y)) = run.eval_state(value, &run.state_at(s), s) {
+                    if prev.is_some_and(|a| jumped(run, value, a, s)) && !pts.is_empty() {
+                        breaks.push(pts.len());
+                    }
+                    prev = Some(s);
+                    pts.push([s - t0, y]);
+                }
+            }
             let text = match pts.last() {
                 Some(p) => format!("series of {label} against elapsed time: {} samples, last {} at {} s", pts.len(), fmt_num(p[1]), fmt_num(p[0])),
                 None => format!("series of {label}: no samples"),
             };
             (Shape::Polyline { points: pts }, text)
         }
-        CKind::Text { pieces, values, at } => {
+        CKind::Text { pieces, values, places, at } => {
             let mut s = pieces[0].clone();
             for (k, (c, ty, idx)) in values.iter().enumerate() {
                 match eval(c) {
-                    Ok(v) => s.push_str(&match idx {
-                        Some(i) => fmt_binding(cm, *i, &v),
-                        None => fmt_value(&v, ty),
+                    Ok(v) => s.push_str(&match (idx, places[k]) {
+                        (_, Some(dp)) => crate::text::fmt_places(cm, *idx, &v, ty, dp),
+                        (Some(i), None) => fmt_binding(cm, *i, &v),
+                        (None, None) => fmt_value(&v, ty),
                     }),
                     // A value that is not available shows as `?`, as a label shows its status.
                     Err(_) => s.push('?'),
@@ -1181,7 +1198,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     Ok(v) => pts.push(ctx.to_view(&coords(&v))),
                     Err(s) => {
                         let (sh, tx) = status(s);
-                        return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None };
+                        return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, breaks: vec![] };
                     }
                 }
             }
@@ -1290,8 +1307,13 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
         CKind::Axes => (Shape::Axes, "axes".into()),
         CKind::Grid => (Shape::Grid, "grid".into()),
     };
-    let label = match &r.kind {
-        CKind::Marker { label, .. } | CKind::Arrow { label, .. } | CKind::Graph { label, .. } => Some(label.clone()),
+    // The label drawn beside a marker, an arrow or a graph: its name or source, the
+    // author's `label: "..."`, or none with `label: none` (D-078). The text alternative
+    // keeps the name either way.
+    let label = match (&r.kind, r.rep.prop("label")) {
+        (CKind::Marker { .. } | CKind::Arrow { .. } | CKind::Graph { .. }, Some(Arg::Word { word })) if word == "none" => None,
+        (CKind::Marker { .. } | CKind::Arrow { .. } | CKind::Graph { .. }, Some(Arg::Text { text })) => Some(text.clone()),
+        (CKind::Marker { label, .. } | CKind::Arrow { label, .. } | CKind::Graph { label, .. }, _) => Some(label.clone()),
         _ => None,
     };
     let drag = r.rep.inverse.as_ref().map(|inv| inv.part.clone().unwrap_or_else(|| "body".into()));
@@ -1302,7 +1324,30 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
         None => text,
     };
     let (color, line) = (style_word(&r.rep, "color"), style_word(&r.rep, "line"));
-    RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape, text, highlighted: false, valid: None, opacity: None, drawn: None, label, drag, click, color, line, color_to: None, color_mix: None, scale: None }
+    RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape, text, highlighted: false, valid: None, opacity: None, drawn: None, label, drag, click, color, line, color_to: None, color_mix: None, scale: None, breaks }
+}
+
+/// Whether the value of `e` jumped at an instant in `(a, b]`: changed by a transition (an
+/// event or an intervention) rather than by flowing. Such an instant has several committed
+/// states; the value is compared before and after them.
+fn jumped(run: &Run, e: &CExpr, a: f64, b: f64) -> bool {
+    let mut i = run.committed.partition_point(|c| c.t <= a);
+    while i < run.committed.len() && run.committed[i].t <= b {
+        let tau = run.committed[i].t;
+        let j = run.committed[i..].iter().take_while(|c| c.t == tau).count() + i;
+        if j - i > 1 {
+            let before = run.eval_state(e, &run.committed[i].vals, tau).ok();
+            let after = run.eval_state(e, &run.committed[j - 1].vals, tau).ok();
+            if let (Some(x), Some(y)) = (before, after) {
+                let (x, y) = (coords(&x), coords(&y));
+                if x.iter().zip(&y).any(|(p, q)| (p - q).abs() > 1e-9 * (1.0 + p.abs().max(q.abs()))) {
+                    return true;
+                }
+            }
+        }
+        i = j;
+    }
+    false
 }
 
 /// Sample instants `t0, t0 + dt, ...` up to `t`, and `t` itself (PK-6.3, PK-7.5: a trace
@@ -1463,9 +1508,10 @@ mod tests {
     }
 }
 
-/// The pieces of a `text` template between its `{}` (literal braces written doubled), D-076.
-pub fn split_template(t: &str) -> Vec<String> {
-    let (mut pieces, mut cur) = (vec![], String::new());
+/// The pieces of a `text` template between its `{}` or `{:.N}` (literal braces written
+/// doubled), and the decimals of each value (D-076, D-078).
+pub fn split_template(t: &str) -> (Vec<String>, Vec<Option<usize>>) {
+    let (mut pieces, mut places, mut cur) = (vec![], vec![], String::new());
     let mut chars = t.chars().peekable();
     while let Some(c) = chars.next() {
         match (c, chars.peek()) {
@@ -1476,11 +1522,17 @@ pub fn split_template(t: &str) -> Vec<String> {
             ('{', Some('}')) => {
                 chars.next();
                 pieces.push(std::mem::take(&mut cur));
+                places.push(None);
+            }
+            ('{', Some(':')) => {
+                let spec: String = chars.by_ref().take_while(|c| *c != '}').collect();
+                pieces.push(std::mem::take(&mut cur));
+                places.push(spec.trim_start_matches(":.").parse().ok());
             }
             _ => cur.push(c),
         }
     }
     pieces.push(cur);
-    pieces
+    (pieces, places)
 }
 

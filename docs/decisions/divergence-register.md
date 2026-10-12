@@ -1434,3 +1434,21 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
 
+## D-078: Findings from the first complete lesson: path breaks, rounding, labels, and `on E`
+
+- **Status:** Accepted
+- **Original position:** PROJECT-STATE (2026-10-12) put real content first: complete lessons written as an author would, to find what the language lacks. The first, `examples/projectile.md` (a projectile lab and a lesson of three throws), was written and its stills and video were inspected.
+- **Raised by:** writing `examples/projectile.md`.
+- **Builds on:** PK-3.1, PK-6.3, PK-6.3e, PK-11.1, RC-8.7, RC-11.1, D-076.
+- **Question:** The lesson exposed four problems. What does each need?
+  1. **A wrong value, a runtime bug.** In the lesson, `pos.x on landed` read 0 for every landing. The lesson throws again at the instant the ball lands, and `on E` read the last state at that instant, after the relaunch. PK-3.1 says `on(E)` reads "the committed state at the event's final microstep".
+  2. **A path drawn back to the start.** A `trace` joined its samples across the relaunch, drawing a line from the landing point to the origin.
+  3. **Too many digits.** Texts showed `35.3119 m` where a learner needs `35.3 m`.
+  4. **An unwanted label.** Naming the marker `as ball`, so that the lesson can highlight it, wrote "ball" on the field, where it collided with the axis label.
+- **Options considered:** for 1, mark the states committed while a logged action applies and stop `on E` before them (taken), or record the action instants separately (a new record that snapshots would also have to cut); for 2, a gap list on the path's frame entry beside its points (taken), or a new field on the path shape (fifteen pattern matches changed for one optional list); for 3, a decimals suffix in braces, `{last:.1}`, the form authors know from templates (taken), or a property on the text (one precision for all its values); for 4, `label: "..."` and `label: none` on markers, arrows and graphs (taken).
+- **Accepted position:** the options taken above, under the owner's standing delegation of 2026-09-30. A path (`trace`, `series_plot`) breaks between two samples when, at an instant between them, transitions changed its value (events or interventions), compared before and after that instant; a bounce, which changes the velocity and not the position, does not break a trace of the position. Frames carry `breaks`, the indices that start a new piece; both renderers lift the pen there. `{e:.N}` shows `e` with `N` decimals in its unit or display unit; `-0` shows as `0`. A chosen label replaces the drawn label only; the text alternative keeps the name.
+- **Reason:** each is what the lesson needed and none adds a concept: a decimals suffix and a label property are presentation options, the gap list is how a medium should draw a path that jumped, and the `on E` fix makes the runtime do what the specification already says.
+- **Consequences:** `Committed::by_action`, `Run::on`; `RepFrame::breaks`, `jumped`; `CKind::Text { places }`, `split_template`, `fmt_places`; lowering of `{e:.N}` and `label: none`, formatter; both renderers; guide chapters 7, 10 and 14; `examples/` with its README and `crates/prismal-web/tests/examples.rs`; `prismal-host/tests/authoring.rs`, `prismal-syntax/tests/glossary.rs`. Not yet: avoiding collisions between labels and axis labels in the renderers.
+- **History:**
+  - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+

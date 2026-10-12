@@ -863,6 +863,14 @@ impl<'a> Printer<'a> {
                         s.push_str(&values.next().unwrap_or_default());
                         s.push('}');
                         rest = &rest[i + 2..];
+                    } else if rest[i..].starts_with("{:.") {
+                        // `{:.N}`: a value with N decimals (D-078).
+                        let close = rest[i..].find('}').map(|k| i + k).unwrap_or(rest.len() - 1);
+                        s.push('{');
+                        s.push_str(&values.next().unwrap_or_default());
+                        s.push_str(&rest[i + 1..close]);
+                        s.push('}');
+                        rest = &rest[close + 1..];
                     } else {
                         s.push_str(&rest[i..i + 1]);
                         rest = &rest[i + 1..];
