@@ -26,6 +26,25 @@ pub fn fmt_num(x: f64) -> String {
     }
 }
 
+/// A value with `dp` decimals, in its binding's display unit when it has one (D-078):
+/// `35.3 m`, `(2.0 m, 1.5 m)`, `40 %`. Truth values and cases are shown as usual.
+pub fn fmt_places(cm: &CModel, idx: Option<usize>, v: &Value, ty: &Type, dp: usize) -> String {
+    let fixed = |x: f64| {
+        let s = format!("{:.*}", dp, x);
+        if s.trim_start_matches('-').chars().all(|c| c == '0' || c == '.') { s.trim_start_matches('-').to_string() } else { s }
+    };
+    let with = |x: f64, unit: &str| if unit.is_empty() { fixed(x) } else { format!("{} {unit}", fixed(x)) };
+    let display = idx.and_then(|i| cm.ir.binding(&cm.bindings[i].id)).and_then(|b| b.display.unit.as_ref()).and_then(|u| prismal_ir::Unit::parse(u).ok());
+    match (v, ty, display) {
+        (Value::Num(x), _, Some(u)) => with((x - u.offset) / u.scale, &u.text),
+        (Value::Num(x), Type::Quantity { dim } | Type::Instant { dim }, None) => with(*x, &unit_text(dim)),
+        (Value::Num(x), _, None) => fixed(*x),
+        (Value::Vec(a), Type::Vector { dim, .. }, _) => format!("({})", components(a.as_slice()).iter().map(|x| with(*x, &unit_text(dim))).collect::<Vec<_>>().join(", ")),
+        (Value::Point(a), _, _) => format!("({})", components(a.as_slice()).iter().map(|x| with(*x, "m")).collect::<Vec<_>>().join(", ")),
+        _ => fmt_value(v, ty),
+    }
+}
+
 /// The components of a vector or point as text shows them: a component smaller than `1e-9`
 /// of the largest is rounding left by a computation (a drag mapped from pixels, a rotation)
 /// and is shown as 0, never as `4.44089e-16 m`.

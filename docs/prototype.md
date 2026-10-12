@@ -370,3 +370,4 @@ The energy drifts agree with the predictions of `tools/refvals.py` (RP-04: 7.8e-
 - 2026-10-01 animated color, line style and scale, shape morphs, easing functions; cameras on plots (D-075).
 - 2026-10-01 authors' text with values, `when:` on representations, titles of presentations, views and panels (D-076).
 - 2026-10-12 words at a slider's ends, the percent unit, labels in display units (D-077); a banded label left to `text ... when:`.
+- 2026-10-12 first complete example (`examples/projectile.md`, lab, lesson, video); found and fixed: `on E` read past logged actions at the event's instant, paths joined across jumps; rounding in texts and chosen labels (D-078).

@@ -525,9 +525,13 @@ function drawRep(v, g, r, u, colorIndex) {
       break;
     }
     case 'polyline': {
-      const pts = r.points.map((p) => m.to(p).join(',')).join(' ');
       const trace = r.kind === 'trace';
-      svg('polyline', { class: trace ? 'trace' : 'graph', points: pts, 'stroke-width': (trace ? 1.5 : 2) * u }, grp);
+      // A sampled path breaks where its value jumped (a ball thrown again).
+      const cuts = [0, ...(r.breaks || []), r.points.length];
+      for (let k = 0; k + 1 < cuts.length; k++) {
+        const pts = r.points.slice(cuts[k], cuts[k + 1]).map((p) => m.to(p).join(',')).join(' ');
+        svg('polyline', { class: trace ? 'trace' : 'graph', points: pts, 'stroke-width': (trace ? 1.5 : 2) * u }, grp);
+      }
       break;
     }
     case 'polygon': {

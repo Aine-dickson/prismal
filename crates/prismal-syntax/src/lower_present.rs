@@ -146,6 +146,8 @@ impl PresCx<'_, '_> {
                 (ExprKind::Str(s), _) => Arg::Text { text: s.clone() },
                 // Style words (D-061): `color: blue`, `line: dashed`.
                 (ExprKind::Name(w), Some("color" | "line")) => Arg::Word { word: w.clone() },
+                // `label: none`: no label drawn beside the representation (D-078).
+                (ExprKind::Name(w), Some("label")) if w == "none" => Arg::Word { word: w.clone() },
                 (ExprKind::List(_), _) => match self.range(&a.value) {
                     Some((lo, hi)) => Arg::Range { lo, hi },
                     None => continue,
@@ -238,10 +240,18 @@ impl PresCx<'_, '_> {
                 }
                 '{' => {
                     let inner: String = chars.by_ref().take_while(|c| *c != '}').collect();
+                    // `{last:.1}`: the value with one decimal (D-078).
+                    let (inner, places) = match inner.rsplit_once(":.") {
+                        Some((e, n)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => (e.to_string(), Some(n.to_string())),
+                        _ => (inner, None),
+                    };
                     match crate::parse_expr(&inner) {
                         Ok(e) => {
                             values.push(self.expr(&e));
-                            template.push_str("{}");
+                            match places {
+                                Some(n) => template.push_str(&format!("{{:.{n}}}")),
+                                None => template.push_str("{}"),
+                            }
                         }
                         Err(m) => self.err("SX-E02", format!("in `{{{inner}}}`: {m}"), span),
                     }

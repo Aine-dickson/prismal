@@ -681,7 +681,15 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
             // A drawn fraction, or the author's line, replaces the trace's own dashes, as in
             // the browser.
             let extra = if drawn.is_some() || !style.is_empty() { dash.as_str() } else { extra };
-            let _ = write!(out, "<polyline class=\"{cls}\" points=\"{}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{}\"{extra}/>", pts("points"), n(width * u));
+            // A sampled path breaks where its value jumped (a ball thrown again).
+            let all = arr(&r["points"]);
+            let mut cuts: Vec<usize> = vec![0];
+            cuts.extend(arr(&r["breaks"]).iter().filter_map(|b| b.as_u64()).map(|b| b as usize));
+            cuts.push(all.len());
+            for w in cuts.windows(2) {
+                let piece = all[w[0].min(all.len())..w[1].min(all.len())].iter().map(|p| map.to(pt(p))).map(|p| format!("{},{}", n(p[0]), n(p[1]))).collect::<Vec<_>>().join(" ");
+                let _ = write!(out, "<polyline class=\"{cls}\" points=\"{piece}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{}\"{extra}/>", n(width * u));
+            }
         }
         "polygon" => {
             let _ = write!(

@@ -187,3 +187,25 @@ presentation Lab for Room {
     let again = prismal_syntax::compile(&out).unwrap_or_else(|ds| panic!("{:?}\n{out}", ds.iter().map(|d| &d.message).collect::<Vec<_>>()));
     assert_eq!(prismal_syntax::format::format(&again.doc), out);
 }
+
+/// Rounded values in texts and chosen labels print back as written (D-078).
+#[test]
+fn rounding_and_labels_print_back() {
+    let src = "space Plane = euclidean(2)
+model M in Plane { state { pos: Point = origin } }
+presentation P for M {
+  view s: spatial(Plane, scale: 1 m -> 10 px, y: up) {
+    marker(pos, label: none) as ball
+    marker(origin, label: \"start\")
+  }
+  panel n { text(\"At {pos.x:.1}, {{not}} {pos.y}.\") }
+}
+";
+    let compiled = prismal_syntax::compile(src).unwrap_or_else(|ds| panic!("{:?}", ds.iter().map(|d| &d.message).collect::<Vec<_>>()));
+    let out = prismal_syntax::format::format(&compiled.doc);
+    for want in ["label: none", "label: \"start\"", "text(\"At {pos.x:.1}, {{not}} {pos.y}.\")"] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+    let again = prismal_syntax::compile(&out).unwrap_or_else(|ds| panic!("{:?}\n{out}", ds.iter().map(|d| &d.message).collect::<Vec<_>>()));
+    assert_eq!(prismal_syntax::format::format(&again.doc), out);
+}

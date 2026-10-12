@@ -216,6 +216,24 @@ text("The ball is {pos.y} above the ground.")
 text("start", at: origin + (0 m, h))        // placed at a point of a spatial view
 ```
 
+### Round a number in a text
+
+Add **:.N** after the value in braces.
+
+```prismal
+// presentation / panel
+text("Landed {last:.1} away.")        // 35.3 m
+```
+
+### Name a drawing without labelling it
+
+Add **label: none** (or **label: "..."** for another label).
+
+```prismal
+// presentation / view
+marker(pos, label: none) as ball      // `ball` for the lesson, no word on the screen
+```
+
 ### Show something only when a condition holds
 
 Add **when:** to the representation: text, marker, arrow, slider, anything.
