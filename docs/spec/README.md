@@ -24,6 +24,6 @@ This directory holds the normative specification of Prismal's core semantics. It
   - `Restates:` carried-forward resolutions (`R-##`, see `docs/decisions/carried-forward.md`).
   - `Decisions:` register entries (`D-###`, see `docs/decisions/divergence-register.md`).
   - `Prior art:` external systems or theory the section follows or departs from, with the reason.
-- **Example syntax.** Examples use the working syntax chosen by the syntax study (D-028, `docs/syntax-study/working-syntax.md`). It is non-binding until the syntax is frozen. The normative content is the semantics, not the notation. Examples not yet converted are marked `sketch (non-binding, D-006)`.
+- **Example syntax.** Examples use the working syntax chosen by the syntax study (D-028, `docs/syntax-study/working-syntax.md`). It is at version 1 (D-081, working syntax section 1.7). The normative content is the semantics, not the notation. Examples not yet converted are marked `sketch (non-binding, D-006)`.
 - **Precedence.** Divergence register, then this specification, then the carried-forward record, then the exploration record (`docs/design/`). A conflict between this specification and an accepted register entry is a defect in the specification.
 - **Serializable form.** Every construct defined here has a representation in the semantic IR required by D-019 and R-47. The IR format is specified separately; this specification defines the content it must carry.

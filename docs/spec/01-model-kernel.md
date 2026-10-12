@@ -63,7 +63,7 @@ The model kernel has these concepts. Every other construct in the language (prop
 
 ### Example notation
 
-Examples use the working syntax (D-028, `docs/syntax-study/working-syntax.md`). It is non-binding until the syntax is frozen; the normative content is the semantics, not the notation.
+Examples use the working syntax (D-028, `docs/syntax-study/working-syntax.md`). It is at version 1 (D-081); the normative content is the semantics, not the notation.
 
 ```text
 model Ball in Plane {

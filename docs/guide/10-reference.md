@@ -85,6 +85,45 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms
 
 **Timeline actions:** `narrate "..." [for d]`, `run rate r [until E]`, `hold`, `seek τ`, `reset`, `branch`, `highlight name`, `hide name [for d]`, `reveal fade|draw [for d] [in view] { reps }`, `camera view [to P] [zoom z] [for d]`, `in view { reps }`, `show rep`, `intervene { set p = e }`, `request E`, `request E(v)`, `request E(c[k], v)`, `wait d`, `wait learner [limit L] [fallback { actions }]`, `animate name opacity|offset|scale to v [for d] [ease e]`, `animate name color|line to word [for d] [ease e]`, `animate name morph to other [for d] [ease e]`, `release name`, `bind name [for d]`, `sequence { ... }`, `explore [limit L] [keep p, ...] { controls } [fallback { actions }]` (chapter 8).
 
+## Options and clauses
+
+Two forms add details to a form, one for each place they appear (D-081):
+
+- **Inside parentheses**, a representation or a view takes **named options**, `name: value`, after its positional arguments: `marker(pos, color: red, label: none)`, `plot(x: [0 s, 5 s], y: [0 m, 2 m], follow: y)`. Each kind takes the options below and no others; a misspelled or repeated option is an error (SX-E08, SX-E09).
+- **After a statement's head**, a declaration, event, constraint or timeline action takes **clauses**, a word and its value without a colon: `param g: Acceleration = 9.81 m/s^2 in [1 m/s^2, 20 m/s^2] symbol "g"`, `camera scene to P zoom 2 for 1 s`. Clauses come in any order, each at most once (an event keeps the order shown, since its block sits among its clauses); the formatter prints them in the order of this page.
+
+| Kind | Options (every representation also takes `when: c`) |
+|---|---|
+| `marker` | `at`, `color`, `label` |
+| `arrow` | `from`, `scale`, `color`, `line`, `label` |
+| `function_graph` | `color`, `line`, `label` |
+| `segment`, `polyline`, `polygon`, `circle`, `trace`, `series_plot` | `color`, `line` |
+| `ellipse` | `rotate`, `color`, `line` |
+| `arc` | `from`, `to`, `color`, `line` |
+| `text` | `at` |
+| `formula`, `equation` | `live` |
+| `slider` | `range`, `step`, `ends` |
+| `number_input` | `range`, `step` |
+| `button` | `label` |
+| `group` | `at`, `rotate`, `scale` |
+| `axes`, `grid`, `label`, `title`, `table`, `toggle` | none |
+| view `spatial(Space, ...)` | `scale`, `y` |
+| view `plot(...)` | `x`, `y`, `follow`, `x_unit`, `y_unit`, `window` |
+
+| Statement | Clauses |
+|---|---|
+| declaration in `param`, `state`, ... | `in I` or `where c` (one range), `intervenable`, `private`, `combine k`, `symbol "s"`, `unit u` |
+| `equation` | `checked within tol` |
+| `constraint` | `within tol`, `policy p` |
+| `event` | `on trigger` first, then `if c`, the block, `zeno ...` |
+| `narrate "..."`, `hide`, `bind` | `for d` |
+| `run rate r` | `until E` |
+| `reveal fade\|draw` | `for d`, `in view` |
+| `camera view` | `to P`, `zoom z`, `for d` |
+| `animate name property to v` | `for d`, `ease e` |
+| `explore` | `limit L`, `keep p, ...` |
+| `wait learner` | `limit L` |
+
 ## Runs
 
 ```prismal
@@ -195,7 +234,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 ## Diagnostics
 
-**Syntax** (`SX`): E01 lexical error, E02 syntax error, E03 unknown name, E04 unknown type or dimension, E05 unknown unit, E06 not in the v0 IR, E07 reserved word used as a name, E08 form not allowed here, E09 duplicate declaration.
+**Syntax** (`SX`): E01 lexical error, E02 syntax error, E03 unknown name, E04 unknown type or dimension, E05 unknown unit, E06 not in the v0 IR, E07 reserved word used as a name, E08 form not allowed here (also an option the kind does not take), E09 duplicate declaration (also an option or clause given twice).
 
 **Model** (`MK`):
 

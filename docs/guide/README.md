@@ -2,7 +2,7 @@
 
 A guide to writing Prismal programs in the working syntax (D-028), from a first formula to a narrated lesson. New to simulations and mathematical programming? Read [Start here](00-start-here.md) first. New to Prismal only? Start with [the tour](00-tour.md). Two pages help at any point: [What goes where](00-structure.md) (which block holds what) and [I want to...](14-i-want-to.md) (which words to combine for a goal). Each chapter introduces a few forms, shows a complete program that uses them, and ends with exercises. After the last chapter, `10-reference.md` lists every form on one page.
 
-- **Status:** living. Written 2026-09-30 against the prototype (`crates/`). The syntax is the working syntax: usable and implemented, not yet frozen.
+- **Status:** living. Written 2026-09-30 against the prototype (`crates/`). The syntax is the working syntax, version 1 (D-081): later versions add forms without breaking version 1 programs.
 - **Checked:** every program in the guide is compiled and every case in it is run by `cargo test` (`crates/prismal-web/tests/guide.rs`). A program that fails, or an example error that is not reported as stated, fails the test suite.
 
 ## Chapters

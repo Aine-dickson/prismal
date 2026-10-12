@@ -67,7 +67,7 @@ fn mistakes() {
     let e = code("color: red", "color: mauve");
     assert!(e.contains("PK-E05") && e.contains("one of red, orange"), "{e}");
     let e = code("color: red", "line: dashed");
-    assert!(e.contains("PK-E05") && e.contains("a marker takes no `line`"), "{e}");
+    assert!(e.contains("SX-E08") && e.contains("`marker` takes no option `line`"), "{e}");
     let e = code("line: dashed", "line: wavy");
     assert!(e.contains("PK-E05") && e.contains("solid, dashed, dotted"), "{e}");
 }
