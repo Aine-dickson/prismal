@@ -715,7 +715,12 @@ function renderControl(it, r) {
       if (r.max != null) input.max = r.max;
     }
     const out = el('output');
-    label.append(name, input, out);
+    // Words at a slider's two ends (D-077).
+    if (r.ends) {
+      label.append(name, el('span', { class: 'end', text: r.ends[0] }), input, el('span', { class: 'end', text: r.ends[1] }), out);
+    } else {
+      label.append(name, input, out);
+    }
     it.root.replaceChildren(label);
     it.input = input;
     it.out = out;

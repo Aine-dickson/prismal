@@ -55,7 +55,7 @@ presentation Name for Model {
 | `button(E [, label: "..."])` | requests the `on request` event `E` when pressed | any |
 | `button(E(v) [, label: "..."])` | requests `E` with the value `v`, for an event that takes one (chapter 5) | any |
 | `button(reset)`, `button(undo)`, `button(redo)` | a lab's runtime controls: start the run again, take back the last action, put it back | any |
-| `slider(p, range: [a, b] [, step: s])` | a control for a parameter | any |
+| `slider(p, range: [a, b] [, step: s] [, ends: ("low", "high")])` | a control for a parameter; `ends` puts a word at each end | any |
 | `number_input(p [, range: [a, b]])` | a typed value for a parameter | any |
 | `toggle(p)` | a switch for a Boolean parameter | any |
 | `group(at: P, rotate: θ, scale: k) { ... }` | its members, placed, turned and scaled together (see Groups) | spatial |
@@ -541,4 +541,42 @@ run drop of Dropped with DropLab {
 - `at: P` places a text in a spatial view (`P` a point) or a plot (`P` a pair of axis values); without it, the text is a line in the panel or below the view.
 - `when: c` works on every representation, not only text: `marker(pos, when: airborne)` hides the marker once the ball has landed, `slider(h, ..., when: not airborne)` offers the slider only then. The condition is read at the instant shown.
 - There is no text that is chosen by a condition inside one sentence; write one text per case, each with its `when`, as above.
+
+## Words for values
+
+**Goal.** Let a learner read the state of a system in words, not only in numbers: "Comfortable" rather than "293 K", a slider that runs from "cold" to "hot", a share shown as "40 %".
+**How it is built.** `ends:` on a slider names its two ends; the display unit `%` shows a share as a percentage; and one `text` per band, each with its own `when:`, tells a value in words (D-076, D-077).
+
+```text
+model Room {
+  param {
+    temp:  Quantity<Θ> = 293 K  in [273 K, 313 K]
+    humid: Real        = 40 %   in [0 %, 100 %]   unit %
+  }
+}
+
+presentation RoomLab for Room {
+  title "How does the room feel?"
+  panel controls {
+    slider(temp, range: [273 K, 313 K], ends: ("cold", "hot"))
+    slider(humid, range: [0 %, 100 %], ends: ("dry", "damp"))
+    label(humid)
+    text("Cold", when: temp < 288 K)
+    text("Comfortable", when: temp >= 288 K and temp < 298 K)
+    text("Hot", when: temp >= 298 K)
+  }
+  observe { h = humid live }
+}
+```
+
+```cases
+run damp of Room with RoomLab {
+  param { humid = 75 % }
+  expect { h == 0.75 exactly }
+}
+```
+
+- The bands are written so that exactly one holds for any temperature: `<` on one side, `>=` on the next.
+- A band that is a mode of the model, used by flows or events, belongs in the model instead: declare an enumeration (chapter 5) and show it with `label`, which prints the case's name.
+- A slider shows the real value with its unit, beside its end words. A dial from 0 to 10 with no unit is written in the model, as a parameter `level: Real in [0, 10]` from which the physical value is computed, so that the model says what the learner is really setting.
 

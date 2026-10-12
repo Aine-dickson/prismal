@@ -213,6 +213,8 @@ pub enum Arg {
     Sampled { expr: Expr, every: Expr },
     /// A model element that is not a value: an event (`button`) or an equation (`equation`).
     Element { element: Id },
+    /// Several texts: the words at a slider's two ends, `ends: ("cold", "hot")` (D-077).
+    Texts { texts: Vec<String> },
 }
 
 /// A declared inverse (PK-5.6): the gesture's value, `{"param": 0}`, gives proposals.

@@ -61,7 +61,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `t`, `t0`, `elapsed` | current time, start, time since start | 4 |
 | `sin cos tan sqrt exp log abs min max atan2` | functions | 2 |
 
-Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms min h kg g N J W Pa Hz A K mol cd rad deg rev`.
+Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms min h kg g N J W Pa Hz A K mol cd rad deg rev %`.
 
 ## Presentation
 
@@ -79,7 +79,7 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms
 | `layout row(a, column(b, c))` | where views go on the page | 7 |
 | `title "..."` | the presentation's title, above its views | 7 |
 
-**Representations:** `text("... {e} ..." [, at: P])` (an author's text with values in braces; `at` places it in a spatial or plot view), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider`, `number_input`, `toggle`, `button(E)`, `button(E(v))`, `button(reset|undo|redo)`, `group(at: P, rotate: θ, scale: k) { members }` (chapter 7). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink` and `line: solid|dashed|dotted` style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7).
+**Representations:** `text("... {e} ..." [, at: P])` (an author's text with values in braces; `at` places it in a spatial or plot view), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider` (with `ends: ("low", "high")`, words at its ends), `number_input`, `toggle`, `button(E)`, `button(E(v))`, `button(reset|undo|redo)`, `group(at: P, rotate: θ, scale: k) { members }` (chapter 7). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink` and `line: solid|dashed|dotted` style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7).
 
 **Observation schedules:** `live`, `every Δ`, `at τ`, `on E [microstep n]`, `over [a, b]`. **Sources:** any expression, `event_log [of E] [where zeno_applied]`, `diagnostics [of element]`, `intervention_log`.
 

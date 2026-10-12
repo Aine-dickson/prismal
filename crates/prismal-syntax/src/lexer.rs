@@ -136,6 +136,10 @@ pub fn lex(src: &str) -> (Lexed, Vec<Diag>) {
             let text = src[offset(i)..offset(j)].to_string();
             i = j;
             Tok::Ident(text)
+        } else if c == '%' {
+            // The percent unit (D-077): a unit symbol, never a name or an operator.
+            i += 1;
+            Tok::Ident("%".into())
         } else if c == '"' {
             let mut j = i + 1;
             let mut s = String::new();

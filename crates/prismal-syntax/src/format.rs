@@ -835,6 +835,7 @@ impl<'a> Printer<'a> {
             Arg::Word { word } => word.clone(),
             Arg::Sampled { expr, every } => format!("{} every {}", self.expr(expr), self.expr(every)),
             Arg::Element { element } => self.element_name(element),
+            Arg::Texts { texts } => format!("({})", texts.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ")),
         }
     }
 

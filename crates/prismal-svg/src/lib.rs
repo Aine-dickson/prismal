@@ -897,6 +897,12 @@ fn control_block(r: &Json, disabled: bool, th: &Theme) -> Block {
             let hi = r["max"].as_f64().unwrap_or(10.0);
             let t = if hi > lo { ((value - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
             let w = 160.0;
+            // Words at the slider's two ends (D-077): the low one before the bar.
+            let ends: Vec<&str> = arr(&r["ends"]).iter().map(s).collect();
+            if let Some(low) = ends.first() {
+                body += &text(x, 17.0, low, 12.0, false, th.muted, "");
+                x += text_w(low, 12.0, false) + 6.0;
+            }
             let _ = write!(
                 body,
                 "<rect x=\"{}\" y=\"10\" width=\"{w}\" height=\"4\" rx=\"2\" fill=\"{}\"/><rect x=\"{}\" y=\"10\" width=\"{}\" height=\"4\" rx=\"2\" fill=\"{}\"/><circle cx=\"{}\" cy=\"12\" r=\"7\" fill=\"{}\"/>",
@@ -909,6 +915,10 @@ fn control_block(r: &Json, disabled: bool, th: &Theme) -> Block {
                 th.accent
             );
             x += w + 8.0;
+            if let Some(high) = ends.get(1) {
+                body += &text(x, 17.0, high, 12.0, false, th.muted, "");
+                x += text_w(high, 12.0, false) + 8.0;
+            }
         }
         "toggle" => {
             let on = value != 0.0;

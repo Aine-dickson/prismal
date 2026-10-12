@@ -310,6 +310,37 @@ formula("speed", |vel|, live: true)
 
 See [chapter 4](04-motion.md) and [the tour](00-tour.md).
 
+### Tell the state of the system in words
+
+Write one **text** per band, each with **when:**.
+
+```prismal
+// presentation / panel
+text("Cold", when: temp < 288 K)
+text("Comfortable", when: temp >= 288 K and temp < 298 K)
+text("Hot", when: temp >= 298 K)
+```
+
+See [chapter 7](07-presentations.md), Words for values.
+
+### Put words at the ends of a slider
+
+Add **ends:** to the slider.
+
+```prismal
+// presentation / panel
+slider(temp, range: [273 K, 313 K], ends: ("cold", "hot"))
+```
+
+### Show a share as a percentage
+
+Give the value the display **unit %**.
+
+```prismal
+// model / param
+humid: Real = 40 %   in [0 %, 100 %]   unit %
+```
+
 ### Show a value in other units
 
 On a model value, add **unit** to its declaration; on a plot axis, use **x_unit** or **y_unit**.
