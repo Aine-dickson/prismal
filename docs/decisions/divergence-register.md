@@ -1400,3 +1400,20 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-10-01 accepted under the owner's standing delegation of 2026-09-30 and implemented.
 
+## D-076: Authors' text, conditions on representations, and titles
+
+- **Status:** Accepted
+- **Original position:** PK-6.3 lists `label` (a value shown as text) and `formula`; a lesson narrates. An author could not write a sentence of their own in a view or panel, show something only while a condition holds, or title a presentation or a view: views were captioned with their name and kind (`scene (spatial)`). An early reader asked how Prismal "handles titles and conditional text"; it did not.
+- **Raised by:** the owner (2026-10-01).
+- **Builds on:** PK-6.1, PK-6.3, PK-6.5, PK-7.2, PK-11.1, MK-3.12, D-057 (representations drawn only while a condition holds).
+- **Question:** How does an author write text with live values, text or any representation shown under a condition, and titles?
+- **Options considered:**
+  1. **`text` with values in braces, a `when:` condition on any representation, and titles.** `text("The ball is {pos.y} above the ground.")`, any model expression in braces, shown with its unit (a binding in its display unit); `{{` and `}}` for literal braces; `at: P` places the text at a point of a spatial view or a pair of a plot. `when: c` on any representation shows it only while `c` holds at the instant shown, reusing the condition D-057 gives members. `title "..."` names the presentation; `title("...")` in a view or panel is its caption.
+  2. **String values in the model language** (`if landed then "Landed" else "Falling"`). One sentence could choose between texts, but models would gain a type that only presentations use, against PK-1 (a model never mentions how it is shown).
+  3. **A `caption:` argument on views** instead of a `title` representation. Panels take no arguments, so they would need a second form.
+- **Accepted position:** option 1, under the owner's standing delegation of 2026-09-30. A text whose value is not available shows `?` for it. A text in a panel cannot be placed `at` a point (PK-E05). The IR keeps a text's template with `{}` for each value as its first source and the values as the following sources, so the formatter writes the text back as authored. Frames carry a `text` as a text item and a placed text as the shape `note`; a `title` is the shape `title`, which renderers use as the view's or panel's caption, keeping its identity in the drawing; the layout gives `title` for the presentation and for each titled view. `title` is a contextual word.
+- **Reason:** text that reports the model in the author's words is what a learner reads first; braces are the form authors know from templates, and a condition on representations covers conditional text without bringing strings into models.
+- **Consequences:** PK-6.3e, PK-7.2b; 04-ir (presentation `title`, representation kinds `text` and `title`, representation `when` written by authors); working syntax (`title`); parser (`title` item, `parse_expr`), lowering (`interpolate`, `when:`), formatter; `CKind::Text`, `CKind::Title`, shapes `note` and `title`; host layout titles; the web player and the SVG renderer; guide chapters 7, 10, 14 and What goes where; `prismal-host/tests/text_and_titles.rs`, `prismal-syntax/tests/glossary.rs`. Not yet: option 2; text styles (size, emphasis).
+- **History:**
+  - 2026-10-01 accepted under the owner's standing delegation of 2026-09-30 and implemented; finished by the owner after the session ended, with the SVG caption drawn from the `title` representation.
+
