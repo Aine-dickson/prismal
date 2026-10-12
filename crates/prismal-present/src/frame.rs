@@ -1130,11 +1130,11 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             let mut s = pieces[0].clone();
             for (k, (c, ty, idx)) in values.iter().enumerate() {
                 match eval(c) {
-                    Ok(v) => s.push_str(&match (idx, places[k]) {
+                    Ok(v) => s.push_str(&crate::text::superscripts(&match (idx, places[k]) {
                         (_, Some(dp)) => crate::text::fmt_places(cm, *idx, &v, ty, dp),
                         (Some(i), None) => fmt_binding(cm, *i, &v),
                         (None, None) => fmt_value(&v, ty),
-                    }),
+                    })),
                     // A value that is not available shows as `?`, as a label shows its status.
                     Err(_) => s.push('?'),
                 }

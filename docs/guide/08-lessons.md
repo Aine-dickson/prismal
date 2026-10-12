@@ -577,7 +577,7 @@ The end of `roll` is found by locating the event `done`, so it is checked within
 | `animate name morph to other [for d]` | changes the drawn shape into the shape of the representation `other`, point by point |
 | `... ease linear`, `ease in`, `ease out`, `ease smooth` | at a constant rate; starting slowly; ending slowly; both (the default) |
 
-A morph's target is usually hidden: it is there to give a shape, and `hide` it in the first beat. The morph ends with exactly the target's shape, so a square that becomes a circle is a circle afterwards, drawn with the square's own style.
+A morph's target is usually hidden: it is there to give a shape, and `hide` it in the first beat. Between two shapes of one form, corners are matched in the order they are written: list the target's corners in the same order as the source's, or the shape turns inside out on the way (a triangle whose corners are matched in mirrored order flattens into a line halfway). The morph ends with exactly the target's shape, so a square that becomes a circle is a circle afterwards, drawn with the square's own style.
 
 ```text
 space Plane = euclidean(2)

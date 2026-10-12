@@ -45,6 +45,29 @@ pub fn fmt_places(cm: &CModel, idx: Option<usize>, v: &Value, ty: &Type, dp: usi
     }
 }
 
+/// Powers in units as an author's text shows them to people (D-079): `25 m²`, `9.81 m/s²`,
+/// `2 m⁻¹`. Units elsewhere keep `^`, which source text and formula alternatives read.
+pub fn superscripts(s: &str) -> String {
+    const DIGITS: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '^' && chars.peek().is_some_and(|n| n.is_ascii_digit() || *n == '-') {
+            while let Some(&n) = chars.peek() {
+                match n {
+                    '-' => out.push('⁻'),
+                    '0'..='9' => out.push(DIGITS[n as usize - '0' as usize]),
+                    _ => break,
+                }
+                chars.next();
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// The components of a vector or point as text shows them: a component smaller than `1e-9`
 /// of the largest is rounding left by a computation (a drag mapped from pixels, a rotation)
 /// and is shown as 0, never as `4.44089e-16 m`.
@@ -296,5 +319,8 @@ mod tests {
         assert_eq!(components(&[4.0, 4.440892098500626e-16]), [4.0, 0.0]);
         assert_eq!(components(&[1e-12, 2e-12]), [1e-12, 2e-12]);
         assert_eq!(unit_text(&Dim::parse("L/T").unwrap()), "m/s");
+        assert_eq!(superscripts("25.00 m^2"), "25.00 m²");
+        assert_eq!(superscripts("(1 m/s^2, 2 m^-10)"), "(1 m/s², 2 m⁻¹⁰)");
+        assert_eq!(superscripts("a^b 1e-5"), "a^b 1e-5");
     }
 }

@@ -5,6 +5,7 @@ Complete programs written the way an author would write them: a model, a lab and
 | Example | Shows |
 |---|---|
 | [Which angle throws farthest?](projectile.md) | a projectile thrown again on request; a lab with slider ends, live texts, a growing plot and the range formula; a lesson of three throws and an explore beat; video export |
+| [Why a² + b² = c²](pythagoras.md) | a figure with no state, drawn from its parameters; two arrangements side by side with drag handles; a lesson with camera moves, triangles morphed into place and squares revealed |
 
 To open one in the web player, paste its program blocks into the Source tab. To export a lesson as a video:
 

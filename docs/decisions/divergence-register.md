@@ -1452,3 +1452,18 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
 
+## D-079: Findings from the geometry example: powers in units, morph order
+
+- **Status:** Accepted
+- **Original position:** PROJECT-STATE (2026-10-12) listed a geometry proof with morphs and cameras as the second complete example. `examples/pythagoras.md` (a proof of Pythagoras' theorem by rearrangement: a lab with both arrangements, a lesson with cameras and morphs) was written, and its stills and video were inspected.
+- **Raised by:** writing `examples/pythagoras.md`.
+- **Builds on:** PK-8.4a, PK-11.1, D-075, D-076, D-078.
+- **Question:** The example ran as written, with every case passing, and showed two things. What does each need?
+  1. **Units written for a parser.** Author texts showed areas as `25.00 m^2`. The `^` is how source text writes a power, not how a learner reads one.
+  2. **A morph that flattens.** A triangle morphed to a target whose corners were listed in mirrored order collapsed into a line halfway. This is what PK-8.4a specifies (shapes of one form morph point by point), so the fix is in the author's program; the rule was not stated where authors learn morphs.
+- **Options considered:** for 1, superscript powers in the values of author texts (taken), in every human-facing string (labels, controls, text alternatives), or in `unit_text` itself. `unit_text` also builds source text (control values, drag proposals) that the parser reads back, so it must keep `^`. Labels and controls show a parameter's own unit, rarely a power; text alternatives are read by screen readers, which read `m^2` as well as `m²`. For 2, match corners by least travel for polygons too (a rotation of the list cannot fix a mirrored order, and choosing the author's order silently would hide mistakes elsewhere), or state the rule in the guide (taken).
+- **Accepted position:** the options taken above, under the owner's standing delegation of 2026-09-30. A value in an author's text writes powers of units as superscripts: `m²`, `m/s²`, `m⁻¹`. Guide chapter 8 says that corners are matched in the order they are written.
+- **Reason:** both are small and neither adds a concept: the first is how a medium should show a unit to people, the second documents existing behaviour.
+- **Consequences:** `text::superscripts`, applied to the values of `CKind::Text`; guide chapters 7 and 8; `examples/pythagoras.md`, `examples/README.md`. Not yet: superscripts in labels and control values when content shows a power there.
+- **History:**
+  - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
