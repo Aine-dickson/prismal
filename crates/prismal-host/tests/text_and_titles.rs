@@ -76,4 +76,7 @@ fn text_can_be_placed_at_a_point() {
     assert_eq!(note["value"], "start");
     // 1 m right and 10 m up, at 10 px per metre with y up.
     assert_eq!(note["at"], serde_json::json!([10.0, -100.0]));
+    // The view is framed to include the text's anchor, right of the ball (D-080).
+    let l = e.instance(&h).unwrap().layout();
+    assert_eq!(l["views"][0]["extent"][2], 10.0);
 }

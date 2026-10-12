@@ -80,6 +80,22 @@ model Count {
 
 Choose another name (`events`, `count`). The reference lists the reserved words; words of presentations and lessons (`view`, `beat`, `scene` ...) are reserved only where they are used, so `process drag` or a binding named `scene` is fine.
 
+**A long formula broken before an operator.** A line ends a statement unless it ends in an operator, a comma or an open bracket. A line that starts with `+` is read as a new statement:
+
+```error
+// error: SX-E02
+space Line = euclidean(1)
+model Spring in Line {
+  state { x: Length = 1 m }
+  flow {
+    der(x) = -x / 1 s
+      + 1 m/s
+  }
+}
+```
+
+Break the line after the operator instead (`der(x) = -x / 1 s +`, then `1 m/s` on the next line), or put the whole formula in parentheses.
+
 ## Models
 
 **A handler that sets a parameter.** Parameters are fixed for a run; an event changes state:
