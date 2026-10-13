@@ -26,7 +26,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
-    "instrument", "grid", "boundary", "periodic",
+    "instrument", "grid", "boundary", "periodic", "unknown",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -372,6 +372,8 @@ impl<'a> Parser<'a> {
                 "state" => Some(RoleWord::State),
                 "discrete" => Some(RoleWord::Discrete),
                 "derived" => Some(RoleWord::Derived),
+                // Contextual (D-092): a block or a declaration follows.
+                "unknown" if matches!(self.peek_at(1), Tok::Punct("{") | Tok::Ident(_)) => Some(RoleWord::Unknown),
                 _ => None,
             },
             _ => None,

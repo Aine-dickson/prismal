@@ -100,8 +100,10 @@ pub fn dim(d: &Dim) -> String {
 
 /// The name of a dimension if it has one (MK-3.3).
 fn named(d: &Dim) -> Option<&'static str> {
-    const NAMES: [&str; 15] =
-        ["Length", "Mass", "Time", "Current", "Amount", "Area", "Volume", "Velocity", "Acceleration", "Frequency", "Momentum", "Force", "Energy", "Power", "Pressure"];
+    const NAMES: [&str; 21] = [
+        "Length", "Mass", "Time", "Current", "Amount", "Area", "Volume", "Velocity", "Acceleration", "Frequency", "Momentum", "Force", "Energy", "Power", "Pressure", "Temperature",
+        "Charge", "Voltage", "Resistance", "Capacitance", "Inductance",
+    ];
     NAMES.into_iter().find(|n| crate::lower::named_dim(n).as_ref() == Some(d))
 }
 
@@ -527,6 +529,7 @@ impl<'a> Printer<'a> {
             (Role::Continuous, "state"),
             (Role::Discrete, "discrete"),
             (Role::Derived, "derived"),
+            (Role::Unknown, "unknown"),
         ] {
             let bs: Vec<&Binding> = m.bindings.iter().filter(|b| b.role == role).collect();
             if !bs.is_empty() {

@@ -102,6 +102,8 @@ pub enum RoleWord {
     State,
     Discrete,
     Derived,
+    /// `unknown { I: Current = 0 A }` (D-092).
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq)]

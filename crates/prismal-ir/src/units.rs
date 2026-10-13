@@ -19,6 +19,19 @@ fn is_zero(x: &f64) -> bool {
 }
 
 /// Symbol, scale to coherent SI, dimension.
+/// The factor of a prefixed unit `sym` of the base symbol `base`: `kΩ` is 1000.
+fn prefix(sym: &str, base: &str) -> f64 {
+    match sym.strip_suffix(base).unwrap_or("") {
+        "p" => 1e-12,
+        "n" => 1e-9,
+        "μ" | "u" => 1e-6,
+        "m" => 1e-3,
+        "k" => 1e3,
+        "M" => 1e6,
+        _ => 1.0,
+    }
+}
+
 fn lookup(sym: &str) -> Option<(f64, Dim)> {
     let l = Dim::length();
     let m = Dim::mass();
@@ -42,6 +55,16 @@ fn lookup(sym: &str) -> Option<(f64, Dim)> {
         "Pa" => (1.0, force.div(&l.pow(Ratio::int(2)))),
         "Hz" => (1.0, t.inv()),
         "A" => (1.0, Dim::base(3)),
+        "mA" => (1e-3, Dim::base(3)),
+        "μA" | "uA" => (1e-6, Dim::base(3)),
+        // Electrical units (D-092): volt, ohm, coulomb, farad, henry, with common prefixes.
+        "V" | "mV" | "kV" => (prefix(sym, "V"), energy.div(&t).div(&Dim::base(3))),
+        "Ω" | "kΩ" | "MΩ" | "ohm" | "kohm" | "Mohm" => (prefix(sym, if sym.ends_with('Ω') { "Ω" } else { "ohm" }), energy.div(&t).div(&Dim::base(3).pow(Ratio::int(2)))),
+        "C" | "mC" | "μC" | "uC" => (prefix(sym, "C"), Dim::base(3).mul(&t)),
+        "F" | "mF" | "μF" | "uF" | "nF" | "pF" => (prefix(sym, "F"), t.pow(Ratio::int(4)).mul(&Dim::base(3).pow(Ratio::int(2))).div(&m).div(&l.pow(Ratio::int(2)))),
+        "H" | "mH" | "μH" | "uH" => (prefix(sym, "H"), energy.div(&Dim::base(3).pow(Ratio::int(2)))),
+        "kW" => (1e3, energy.div(&t)),
+        "kJ" => (1e3, energy),
         "K" => (1.0, Dim::base(4)),
         "mol" => (1.0, Dim::base(5)),
         "cd" => (1.0, Dim::base(6)),

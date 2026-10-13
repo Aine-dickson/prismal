@@ -117,11 +117,14 @@ pub enum Role {
     Discrete,
     Continuous,
     Derived,
+    /// An algebraic unknown (MK-11.6, D-092): found, at every instant, from the equations
+    /// that read it. Its `init` is the starting guess of the solver.
+    Unknown,
 }
 
 impl Role {
     pub fn is_stored(self) -> bool {
-        self != Role::Derived
+        !matches!(self, Role::Derived | Role::Unknown)
     }
 }
 

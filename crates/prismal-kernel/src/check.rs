@@ -847,6 +847,7 @@ fn role_word(r: Role) -> &'static str {
         Role::Discrete => "discrete state",
         Role::Continuous => "state",
         Role::Derived => "derived binding",
+        Role::Unknown => "unknown",
     }
 }
 
@@ -960,7 +961,13 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             },
             _ => None,
         };
+        // D-092: an unknown is a number or quantity; its value, if given, is the solver's
+        // starting guess.
+        if b.role == Role::Unknown && !matches!(b.ty, Type::Quantity { .. }) {
+            tc.err("MK-E01", format!("the unknown `{}` is a number or a quantity (MK-11.6)", b.name));
+        }
         let init = match (&b.init, b.role, &field) {
+            (Some(e), Role::Unknown, _) => tc.expect(e, &b.ty),
             (Some(e), Role::Continuous, Some((_, grid, of))) => tc.pointwise_expr(e, grid, of),
             (Some(e), r, _) if r.is_stored() => tc.expect(e, &b.ty),
             (None, Role::Input, _) => None,
@@ -1215,7 +1222,11 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             _ => None,
         };
         let field = field_grid.and_then(|g| grids.get(&g).copied());
-        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field });
+        let width = match &lt {
+            Type::Vector { space, .. } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(1),
+            _ => 1,
+        };
+        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field, width });
     }
 
     // Constraints (MK section 12).
@@ -1245,9 +1256,18 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy });
     }
 
+    // Solved equations (MK-11.6 to MK-11.9, D-092).
+    let plan = plan_solve(model, &index, &cequations, spaces, &mut diags);
+    let solve = plan.as_ref().map(|p| CSolve {
+        unknowns: p.unknowns.clone(),
+        guess: p.unknowns.iter().map(|&i| cbindings[i].init.clone()).collect(),
+        inner: p.inner.clone(),
+        equations: p.equations.clone(),
+    });
+
     // Dependency analysis (MK section 13).
-    let derived_order = order_derived(model, &index, &mut diags);
-    let init_order = order_init(model, &index, &mut diags);
+    let derived_order = order_derived(model, &index, plan.as_ref(), &mut diags);
+    let init_order = order_init(model, &index, plan.as_ref(), &mut diags);
 
     if !diags.is_empty() {
         return Err(diags);
@@ -1268,8 +1288,105 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         is_static,
         noise: noise_keys,
         grids,
+        solve,
     })
 }
+
+/// Which bindings and equations a solve involves (D-092).
+struct SolvePlan {
+    unknowns: Vec<usize>,
+    /// Derived bindings the solving equations read that depend on unknowns, in order: they
+    /// are computed inside the solve.
+    inner: Vec<usize>,
+    /// Indices of the solving equations.
+    equations: Vec<usize>,
+}
+
+/// MK-11.6 to MK-11.8 (D-092): the equations that are not checks and read an unknown,
+/// directly or through derived values, determine the unknowns. There are as many of their
+/// components as unknowns, and each unknown can be matched to an equation that reads it.
+fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CEquation], spaces: &[Space], diags: &mut Vec<Diagnostic>) -> Option<SolvePlan> {
+    let unknowns: Vec<usize> = model.bindings.iter().enumerate().filter(|(_, b)| b.role == Role::Unknown).map(|(i, _)| i).collect();
+    if unknowns.is_empty() {
+        return None;
+    }
+    let is_u = |i: &usize| model.bindings[*i].role == Role::Unknown;
+    let mut err = |code: &'static str, m: String| diags.push(Diagnostic { code, message: m, element: model.id.clone() });
+    // Derived bindings that depend on an unknown.
+    let reads_u = |i: usize| closure_derived(model, index, &model.bindings[i].def.as_ref().map(|d| d.refs()).unwrap_or_default()).iter().any(is_u);
+    let mut equations = vec![];
+    let mut sets: Vec<(usize, BTreeSet<usize>)> = vec![];
+    let mut inner: BTreeSet<usize> = BTreeSet::new();
+    for (k, q) in model.equations.iter().enumerate() {
+        if q.role == EquationRole::Check {
+            continue;
+        }
+        let refs: Vec<Id> = q.lhs.refs().into_iter().chain(q.rhs.refs()).collect();
+        let reach = closure_derived(model, index, &refs);
+        let us: BTreeSet<usize> = reach.iter().copied().filter(is_u).collect();
+        if us.is_empty() {
+            continue;
+        }
+        let mut der = false;
+        for side in [&q.lhs, &q.rhs] {
+            side.walk(&mut |x| der |= matches!(x, Expr::Der { .. }));
+        }
+        if der || eqs.get(k).is_some_and(|c| c.field.is_some()) {
+            err("MK-E35", format!("equation `{}` reads an unknown and a rate or a field; solved equations of rates and fields are a later extension (MK-11.6)", q.name));
+            continue;
+        }
+        for &d in reach.iter().filter(|&&d| model.bindings[d].role == Role::Derived && reads_u(d)) {
+            inner.insert(d);
+        }
+        equations.push(k);
+        sets.push((k, us));
+    }
+    // An equation of vectors has one component per axis of its space.
+    let comps = |k: usize| -> usize { eqs.get(k).map(|c| c.width).unwrap_or(1) };
+    let _ = spaces;
+    let rows: Vec<(usize, &BTreeSet<usize>)> = sets.iter().flat_map(|(k, us)| std::iter::repeat_n((*k, us), comps(*k))).collect();
+    let names = |is: &[usize]| is.iter().map(|&i| format!("`{}`", model.bindings[i].name)).collect::<Vec<_>>().join(", ");
+    let eq_names = |ks: &[usize]| ks.iter().map(|&k| format!("`{}`", model.equations[k].name)).collect::<Vec<_>>().join(", ");
+    let unused: Vec<usize> = unknowns.iter().copied().filter(|u| !sets.iter().any(|(_, us)| us.contains(u))).collect();
+    if !unused.is_empty() {
+        err("MK-E34", format!("no equation determines {}: write an equation that reads it (MK-11.7)", names(&unused)));
+        return None;
+    }
+    if rows.len() != unknowns.len() {
+        let which = if rows.len() < unknowns.len() { "fewer" } else { "more" };
+        err("MK-E34", format!("{} unknowns ({}) and {} equation components ({}): {which} equations than unknowns (MK-11.7)", unknowns.len(), names(&unknowns), rows.len(), eq_names(&equations)));
+        return None;
+    }
+    // A matching of equation components to unknowns (augmenting paths).
+    let mut owner: HashMap<usize, usize> = HashMap::new();
+    fn augment(r: usize, rows: &[(usize, &BTreeSet<usize>)], owner: &mut HashMap<usize, usize>, seen: &mut BTreeSet<usize>) -> bool {
+        for &u in rows[r].1 {
+            if !seen.insert(u) {
+                continue;
+            }
+            let free = match owner.get(&u).copied() {
+                None => true,
+                Some(o) => augment(o, rows, owner, seen),
+            };
+            if free {
+                owner.insert(u, r);
+                return true;
+            }
+        }
+        false
+    }
+    for r in 0..rows.len() {
+        if !augment(r, &rows, &mut owner, &mut BTreeSet::new()) {
+            let lone: Vec<usize> = unknowns.iter().copied().filter(|u| !owner.contains_key(u)).collect();
+            err("MK-E34", format!("the equations {} do not determine {} separately: some of them read the same unknowns only (MK-11.7)", eq_names(&equations), names(&lone)));
+            return None;
+        }
+    }
+    // The derived values inside the solve, in dependency order.
+    let inner: Vec<usize> = order_derived(model, index, None, &mut vec![]).into_iter().filter(|i| inner.contains(i)).collect();
+    Some(SolvePlan { unknowns, inner, equations })
+}
+
 
 /// MK-9.5 (D-091): grids, each one axis (an interval of a quantity, cut into equal cells)
 /// whose bounds and number of cells are constant numbers.
@@ -1816,43 +1933,93 @@ fn topo(n: usize, deps: &[Vec<usize>], nodes: &[usize]) -> Result<Vec<usize>, Ve
     }
 }
 
-fn order_derived(model: &Model, index: &HashMap<Id, usize>, diags: &mut Vec<Diagnostic>) -> Vec<usize> {
+/// The solve as one node of the dependency graph, `SOLVE` in an order (D-092): it stands for
+/// the unknowns and the derived values computed inside it.
+pub const SOLVE: usize = usize::MAX;
+
+/// The refs of a binding's definitions, with the unknowns and the derived values inside a
+/// solve mapped to the solve's node `n`.
+fn refs_through(plan: Option<&SolvePlan>, model: &Model, index: &HashMap<Id, usize>, refs: impl Iterator<Item = Id>, n: usize) -> Vec<usize> {
+    let mut out: Vec<usize> = refs
+        .filter_map(|r| index.get(&r).copied())
+        .map(|j| match plan {
+            Some(p) if model.bindings[j].role == Role::Unknown || p.inner.contains(&j) => n,
+            _ => j,
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// What the solve node reads: its equations, its inner derived values and its guesses.
+fn solve_refs(plan: &SolvePlan, model: &Model) -> Vec<Id> {
+    let mut refs = vec![];
+    for &k in &plan.equations {
+        refs.extend(model.equations[k].lhs.refs());
+        refs.extend(model.equations[k].rhs.refs());
+    }
+    for &i in plan.inner.iter().chain(&plan.unknowns) {
+        let b = &model.bindings[i];
+        refs.extend(b.def.iter().chain(b.init.iter()).flat_map(|d| d.refs()));
+    }
+    refs
+}
+
+fn order_derived(model: &Model, index: &HashMap<Id, usize>, plan: Option<&SolvePlan>, diags: &mut Vec<Diagnostic>) -> Vec<usize> {
     let n = model.bindings.len();
-    let mut deps = vec![vec![]; n];
+    let mut deps = vec![vec![]; n + 1];
     let mut nodes = vec![];
+    let keep = |j: &usize| *j == n || model.bindings[*j].role == Role::Derived;
     for (i, b) in model.bindings.iter().enumerate() {
-        if b.role == Role::Derived {
+        if b.role == Role::Derived && !plan.is_some_and(|p| p.inner.contains(&i)) {
             nodes.push(i);
             if let Some(d) = &b.def {
-                deps[i] = d.refs().into_iter().chain(b.when.iter().flat_map(|w| w.refs())).filter_map(|r| index.get(&r).copied()).filter(|&j| model.bindings[j].role == Role::Derived).collect();
+                let refs = d.refs().into_iter().chain(b.when.iter().flat_map(|w| w.refs()));
+                deps[i] = refs_through(plan, model, index, refs, n).into_iter().filter(keep).collect();
             }
         }
     }
-    match topo(n, &deps, &nodes) {
-        Ok(o) => o,
+    if let Some(p) = plan {
+        nodes.push(n);
+        deps[n] = refs_through(None, model, index, solve_refs(p, model).into_iter(), n)
+            .into_iter()
+            .filter(|j| *j != n && model.bindings[*j].role == Role::Derived && !p.inner.contains(j))
+            .collect();
+    }
+    match topo(n + 1, &deps, &nodes) {
+        Ok(o) => o.into_iter().map(|i| if i == n { SOLVE } else { i }).collect(),
         Err(cycle) => {
-            let names: Vec<_> = cycle.iter().map(|&i| model.bindings[i].name.clone()).collect();
+            let names: Vec<_> = cycle.iter().map(|&i| if i == n { "the unknowns".to_string() } else { model.bindings[i].name.clone() }).collect();
             diags.push(Diagnostic { code: "MK-E14", message: format!("algebraic loop among {}", names.join(", ")), element: model.id.clone() });
             vec![]
         }
     }
 }
 
-fn order_init(model: &Model, index: &HashMap<Id, usize>, diags: &mut Vec<Diagnostic>) -> Vec<usize> {
+fn order_init(model: &Model, index: &HashMap<Id, usize>, plan: Option<&SolvePlan>, diags: &mut Vec<Diagnostic>) -> Vec<usize> {
     let n = model.bindings.len();
-    let mut deps = vec![vec![]; n];
+    let mut deps = vec![vec![]; n + 1];
     let mut nodes = vec![];
     for (i, b) in model.bindings.iter().enumerate() {
+        if b.role == Role::Unknown || plan.is_some_and(|p| p.inner.contains(&i)) {
+            continue;
+        }
         let e = if b.role == Role::Derived { b.def.as_ref() } else { b.init.as_ref() };
         nodes.push(i);
         if let Some(e) = e {
-            deps[i] = e.refs().into_iter().chain(b.when.iter().flat_map(|w| w.refs())).filter_map(|r| index.get(&r).copied()).collect();
+            let refs = e.refs().into_iter().chain(b.when.iter().flat_map(|w| w.refs()));
+            deps[i] = refs_through(plan, model, index, refs, n);
         }
     }
-    match topo(n, &deps, &nodes) {
-        Ok(o) => o,
+    if let Some(p) = plan {
+        nodes.push(n);
+        deps[n] = refs_through(plan, model, index, solve_refs(p, model).into_iter(), n).into_iter().filter(|j| *j != n).collect();
+    }
+    match topo(n + 1, &deps, &nodes) {
+        Ok(o) => o.into_iter().map(|i| if i == n { SOLVE } else { i }).collect(),
         Err(cycle) => {
-            let names: Vec<_> = cycle.iter().map(|&i| model.bindings[i].name.clone()).collect();
+            let names: Vec<_> = cycle.iter().map(|&i| if i == n { "the unknowns".to_string() } else { model.bindings[i].name.clone() }).collect();
             diags.push(Diagnostic { code: "MK-E15", message: format!("cycle among initial definitions: {}", names.join(", ")), element: model.id.clone() });
             vec![]
         }
