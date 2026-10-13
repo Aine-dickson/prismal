@@ -134,6 +134,8 @@ presentation IsomerLesson for Isomer {
       beat choose {
         explore limit 30 s keep n0 {
           slider(n0, range: [10, 2000], step: 10, ends: ("few", "many"))
+          button(restart, label: "Try it")
+          button(reseed, label: "Another run")
         } fallback {
           sequence { intervene { set n0 = 200 }; wait 3 s }
         }
@@ -146,7 +148,7 @@ presentation IsomerLesson for Isomer {
 ```
 
 - `intervene { set n0 = 20 }` changes the number of molecules at the instant shown; `restart` then runs the reaction again from all A with that number. Without `restart` the run would go on with the thousand molecules it has, and `reset` would replay the run from its start, where there were still a thousand.
-- The explore beat keeps the learner's `n0` (`keep n0`); the beat after it restarts with it. A video plays the fallback, 200 molecules.
+- In the explore beat, "Try it" (`button(restart)`) starts the reaction again with the learner's `n0`, and "Another run" (`button(reseed)`) draws another run with it, as often as the learner likes (D-088). The beat keeps the learner's `n0` (`keep n0`); the beat after it restarts with it, so a video, which plays the fallback (200 molecules), shows the same.
 
 ```cases
 run lesson of Isomer with IsomerLesson {

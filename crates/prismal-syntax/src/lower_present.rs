@@ -15,6 +15,10 @@ use std::collections::HashMap;
 /// Runtime controls a `button` can offer instead of an event (PK-6.3, D-069).
 pub const RUN_CONTROLS: &[&str] = &["reset", "undo", "redo", "reseed", "restart"];
 
+/// The runtime controls an explore beat may offer: they start the learner's branch again
+/// (D-088).
+pub const EXPLORE_CONTROLS: &[&str] = &["restart", "reseed"];
+
 /// Representation kinds of the first slice (PK-6.3).
 const KINDS: &[&str] = &[
     "marker", "arrow", "segment", "polyline", "polygon", "circle", "ellipse", "arc", "trace", "function_graph", "series_plot", "axes", "grid", "label",
@@ -913,6 +917,9 @@ pub(crate) fn run(
     for s in &r.learner {
         let input = match &s.action {
             ast::LearnerAction::Continue => LearnerInput::Continue,
+            // `press restart`: a runtime-control button, unless the model has an event of
+            // that name (D-088, as `button(restart)`).
+            ast::LearnerAction::Press(e) if EXPLORE_CONTROLS.contains(&e.text.as_str()) && !cx.events.contains_key(&e.text) => LearnerInput::Control { control: e.text.clone() },
             ast::LearnerAction::Press(e) => LearnerInput::Press { event: cx.event_id(e) },
             ast::LearnerAction::Set { control, value } => match control.as_slice() {
                 [kind, target] => LearnerInput::SetControl { control: kind.text.clone(), binding: cx.binding(target), value: cx.expr(value, &[]) },

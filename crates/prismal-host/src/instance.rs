@@ -985,6 +985,11 @@ impl Instance {
         let event = l.pb.shown.iter().map(|s| &s.rep).find(|r| r.rep.id == rep).map(|r| &r.kind);
         let event = match event {
             Some(CKind::Button { event, .. }) => event.clone(),
+            // An explore beat's `restart` or `reseed` starts the learner's branch again (D-088).
+            Some(CKind::RunButton { control, .. }) if ["restart", "reseed"].contains(&control.as_str()) => {
+                let input = LearnerInput::Control { control: control.clone() };
+                return self.lesson_input(Input { at: p, input });
+            }
             Some(CKind::RunButton { control, .. }) => return Err(json!(format!("`{control}` is a runtime control of labs; in a lesson the learner directs the timeline (PK-9.7)"))),
             _ => return Err(json!(format!("no button `{rep}` in this lesson"))),
         };

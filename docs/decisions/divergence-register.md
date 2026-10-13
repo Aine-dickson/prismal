@@ -1664,3 +1664,25 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** IR `Instrument`, `Presentation.instruments`, `Observation.instrument`, `instrument` of sampled and ensemble arguments; `prismal_present::measure` (`Meter`); `data::observe` and `compile_rep` take the presentation's instruments; series plots of readings as points; tables write `out of range`; parser, lowering, formatter, word lists; PK-3.7, PK-6.3a, PK-6.3e, RC-13.5a, 04-ir, working syntax, reference; guide chapter 15 (Measuring with an instrument); `prismal-present/tests/instruments.rs`.
 - **History:**
   - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-088: `restart` and `reseed` in explore beats
+
+- **Status:** Accepted
+- **Original position:** D-069 made every runtime-control button a static error in a presentation with a timeline (PK-E05): a lesson's timeline is directed by the learner through the player. D-085 gave lessons the timeline action `restart`, so a lesson could restart only in a beat written for it, after the explore beat (`examples/reaction.md`).
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: a `restart` button inside explore beats); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-025, D-069, D-084, D-085; PK-6.3d, PK-9.8, PK-9.9.
+- **Question:** How does a learner, during an explore beat, try a starting value (a number of molecules, a starting height) or another outcome of chance, more than once?
+- **Options considered:**
+  1. **Keep the restart after the beat.** One try per explore beat; the learner who moves the slider sees nothing change until the beat ends.
+  2. **Restart the branch whenever a parameter that sets a starting value changes.** Silent, and wrong for parameters that act during the run (a slider of a rate should take effect at the instant shown).
+  3. **Allow `button(restart)` and `button(reseed)` among an explore beat's controls** (taken): the words labs already use, acting on the learner's branch.
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30.
+  - PK-9.8c: a press makes a new version of the branch from `t0` with the branch's parameters at the instant shown and an empty log, and with the next seed for `reseed`; the beat ends as before (PK-9.9).
+  - A learner script writes `press restart` and `press reseed` (IR `LearnerInput::Control`), read as runtime controls unless the model has an event of that name, as `button(restart)` is.
+  - `reset`, `undo` and `redo` stay lab controls: on a branch, "back to the starting values" and the undo of the lesson's own actions have no clear meaning.
+  - The host's `lesson_press` accepts these buttons; the web player already sends a lesson's buttons through it.
+- **Reason:** the learner's branch is already a run of its own (D-025), so restarting it is the lab's restart applied to it; no new word, and the lesson's run is untouched.
+- **Version 1 (D-081):** an addition: programs that were errors (PK-E05) become valid; no valid program changes meaning.
+- **Consequences:** PK-6.3d, PK-9.8c; IR `LearnerInput::Control`; `EXPLORE_CONTROLS`; checker, timeline (`restart_branch`, shared with the action `restart`), host, formatter; guide chapters 8 and 15, the reference; `examples/reaction.md` offers "Try it" and "Another run" in its explore beat; `prismal-present/tests/explore_restart.rs`.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.

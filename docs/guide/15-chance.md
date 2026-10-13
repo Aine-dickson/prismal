@@ -116,7 +116,7 @@ presentation ManyRuns for Sample2 {
 - An ensemble source is written `value at instant over count runs`, inside a representation's parentheses or after an observation's `=`. Run `k` uses the seed of the run shown plus `k - 1`, so the first run is the one shown. Each run stops at the instant, so a long lab stays quick.
 - The histogram's `x` axis is the value, its `y` axis how many runs fall in each bin; `bins: 16` divides the `x` range into 16 equal bins. Its text alternative gives the mean and the deviation.
 - When the learner moves the slider, the histogram is computed again for the new rate; `reseed` moves it to 200 other runs.
-- A slider that sets a starting value (how many nuclei there are, `n0`) changes nothing in a run under way: the count was set at the start. `button(restart)` starts a new run from `t0` with the parameters as the learner has set them; `reseed` does the same with the next seed; `reset` goes back to the presentation's own starting values. In a lesson, the timeline action `restart` does the same after an `intervene`.
+- A slider that sets a starting value (how many nuclei there are, `n0`) changes nothing in a run under way: the count was set at the start. `button(restart)` starts a new run from `t0` with the parameters as the learner has set them; `reseed` does the same with the next seed; `reset` goes back to the presentation's own starting values. In a lesson, the timeline action `restart` does the same after an `intervene`, and an explore beat may offer `button(restart)` and `button(reseed)` to the learner (D-088; `examples/reaction.md`).
 
 ```cases
 run spread of Sample2 with ManyRuns {

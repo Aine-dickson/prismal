@@ -1344,6 +1344,7 @@ impl<'a> Printer<'a> {
                 let input = match &st.input {
                     LearnerInput::Continue => "continue".to_string(),
                     LearnerInput::Press { event } => format!("press {}", self.event_name(event)),
+                    LearnerInput::Control { control } => format!("press {control}"),
                     LearnerInput::SetControl { control, binding, value } => format!("set {control} {} = {}", self.binding_name(binding), self.expr(value)),
                 };
                 let _ = writeln!(s, "{ind2}at {}: {input}", self.expr(&st.at));

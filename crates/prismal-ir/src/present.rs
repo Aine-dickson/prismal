@@ -568,6 +568,8 @@ pub enum LearnerInput {
     SetControl { control: String, binding: Id, value: Expr },
     /// `press drop`: press the button that requests the event (D-069).
     Press { event: Id },
+    /// `press restart`, `press reseed`: press an explore beat's runtime-control button (D-088).
+    Control { control: String },
 }
 
 /// An expectation (PK section 4).
