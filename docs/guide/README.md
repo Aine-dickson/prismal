@@ -27,6 +27,7 @@ A guide to writing Prismal programs in the working syntax (D-028), from a first 
 | [13. Common mistakes](13-common-mistakes.md) | the errors met first, what they mean and how to fix them |
 | [14. I want to...](14-i-want-to.md) | goals, and the combination of words that achieves each, with the block each word goes in |
 | [15. Chance](15-chance.md) | random events at a rate, distributions, seeds, testing random models |
+| [16. Fields](16-fields.md) | values at every point of a line or a plane: heat, waves, grids, boundaries, heatmaps |
 
 ## Running a program
 

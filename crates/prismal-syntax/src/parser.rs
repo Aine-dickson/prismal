@@ -26,7 +26,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
-    "instrument",
+    "instrument", "grid", "boundary", "periodic",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint

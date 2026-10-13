@@ -30,6 +30,10 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `object Name { ... }` | an object type, with the body of a model; declared in a model | 9 |
 | `parts { a: T { x = e }  c: T[n] { x = e } }` | one object, or a collection of `n` members; overrides and input connections, with `index` the member's number | 9 |
 | `flow { for b in c { der(b.x) = e } }` | flows the model writes for each member | 9 |
+| `grid g(x: [a, b], cells: n)`, `grid g(x: [a, b], y: [c, d], cells: (n, m))` | a grid: a line, or a rectangle of the model's plane, cut into equal cells | 16 |
+| `state { T(x in g): R = e }`, `derived { q(x in g): R = e }` | a field over grid `g`: a value of type `R` in each cell, `x` the cell's position (a point in the plane) | 16 |
+| `flow der(T) = e`, `flow der(T(x)) = e` | a field's flow, computed in each cell; `T` and other fields of the grid read the cell | 16 |
+| `boundary T { left = e; right = e; bottom = e; top = e }`, `boundary T periodic` | a field's edges held at values (the others insulated), or wrapped around | 16 |
 
 Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2`, `flow der(x) = v`.
 
@@ -41,7 +45,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 
 **Members** (chapter 9): `a.x`, `c[k].x`; `sum`, `min`, `max`, `any`, `all` of `(e for b in c [if cond])`; `count(c)`, `count(b for b in c if cond)`. In views, `for b in c { reps }` draws one representation per member, named `name[k]`.
 
-**Operations:** `set x = e`, `set b.x = e` (a member's binding), `emit E`, `emit E(v)` (with a payload), `emit E(b, v)` (several), `contribute x += e` (into discrete state declared with `combine`; any number combine, a `set` of the same binding conflicts, chapter 5).
+**Operations:** `set x = e`, `set b.x = e` (a member's binding), `set T(p) = e` (a field, in each cell, chapter 16), `emit E`, `emit E(v)` (with a payload), `emit E(b, v)` (several), `contribute x += e` (into discrete state declared with `combine`; any number combine, a `set` of the same binding conflicts, chapter 5).
 
 ## Types and values
 
@@ -61,6 +65,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `t`, `t0`, `elapsed` | current time, start, time since start | 4 |
 | `noise` | white noise in a flow, `der(x) = a + b * noise`: each occurrence independent, of dimension `T^(-1/2)` | 15 |
 | `sin cos tan sqrt exp log abs min max atan2` | functions | 2 |
+| `T(x)`, `laplacian(T)`, `gradient(T)`, `integral(T)`, `mean(T)`, `min(T)`, `max(T)` | a field read at a position; its Laplacian and gradient in the cell being computed; over the whole field | 16 |
 | `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
 Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms min h kg g N J W Pa Hz A K mol cd rad deg rev %`.
@@ -82,7 +87,7 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms
 | `title "..."` | the presentation's title, above its views | 7 |
 | `instrument n(resolution: r, range: [a, b], noise: s)` | an instrument; `n(e) every Δ` reads `e` through it in observations, series plots, traces, tables and histograms | 15 |
 
-**Representations:** `text("... {e} ... {e:.N} ..." [, at: P])` (an author's text with values in braces, `:.N` for N decimals; `at` places it in a spatial or plot view), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `histogram(e at τ over n runs, bins: k)` (how many of `n` runs give each value), `histogram(e on E)`, `histogram(e every Δ)` (the values of one run up to the instant shown, chapter 15), `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider` (with `ends: ("low", "high")`, words at its ends), `number_input`, `toggle`, `button(E)`, `button(E(v))`, `button(reset|undo|redo|restart|reseed)` (in a lesson, only `restart` and `reseed`, in an explore beat), `group(at: P, rotate: θ, scale: k) { members }` (chapter 7). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink` and `line: solid|dashed|dotted` style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7). Markers, arrows and graphs take `label: "..."` or `label: none` (chapter 7).
+**Representations:** `text("... {e} ... {e:.N} ..." [, at: P])` (an author's text with values in braces, `:.N` for N decimals; `at` places it in a spatial or plot view), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `histogram(e at τ over n runs, bins: k)` (how many of `n` runs give each value), `histogram(e on E)`, `histogram(e every Δ)` (the values of one run up to the instant shown, chapter 15), `heatmap(T)` (a field in the plane, coloured cells, chapter 16), `function_graph(T)` (also a field on a line), `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider` (with `ends: ("low", "high")`, words at its ends), `number_input`, `toggle`, `button(E)`, `button(E(v))`, `button(reset|undo|redo|restart|reseed)` (in a lesson, only `restart` and `reseed`, in an explore beat), `group(at: P, rotate: θ, scale: k) { members }` (chapter 7). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink` and `line: solid|dashed|dotted` style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7). Markers, arrows and graphs take `label: "..."` or `label: none` (chapter 7).
 
 **Observation schedules:** `live`, `every Δ`, `at τ`, `on E [microstep n]`, `over [a, b]`. **Sources:** any expression, `event_log [of E] [where zeno_applied]`, `diagnostics [of element]`, `intervention_log`.
 
@@ -102,6 +107,7 @@ Two forms add details to a form, one for each place they appear (D-081):
 | `function_graph` | `color`, `line`, `label` |
 | `segment`, `polyline`, `polygon`, `circle`, `trace`, `series_plot` | `color`, `line` |
 | `histogram` | `bins`, `color`, `line` |
+| `heatmap` | `range` |
 | `ellipse` | `rotate`, `color`, `line` |
 | `arc` | `from`, `to`, `color`, `line` |
 | `text` | `at` |
@@ -221,6 +227,9 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `request` | an event requested from outside (a button, a lesson) | 5 |
 | `undo`, `redo` | in `button(...)`, a lab's runtime controls, with `reset` | 7, 8 |
 | `reseed` | in `button(...)`, a lab's runtime control: start again with the next seed, keeping the learner's settings | 15 |
+| `grid` | in a model, a grid of cells for fields: `grid rod(x: [0 m, 1 m], cells: 50)` | 16 |
+| `boundary` | in a model, a field's boundary conditions: `boundary T { left = 100 }` | 16 |
+| `periodic` | `boundary T periodic`: the field's grid wraps around | 16 |
 | `instrument` | in a presentation, declares an instrument whose readings are rounded to `resolution`, limited to `range` and disturbed by normal `noise`; `n(e)` reads `e` through it | 15 |
 | `restart` | a new run from `t0` with the parameters as they are now: a timeline action, and in `button(...)` a lab's runtime control (`reset` goes back to the starting values) | 15 |
 | `run` | a test case; in timelines, `run rate r` | 1, 8 |
@@ -240,7 +249,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic`.
 
 ## Diagnostics
 
@@ -277,8 +286,11 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E26 | a member that does not exist, a part used as a value, or an aggregate that has no value |
 | MK-E27 | retired (D-086): rates may read continuous state and `t` |
 | MK-E28 | a distribution outside an event's condition and operations |
-| MK-E29 | `noise` outside a flow |
+| MK-E29 | `noise` outside a flow, or in a field's flow |
 | MK-E30 | a flow that is not linear in `noise` |
+| MK-E31 | a field of another grid read where a field is computed |
+| MK-E32 | `laplacian` or `gradient` outside a flow or definition of a field of its grid |
+| MK-E33 | a boundary on something that is not a field, an unknown or repeated edge, or periodic with held edges |
 
 **Presentation** (`PK`): E01 broken reference, E02 expression does not check (the kernel's message is quoted), E03 control or action targets something the learner may not change, E04 missing or wrong scale or axis dimension, E05 representation unsuited to its sources or view, E06 representation kind not implemented.
 

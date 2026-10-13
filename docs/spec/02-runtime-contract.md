@@ -117,6 +117,7 @@ produce the trajectory S (committed states), the event log E and diagnostics D
 
 - **RC-6.1** Between event times the runtime approximates the solution defined by the model kernel (MK section 14.5): every continuous state integrates its combined flow, derived bindings hold their definitions, discrete state is constant.
 - **RC-6.2** Each **accepted step** `[t_i, t_{i+1}]` produces the continuous state at `t_{i+1}` and a **dense output**: an interpolant over the step, of stated order, used for event location (section 7) and for observation between steps (section 15).
+- **RC-6.2a** (D-091) A run whose continuous state has more than 4096 components (fields) locates events on each step's dense output, and then keeps the step as the straight line between its two states, each state shared with the neighbouring step. Observations between steps of such a run are linear interpolations; at step ends they are exact.
 
 ### 6.2 Solvers
 

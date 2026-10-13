@@ -334,6 +334,7 @@ The energy drifts agree with the predictions of `tools/refvals.py` (RP-04: 7.8e-
 | Combinations supplied by types (D-073 option 2) | MK-14.9 |
 | Failure policies chosen per category in a run's configuration (D-071) | RC-10.3 |
 | Frames of spaces (D-022), affine temperature units | MK sections 3.4, 4 |
+| Fields: noise and draws per cell, fields of vectors, fields in object types, meshes, implicit solvers for stiff fields on fine grids, computing a lab's run as it is shown (heavy fields now shorten the default horizon instead) | MK-9.4 to MK-9.8, RC-6.2a, HI-5.1a (D-091) |
 
 ## History
 
@@ -372,3 +373,4 @@ The energy drifts agree with the predictions of `tools/refvals.py` (RP-04: 7.8e-
 - 2026-10-12 words at a slider's ends, the percent unit, labels in display units (D-077); a banded label left to `text ... when:`.
 - 2026-10-12 first complete example (`examples/projectile.md`, lab, lesson, video); found and fixed: `on E` read past logged actions at the event's instant, paths joined across jumps; rounding in texts and chosen labels (D-078).
 - 2026-10-13 stochastic leftovers: rates that vary between events (D-086), instruments (D-087), `restart` and `reseed` in explore beats (D-088), histograms of one run (D-089), noise in flows by Euler-Maruyama (D-090).
+- 2026-10-13 fields on grids of one and two axes (D-091): pointwise evaluation, vectorized where the form allows; compact storage of large states.
