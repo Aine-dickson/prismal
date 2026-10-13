@@ -311,7 +311,7 @@ dependencies = [
 
 [[package]]
 name = "prismal-host"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prismal-ir",
  "prismal-kernel",
@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "prismal-ir"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -332,14 +332,14 @@ dependencies = [
 
 [[package]]
 name = "prismal-kernel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prismal-ir",
 ]
 
 [[package]]
 name = "prismal-media"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prismal-host",
  "prismal-svg",
@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "prismal-present"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prismal-ir",
  "prismal-kernel",
@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "prismal-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prismal-ir",
  "prismal-kernel",
@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "prismal-stdio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prismal-host",
  "serde_json",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "prismal-svg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prismal-host",
  "prismal-ir",
@@ -391,7 +391,7 @@ dependencies = [
 
 [[package]]
 name = "prismal-syntax"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prismal-ir",
  "prismal-kernel",
@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "prismal-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prismal-host",
  "prismal-ir",

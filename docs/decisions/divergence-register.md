@@ -101,6 +101,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-079 | Findings from the geometry example: powers in units, morph order | Accepted |
 | D-080 | Findings from the objects example: event detection cost, texts in the framing | Accepted |
 | D-081 | Syntax stability review: options and clauses, and version 1 | Accepted |
+| D-082 | Release numbering: 0.x releases, branch per minor version | Accepted |
 
 ---
 
@@ -1522,3 +1523,23 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** `Parser::clause`, `BINARY`, `Parser::unexpected` in `prismal-syntax/src/parser.rs`; `options`, `view_options`, `check_options` in `lower_present.rs`; `prismal-syntax/tests/options.rs`; the tests of a circle's `rotate` and a marker's `line` now expect SX-E08 (`prismal-present/tests/shapes.rs`, `prismal-svg/tests/styles.rs`); working syntax sections 1.6 and 1.7 and status; guide chapter 10 (Options and clauses, SX-E08 and SX-E09), chapter 13 (a misspelled option, the operator message); README, guide README, spec README and 01 status lines.
 - **History:**
   - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-082: Release numbering: 0.x releases, branch per minor version
+
+- **Status:** Accepted
+- **Original position:** none. The workspace carried version `0.1.0` since the prototype began, with no tags and no statement of what a release number promises. D-081 called the working syntax "version 1", which could be read as a 1.0 release.
+- **Raised by:** the owner, 2026-10-13, when opening work beyond the first slice.
+- **Builds on:** D-001, D-081.
+- **Question:** What does a Prismal release number promise, and how is the next body of work separated from the finished first slice?
+- **Options considered:**
+  1. Tag the first slice as `v1.0.0`. In Rust (Cargo's semantic versioning) 1.0 promises a stable public API: no breaking change without 2.0. The crates' Rust APIs, the IR and the host protocol carry no such promise yet.
+  2. Tag the first slice as `v0.1.0` and continue on a `v0.2` branch (taken).
+- **Accepted position:** option 2, chosen by the owner.
+  - Releases are numbered `0.x.y` until the project chooses to promise API stability. Under Cargo's rules a 0.x minor version may break the crates' APIs, the IR format and the host protocol.
+  - The language promise is separate and unchanged: programs follow the working syntax's own version (D-081, working syntax section 1.7). Working syntax version 1 programs keep compiling with the same meaning, whatever the release number; a break needs a register entry naming the syntax version and the rewrite.
+  - `v0.1.0` tags `main` at the end of the first slice (2D mechanics and supporting math, D-001; working syntax version 1). Work for 0.2 is done on the long-lived branch `v0.2`, with feature branches merged into it; `main` receives only fixes to 0.1 until 0.2 is merged.
+  - 0.2 opens with the stochastic slice (D-013, D-083).
+- **Reason:** a 1.0 number would claim a stability nobody has checked; the crates are a prototype and hosts are expected to drive the API's shape (D-044). Keeping the syntax version separate lets authors rely on their programs while the implementation is still free to change.
+- **Consequences:** tag `v0.1.0`; branch `v0.2`; workspace version `0.2.0` on that branch; PROJECT-STATE conventions.
+- **History:**
+  - 2026-10-13 chosen by the owner and recorded.
