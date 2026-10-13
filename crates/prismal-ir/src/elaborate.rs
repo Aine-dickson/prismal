@@ -1208,6 +1208,7 @@ impl<'a> PCx<'a, '_> {
             Arg::Range { lo, hi } => Arg::Range { lo: self.e(s, lo), hi: self.e(s, hi) },
             Arg::Sampled { expr, every, instrument } => Arg::Sampled { expr: self.e(s, expr), every: self.e(s, every), instrument: instrument.clone() },
             Arg::Ensemble { expr, at, runs, instrument } => Arg::Ensemble { expr: self.e(s, expr), at: self.e(s, at), runs: self.e(s, runs), instrument: instrument.clone() },
+            Arg::On { expr, event, instrument } => Arg::On { expr: self.e(s, expr), event: event.clone(), instrument: instrument.clone() },
             Arg::Scale { scale } => Arg::Scale { scale: crate::present::Scale { quantity: self.e(s, &scale.quantity), px: scale.px } },
             Arg::Text { .. } | Arg::Word { .. } | Arg::Element { .. } | Arg::Texts { .. } => a.clone(),
         }

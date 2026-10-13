@@ -414,7 +414,7 @@ function drawPlotChrome(v, g) {
   const [ux, uy] = v.units || ['', ''];
   if (ux) {
     const t = svg('text', { class: 'tick', x: v.W - v.m, y: v.H - 8, 'text-anchor': 'end', 'font-size': 12 }, g);
-    t.textContent = ux === 's' ? 'elapsed time (s)' : `(${ux})`;
+    t.textContent = ux === 's' && v.x_elapsed !== false ? 'elapsed time (s)' : `(${ux})`;
   }
   if (uy) {
     const t = svg('text', { class: 'tick', x: v.m, y: v.m - 10, 'font-size': 12 }, g);

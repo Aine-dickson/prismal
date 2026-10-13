@@ -57,6 +57,7 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 | `view v: ... { on click as q request E(q) ... }` | a view that requests an event with the point clicked, where no representation takes the click (D-060) |
 | `group(at: P, rotate: θ, scale: k) [as name] { reps }` | representations placed, turned and scaled together; members are written in the group's frame (D-043) |
 | `trace(pos every 0.02 s)`, `series_plot(y every 0.01 s)` | a sampled source: `expr every Δ`, only as a representation's argument (PK-6.3a) |
+| `histogram(face on roll)`, `histogram(h every 1 s)` | a histogram of one run: the values at each occurrence of an event, or sampled, up to the instant shown (PK-6.3e, D-089) |
 | `histogram(n at t0 + 7 s over 200 runs, bins: 20)` | an ensemble source: `expr at τ over n runs`, the values in `n` runs with consecutive seeds; also an observation's schedule, `ends = n at τ over n runs` (PK-3.8, D-084) |
 | `instrument ruler(resolution: 1 cm, range: [0 m, 2 m], noise: 2 cm)`; `ruler(y) every 0.05 s` | an instrument, and a source read through it in an observation, a sampled or an ensemble source: rounded, limited, with normal noise (PK-3.7, D-087) |
 | `plot(x: [0 s, 6 s], y: [0 m, 1.1 m])` | plot axes with dimensions; a plot marker is at a pair in those dimensions, `marker(at: (0, y))` (PK-7.3a) |

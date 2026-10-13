@@ -255,6 +255,14 @@ pub enum Arg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         instrument: Option<Id>,
     },
+    /// `gap on decay`: the value of `expr` at each occurrence of an event, up to the instant
+    /// shown (PK-6.3e, D-089).
+    On {
+        expr: Expr,
+        event: Id,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instrument: Option<Id>,
+    },
     /// A model element that is not a value: an event (`button`) or an equation (`equation`).
     Element { element: Id },
     /// Several texts: the words at a slider's two ends, `ends: ("cold", "hot")` (D-077).

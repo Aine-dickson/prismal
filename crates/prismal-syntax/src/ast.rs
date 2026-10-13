@@ -336,6 +336,8 @@ pub struct Arg {
     pub every: Option<Expr>,
     /// `n at t0 + 7 s over 200 runs`: an ensemble source (D-084), the instant and the count.
     pub ensemble: Option<(Expr, Expr)>,
+    /// `gap on decay`: the values at each occurrence of an event (D-089).
+    pub on: Option<Name>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

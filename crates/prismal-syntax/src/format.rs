@@ -837,6 +837,7 @@ impl<'a> Printer<'a> {
             Arg::Word { word } => word.clone(),
             Arg::Sampled { expr, every, instrument } => format!("{} every {}", self.read_by(expr, instrument), self.expr(every)),
             Arg::Ensemble { expr, at, runs, instrument } => format!("{} at {} over {} runs", self.read_by(expr, instrument), self.expr(at), self.expr(runs)),
+            Arg::On { expr, event, instrument } => format!("{} on {}", self.read_by(expr, instrument), self.event_name(event)),
             Arg::Element { element } => self.element_name(element),
             Arg::Texts { texts } => format!("({})", texts.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ")),
         }

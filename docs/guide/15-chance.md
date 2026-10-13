@@ -320,6 +320,55 @@ run thins_out of Counter with CounterLab {
 - A rate that reads `t` works the same way: `random(k * elapsed / tau)` is an ageing part that fails more often the older it is.
 - A rate that turns negative stops the run at the instant it does: write rates that stay at or above 0.
 
+## Waiting times
+
+**Goal.** A counter near a steady source clicks at random. The learner sees the gaps between clicks collect into a histogram that takes the shape of the exponential law: short gaps are common, long ones rare.
+**How it is built.** The model keeps the time of the last click and the gap before the current one, both set in the click's handler. `histogram(gap on click)` collects the gap at every click of the run, up to the instant shown, so the histogram grows while the lab plays.
+
+```text
+model Geiger {
+  param { lambda: Frequency = 2 /s }
+  discrete {
+    last:   Time = 0 s     // when the last click came
+    gap:    Time = 0 s     // the wait before the last click
+    clicks: Real = 0
+  }
+
+  event click on random(lambda) {
+    set gap    = elapsed - last
+    set last   = elapsed
+    set clicks = clicks + 1
+  }
+}
+
+presentation GeigerLab for Geiger {
+  view gaps: plot(x: [0 s, 3 s], y: [0, 20], follow: y) {
+    histogram(gap on click, bins: 30)
+  }
+  panel controls {
+    slider(lambda, range: [0.5 /s, 5 /s])
+    button(reseed, label: "Another run")
+    label(clicks)
+  }
+  observe { gaps = gap on click }
+}
+```
+
+```cases
+run waits of Geiger with GeigerLab {
+  config { seed = 9 }
+  until t0 + 300 s
+  expect {
+    mean(gaps) == 0.5 s within 0.06 s
+    deviation(gaps) in [0.42 s, 0.58 s]
+  }
+}
+```
+
+- `gap on click` is the value of `gap` just after each click, the same phrase as the observation `gaps = gap on click`. `histogram(x every Δ)` collects samples of a value through the run in the same way.
+- Both handler lines read the values from before the click: `gap` gets the time since the previous click, then `last` moves on.
+- With a rate of 2 per second the mean wait is half a second, and the deviation is the same: for the exponential law the two are equal. A histogram over many runs (`at τ over n runs`, above) shows how runs differ; a histogram of one run shows what happens again and again within it.
+
 ## Measuring with an instrument
 
 **Goal.** A ball dropped from 2 m and measured with a ruler that reads to the centimetre and errs by about 2 cm: the learner sees the readings scatter about the true height, and repeated measurements spread by the ruler's uncertainty.

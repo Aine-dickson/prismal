@@ -1686,3 +1686,24 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** PK-6.3d, PK-9.8c; IR `LearnerInput::Control`; `EXPLORE_CONTROLS`; checker, timeline (`restart_branch`, shared with the action `restart`), host, formatter; guide chapters 8 and 15, the reference; `examples/reaction.md` offers "Try it" and "Another run" in its explore beat; `prismal-present/tests/explore_restart.rs`.
 - **History:**
   - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-089: Histograms of one run: values at events and sampled values
+
+- **Status:** Accepted
+- **Original position:** D-084 (PK-6.3e) gave `histogram` one source, an ensemble: the values of many runs at one instant. What happens again and again within one run (the faces of a die rolled every second, the waits between clicks of a counter) could be observed (`gap on click`, `x every Δ`) and checked (`mean(gaps)`), not drawn.
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: histograms over a whole run rather than one instant); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-070, D-084, D-085, D-087; PK-3.1, PK-3.4, PK-6.3a, PK-6.3e.
+- **Question:** How does a lesson draw the distribution of values within one run?
+- **Options considered:**
+  1. **A representation that refers to an observation** (`histogram(gaps)`). Rejected for the same reason as in D-084: representations have never referred to observations.
+  2. **New histogram options** (`histogram(gap, over: run)`). A second way to say what the observation phrases already say.
+  3. **The observation phrases as sources** (taken): `histogram(face on roll)` and `histogram(h every 1 s)`. `every Δ` was already a representation source (PK-6.3a); `on E` was an observation schedule (PK-3.4) and becomes a representation source too, the same phrase in both places, as `at τ over n runs` did in D-084.
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13.
+  - PK-6.3e: a histogram takes an ensemble, a sampled source or the values at each occurrence of an event, each in the state after the occurrence's transition (as an observation `on E`). The values of one run are those up to the instant shown, so the histogram grows while a lab plays; with none yet, the axis alone is drawn. Instruments (D-087) apply to all three.
+  - IR argument `{"kind": "on", "expr", "event", "instrument"?}`; `on E` in a model expression's arguments is SX-E08.
+  - **Found while checking a still of the guide's lab:** both renderers labelled every time axis "elapsed time (s)", wrong under a histogram of waits. The host's layout now says whether a plot's time axis is elapsed time (`x_elapsed`, HI-5.1), false in a view with a histogram.
+- **Reason:** one phrase for one meaning: what the observation `gap on click` collects is what `histogram(gap on click)` draws, so a lesson's picture and its test agree by construction.
+- **Version 1 (D-081):** an addition: `on` after an argument was an error before.
+- **Consequences:** IR `Arg::On`; AST `Arg.on`, parser, lowering, formatter, elaboration; `HistSource` in `prismal_present::frame`; host layout `x_elapsed`; SVG and web renderers; PK-6.3e, 04-ir, HI-5.1, working syntax, reference; guide chapter 15 (Waiting times); `prismal-present/tests/histograms.rs` (a die's faces, waits against the exponential law, a sampled level).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.

@@ -139,7 +139,7 @@ fn lower_space(s: &ast::SpaceDecl, diags: &mut Vec<Diag>) -> Option<Space> {
         return None;
     }
     let n = match s.args.as_slice() {
-        [ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Num(n, None), .. }, every: None, ensemble: None }] if (1.0..=3.0).contains(n) && n.fract() == 0.0 => *n as u32,
+        [ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Num(n, None), .. }, every: None, ensemble: None, on: None }] if (1.0..=3.0).contains(n) && n.fract() == 0.0 => *n as u32,
         _ => {
             diags.push(Diag::new("SX-E02", "a space is declared `euclidean(n)` with n = 1, 2 or 3", s.span));
             return None;
@@ -1462,6 +1462,9 @@ impl<'a> ModelCx<'a> {
             }
             if let Some(e) = &a.every {
                 self.err("SX-E08", "a sampled source (`every`) belongs to a representation, not to a model expression", e.span);
+            }
+            if let Some(e) = &a.on {
+                self.err("SX-E08", "values at an event's occurrences (`on E`) belong to a representation, not to a model expression", e.span);
             }
         }
         let name = match &f.kind {

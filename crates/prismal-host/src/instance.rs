@@ -233,6 +233,9 @@ impl Instance {
                         let (ux, uy) = (shown(&units[0], &dims.0), shown(&units[1], &dims.1));
                         v["units"] = json!([ux.0, uy.0]);
                         v["unit_scale"] = json!([ux.1, uy.1]);
+                        // A time axis is elapsed time where things are drawn against it, not
+                        // where a histogram counts durations (D-089).
+                        v["x_elapsed"] = json!(dims.0 == prismal_ir::Dim::time() && !reps.iter().any(|r| matches!(r.kind, CKind::Histogram { .. })));
                     }
                     ViewCtx::Panel => {}
                 }

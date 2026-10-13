@@ -479,12 +479,24 @@ pub enum CKind {
     Table { value: CExpr, tys: Vec<Type>, every: f64, columns: Vec<String>, meter: Option<Meter> },
     Axes,
     Grid,
-    /// How many of `runs` runs give `expr` at `at` in each of `bins` equal bins over the
-    /// plot's x range (D-084). The values are kept for the run configuration they came from.
-    Histogram { expr: Expr, at: f64, runs: usize, bins: usize, label: String, cache: EnsembleCache, meter: Option<Meter> },
+    /// How many values fall in each of `bins` equal bins over the plot's x range: the values
+    /// of many runs at one instant (D-084), or of one run up to the instant shown (D-089).
+    Histogram { source: HistSource, bins: usize, label: String, meter: Option<Meter> },
     /// Members drawn with a shared transform: placed at `at`, turned by `rotate`, scaled by
     /// `scale` (D-043).
     Group { at: Option<CExpr>, rotate: Option<CExpr>, scale: Option<CExpr>, members: Vec<CRep> },
+}
+
+/// Where a histogram's values come from (PK-6.3e).
+#[derive(Clone, Debug)]
+pub enum HistSource {
+    /// `n at τ over k runs` (D-084); the values are kept for the run configuration they came
+    /// from.
+    Ensemble { expr: Expr, at: f64, runs: usize, cache: EnsembleCache },
+    /// `x every Δ`: the samples of the run up to the instant shown (D-089).
+    Every { value: CExpr, every: f64 },
+    /// `x on E`: the values at each occurrence of `E` up to the instant shown (D-089).
+    On { expr: Expr, event: String },
 }
 
 /// The values of an ensemble and the configuration of the run they were computed for: a
@@ -680,20 +692,21 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             CKind::Graph { f: c, lo: x.0, hi: x.1, label: label(e) }
         }
         "histogram" => {
-            let ViewCtx::Plot { dims, x, .. } = ctx else { return Err(d("PK-E05", "a histogram belongs in a plot view: x for the values, y for how many runs give them".into())) };
-            let what = "an ensemble source: `n at t0 + 7 s over 200 runs`";
-            let Some(Arg::Ensemble { expr: e, at, runs, instrument }) = rep.sources.first() else { return Err(needs(what)) };
-            let (_, ty) = ce(e, None)?;
+            let ViewCtx::Plot { dims, x, .. } = ctx else { return Err(d("PK-E05", "a histogram belongs in a plot view: x for the values, y for how many of them fall in each bin".into())) };
+            let what = "an ensemble source, `n at t0 + 7 s over 200 runs`, a sampled source, `face every 1 s`, or the values at an event, `gap on decay`";
+            let (e, instrument) = match rep.sources.first() {
+                Some(Arg::Ensemble { expr, instrument, .. } | Arg::Sampled { expr, instrument, .. } | Arg::On { expr, instrument, .. }) => (expr, instrument),
+                _ => return Err(needs(what)),
+            };
+            let (c, ty) = ce(e, None)?;
             let meter = measure::meter(cm, instruments, instrument.as_ref(), e, &ty).map_err(|m| d("PK-E04", m))?;
             let Type::Quantity { dim } = ty else { return Err(needs("a number or a quantity")) };
             if dim != dims.0 {
                 return Err(d("PK-E04", format!("the values have dimension {dim}, the plot's x axis {} (PK-7.3)", dims.0)));
             }
             if !dims.1.is_none() {
-                return Err(d("PK-E04", "a histogram's y axis counts runs: a range of plain numbers, `y: [0, 50]` (PK-7.3)".into()));
+                return Err(d("PK-E04", "a histogram's y axis counts values: a range of plain numbers, `y: [0, 50]` (PK-7.3)".into()));
             }
-            ce(at, Some(&Type::Instant { dim: Dim::time() }))?;
-            let at = number(cm, at).map_err(|m| d("PK-E02", m))?;
             let whole = |e: &Expr, lo: f64, hi: f64, what: &str| -> Result<usize, Vec<PDiag>> {
                 match number(cm, e) {
                     Ok(n) if n.fract() == 0.0 && n >= lo && n <= hi => Ok(n as usize),
@@ -701,7 +714,29 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
                     Err(m) => Err(d("PK-E02", m)),
                 }
             };
-            let runs = whole(runs, 1.0, crate::data::MAX_RUNS as f64, "a number of runs")?;
+            let source = match rep.sources.first() {
+                Some(Arg::Ensemble { at, runs, .. }) => {
+                    ce(at, Some(&Type::Instant { dim: Dim::time() }))?;
+                    let at = number(cm, at).map_err(|m| d("PK-E02", m))?;
+                    let runs = whole(runs, 1.0, crate::data::MAX_RUNS as f64, "a number of runs")?;
+                    HistSource::Ensemble { expr: e.clone(), at, runs, cache: Default::default() }
+                }
+                Some(Arg::Sampled { every, .. }) => {
+                    let dt = match compile_expr(cm, every, None) {
+                        Ok((_, Type::Quantity { dim })) if dim == Dim::time() => number(cm, every).map_err(|m| d("PK-E02", m))?,
+                        _ => return Err(d("PK-E04", "a sampling interval is a duration: `every 1 s`".into())),
+                    };
+                    if !(dt > 0.0) {
+                        return Err(d("PK-E05", "a sampling interval is positive".into()));
+                    }
+                    HistSource::Every { value: c, every: dt }
+                }
+                Some(Arg::On { event, .. }) => {
+                    let Some(ev) = cm.ir.events.iter().find(|x| &x.id == event) else { return Err(d("PK-E01", format!("unknown event `{event}`"))) };
+                    HistSource::On { expr: e.clone(), event: ev.name.clone() }
+                }
+                _ => unreachable!(),
+            };
             let bins = match prop_expr(rep, "bins") {
                 Some(b) => whole(b, 1.0, 1000.0, "a number of bins")?,
                 None => 20,
@@ -709,7 +744,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             if !(x.1 > x.0) {
                 return Err(d("PK-E05", "a histogram needs an x range from low to high".into()));
             }
-            CKind::Histogram { expr: e.clone(), at, runs, bins, label: label(e), cache: Default::default(), meter }
+            CKind::Histogram { source, bins, label: label(e), meter }
         }
         "trace" | "series_plot" => {
             let Some(Arg::Sampled { expr: e, every, instrument }) = rep.sources.first() else {
@@ -1155,25 +1190,43 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             };
             (Shape::Polyline { points: pts }, measured(text, meter))
         }
-        CKind::Histogram { expr, at, runs, bins, label, cache, meter } => {
+        CKind::Histogram { source, bins, label, meter } => {
             let ViewCtx::Plot { x: (lo, hi), .. } = ctx else { unreachable!() };
-            let cached = cache.borrow().as_ref().filter(|c| c.0 == run.config).map(|c| c.1.clone());
-            let values = match cached {
-                Some(v) => Ok(v),
-                None => crate::data::ensemble(run, expr, *at, *runs).map(|vs| {
-                    // The k-th run has the k-th seed (PK-3.8); readings outside the
-                    // instrument's range are left out.
-                    let xs: Vec<f64> = vs
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(k, v)| read(meter, v, run.config.seed.wrapping_add(k as u64), *at))
-                        .map(|v| if let Value::Num(x) = v { x } else { f64::NAN })
-                        .collect();
-                    *cache.borrow_mut() = Some((run.config.clone(), xs.clone()));
-                    xs
-                }),
+            let seed = run.config.seed;
+            let shown = t - run.config.t0;
+            // Readings outside an instrument's range are left out (PK-3.7).
+            let num = |v: Option<Value>| match v {
+                Some(Value::Num(x)) => Some(x),
+                _ => None,
+            };
+            let (values, whence) = match source {
+                HistSource::Ensemble { expr, at, runs, cache } => {
+                    let cached = cache.borrow().as_ref().filter(|c| c.0 == run.config).map(|c| c.1.clone());
+                    let values = match cached {
+                        Some(v) => Ok(v),
+                        None => crate::data::ensemble(run, expr, *at, *runs).map(|vs| {
+                            // The k-th run has the k-th seed (PK-3.8).
+                            let xs: Vec<f64> = vs.into_iter().enumerate().filter_map(|(k, v)| num(read(meter, v, seed.wrapping_add(k as u64), *at))).collect();
+                            *cache.borrow_mut() = Some((run.config.clone(), xs.clone()));
+                            xs
+                        }),
+                    };
+                    (values, format!("at {} s over {runs} runs", fmt_num(at - run.config.t0)))
+                }
+                HistSource::Every { value, every } => {
+                    let xs: Vec<f64> = samples(run, t, *every).filter_map(|s| run.eval_state(value, &run.state_at(s), s).ok().and_then(|v| num(read(meter, v, seed, s)))).collect();
+                    let n = xs.len();
+                    (Ok(xs), format!("every {} s up to {} s, {n} values", fmt_num(*every), fmt_num(shown)))
+                }
+                HistSource::On { expr, event } => {
+                    let times = run.times(event);
+                    let xs: Vec<f64> = times.iter().zip(run.on(event, expr, None)).filter(|(s, _)| **s <= t).filter_map(|(s, v)| num(read(meter, v, seed, *s))).collect();
+                    let n = xs.len();
+                    (Ok(xs), format!("on {event} up to {} s, {n} values", fmt_num(shown)))
+                }
             };
             match values {
+                Ok(xs) if xs.is_empty() => (Shape::Polygon { points: vec![[*lo, 0.0], [*hi, 0.0]] }, measured(format!("histogram of {label} {whence}: no values yet"), meter)),
                 Ok(xs) => {
                     let w = (hi - lo) / *bins as f64;
                     let outside = xs.iter().filter(|&&v| !(v >= *lo && v <= *hi)).count();
@@ -1220,7 +1273,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     let mean = xs.iter().sum::<f64>() / n;
                     let dev = if n > 1.0 { (xs.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0)).sqrt() } else { 0.0 };
                     let more = if outside > 0 { format!("; {outside} outside the axis") } else { String::new() };
-                    let text = format!("histogram of {label} at {} s over {runs} runs: mean {}, deviation {}{more}", fmt_num(at - run.config.t0), fmt_num(mean), fmt_num(dev));
+                    let text = format!("histogram of {label} {whence}: mean {}, deviation {}{more}", fmt_num(mean), fmt_num(dev));
                     (Shape::Polygon { points: pts }, measured(text, meter))
                 }
                 Err(m) => (Shape::Status { status: m.clone() }, format!("histogram of {label}: not available ({m})")),

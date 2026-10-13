@@ -1248,7 +1248,9 @@ impl<'a> Parser<'a> {
                 } else {
                     None
                 };
-                out.push(Arg { name, value, every, ensemble });
+                // The values at each occurrence of an event (D-089): `gap on decay`.
+                let on = if every.is_none() && ensemble.is_none() && self.eat_word("on") { Some(self.name("an event name")?) } else { None };
+                out.push(Arg { name, value, every, ensemble, on });
                 if !self.eat_punct(",") {
                     break;
                 }

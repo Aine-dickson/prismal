@@ -265,7 +265,7 @@ impl PresCx<'_, '_> {
                     Arg::Element { element }
                 }
                 // A positional name of an event or equation, not a binding: a model element.
-                (ExprKind::Name(n), None) if a.every.is_none() && !self.cx.bindings.contains_key(n) && (self.cx.events.contains_key(n) || self.equations.contains_key(n)) => {
+                (ExprKind::Name(n), None) if a.every.is_none() && a.on.is_none() && !self.cx.bindings.contains_key(n) && (self.cx.events.contains_key(n) || self.equations.contains_key(n)) => {
                     let element = self.cx.events.get(n).or_else(|| self.equations.get(n)).cloned().unwrap();
                     Arg::Element { element }
                 }
@@ -277,6 +277,10 @@ impl PresCx<'_, '_> {
                     (None, Some((at, n))) => {
                         let (expr, instrument) = self.measured(&a.value);
                         Arg::Ensemble { expr, at: self.expr(at), runs: self.expr(n), instrument }
+                    }
+                    (None, None) if a.on.is_some() => {
+                        let (expr, instrument) = self.measured(&a.value);
+                        Arg::On { expr, event: self.cx.event_id(a.on.as_ref().unwrap()), instrument }
                     }
                     (None, None) => {
                         if let Some(name) = self.instrument_call(&a.value) {
@@ -379,7 +383,7 @@ impl PresCx<'_, '_> {
         let kind = match v.kind.text.as_str() {
             "spatial" => {
                 let space = match v.args.first() {
-                    Some(ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Name(s), span }, every: None, ensemble: None }) => match self.cx.space_by_name(s) {
+                    Some(ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Name(s), span }, every: None, ensemble: None, on: None }) => match self.cx.space_by_name(s) {
                         Some(id) => id,
                         None => {
                             self.err("SX-E03", format!("unknown space `{s}`"), *span);
