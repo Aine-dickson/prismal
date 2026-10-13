@@ -38,7 +38,7 @@ model Sample {
 
 - `random(lambda * n)` takes a rate, a quantity per unit of time (`Frequency` is `1/T`). A rate without a unit is an error: write `0.1 /s`, not `0.1`.
 - The rate is read again after every event, so it falls as nuclei decay. Between events the waiting time is random with the exponential law; the runtime computes it exactly, not by small time steps.
-- A rate may read parameters and discrete state, not continuous state or `t` (MK-E27): a rate changes only when an event changes what it reads.
+- A rate may read anything in the model, including continuous state and `t`; see [Rates that change between events](#rates-that-change-between-events).
 - When `n` reaches 0 the rate is 0 and the event never happens again.
 
 ```text
@@ -272,6 +272,53 @@ run settles of Isomer with IsomerLab {
 ```
 
 At equilibrium `b` is near `300 * 2 / 3 = 200`, with a deviation of about 8. Each event changes both counts, so the rates of both change at every event; the runtime keeps one clock per event, which is exact however the rates change (D-083).
+
+## Rates that change between events
+
+**Goal.** A counter carried away from a radioactive source: the learner hears the clicks thin out as the distance grows, because the rate falls with the square of the distance.
+**How it is built.** The distance `x` is continuous `state` with a `flow`. A `derived` value `level` gives the click rate from `x`, and the event's trigger `random(level)` reads it. Nothing else is needed: the runtime follows the rate as it changes between clicks.
+
+```text
+model Counter {
+  param {
+    r0: Frequency = 40 /s     // clicks per second at the reference distance
+    d0: Length    = 1 m       // reference distance
+    v:  Velocity  = 0.5 m/s   // the counter's speed away from the source
+  }
+  state { x: Length = 1 m }
+  discrete { clicks: Real = 0 }
+  derived { level: Frequency = r0 * (d0 / x)^2 }
+
+  flow der(x) = v
+
+  event click on random(level) { set clicks = clicks + 1 }
+}
+
+presentation CounterLab for Counter {
+  view counts: plot(x: [0 s, 10 s], y: [0, 80]) {
+    series_plot(clicks every 0.1 s)
+  }
+  panel controls {
+    slider(v, range: [0.1 m/s, 2 m/s])
+    label(level)
+    label(clicks)
+  }
+  observe { total = clicks at t0 + 10 s }
+}
+```
+
+```cases
+run thins_out of Counter with CounterLab {
+  config { seed = 4 }
+  until t0 + 10 s
+  expect { total in [40, 95] }
+}
+```
+
+- The rate reads `x`, which flows, so it is different at every instant. The event happens when the rate, added up over time, reaches a random amount drawn from the event's stream; the runtime adds it up along the solver's steps (RC-13.8a). The result is exact up to the solver's accuracy, not a sampling on a grid.
+- Over 10 s the expected number of clicks is `r0 d0^2 (1/x(0) - 1/x(10 s)) / v = 40 * (1 - 1/6) / 0.5`, about 67, with a deviation of about 8.
+- A rate that reads `t` works the same way: `random(k * elapsed / tau)` is an ageing part that fails more often the older it is.
+- A rate that turns negative stops the run at the instant it does: write rates that stay at or above 0.
 
 ## Exercises
 

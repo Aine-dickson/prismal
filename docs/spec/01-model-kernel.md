@@ -491,8 +491,8 @@ where `x(t_a⁺)` is the value committed at `t_a` and `F_x` is the combined flow
 
 ### 15.4a Random events (D-083)
 
-- **MK-15.15** An event with the trigger `random(λ)` is due at the jump instants of a Poisson process whose intensity at `t` is `λ` evaluated on the state committed last before `t`. Between two transitions the intensity is constant and the waiting time is exponential; a transition that changes `λ` changes the law from that instant on. `λ = 0` makes no occurrence; a negative `λ` is a model failure.
-- **MK-15.16** In v0.2 `λ` reads only parameters, constants, discrete state and derived values of those, not continuous state or time (MK-E27, as MK-14.12). Rates that vary between events are a later extension.
+- **MK-15.15** An event with the trigger `random(λ)` is due at the jump instants of a Poisson process whose intensity at `t` is `λ` evaluated on the state at `t`. A rate that reads only parameters, constants, discrete state and derived values of those is constant between two transitions, and the waiting time is exponential; a transition that changes `λ` changes the law from that instant on. `λ = 0` makes no occurrence; a negative `λ` is a model failure.
+- **MK-15.16** (D-086) `λ` may also read continuous state and time, directly or through derived values. Such a rate varies between transitions: the event is due when the integral of `λ` along the trajectory reaches the clock's next target (RC-13.8a), an inhomogeneous Poisson process. MK-E27 is retired.
 - **MK-15.17** A random event is not a crossing: MK-15.12 does not apply, and its handler may change its own rate. A random event repeated per member (MK-15.1b) has rate 0 while its member is not alive.
 
 ### 15.5 Ordering

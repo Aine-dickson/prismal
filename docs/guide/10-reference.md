@@ -271,7 +271,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E24 | event payload with no source |
 | MK-E25 | `index` read outside the overrides of a collection |
 | MK-E26 | a member that does not exist, a part used as a value, or an aggregate that has no value |
-| MK-E27 | a random event's rate depends on continuous state or `t` |
+| MK-E27 | retired (D-086): rates may read continuous state and `t` |
 | MK-E28 | a distribution outside an event's condition and operations |
 
 **Presentation** (`PK`): E01 broken reference, E02 expression does not check (the kernel's message is quoted), E03 control or action targets something the learner may not change, E04 missing or wrong scale or axis dimension, E05 representation unsuited to its sources or view, E06 representation kind not implemented.

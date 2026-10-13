@@ -942,8 +942,8 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             Trigger::Request => Some(CTrigger::Request),
             Trigger::Random { rate } => {
                 let r = tc.expect(rate, &Type::Quantity { dim: Dim::time().pow(Ratio::new(-1, 1)) });
-                random_rate(&scope, tc.diags, &e.id, &e.name, rate);
-                r.map(CTrigger::Random)
+                let varying = random_rate_varies(&scope, rate);
+                r.map(|rate| CTrigger::Random { rate, varying })
             }
             Trigger::Input { binding } => index.get(binding).map(|&i| CTrigger::Input(i)),
         };
@@ -1294,26 +1294,26 @@ fn flow_conditions(scope: &Scope, diags: &mut Vec<Diagnostic>, f: &Flow) {
     }
 }
 
-/// MK-15.16 (D-083): a random event's rate reads only parameters, constants, discrete state
-/// and derived values of those, not continuous state or time (MK-E27).
-fn random_rate(scope: &Scope, diags: &mut Vec<Diagnostic>, id: &str, name: &str, rate: &Expr) {
-    let mut bad = None;
-    rate.walk(&mut |x| {
-        if matches!(x, Expr::Builtin { builtin: Builtin::T | Builtin::Elapsed }) {
-            bad = Some("t".to_string());
-        }
-    });
+/// MK-15.16 (D-083, D-086): whether a random event's rate reads continuous state or time,
+/// directly or through derived values; such a rate changes between transitions and its
+/// clock is integrated along the steps (RC-13.8a).
+fn random_rate_varies(scope: &Scope, rate: &Expr) -> bool {
+    let mut time = false;
+    let mut reads_time = |e: &Expr| {
+        e.walk(&mut |x| {
+            if matches!(x, Expr::Builtin { builtin: Builtin::T | Builtin::Elapsed }) {
+                time = true;
+            }
+        })
+    };
+    reads_time(rate);
     let reads = closure_derived(scope.model, scope.index, &rate.refs());
-    if let Some(i) = reads.iter().find(|i| scope.model.bindings[**i].role == Role::Continuous) {
-        bad = Some(scope.model.bindings[*i].name.clone());
+    for &i in &reads {
+        if let (Role::Derived, Some(d)) = (scope.model.bindings[i].role, &scope.model.bindings[i].def) {
+            reads_time(d);
+        }
     }
-    if let Some(b) = bad {
-        diags.push(Diagnostic {
-            code: "MK-E27",
-            message: format!("the rate of random event `{name}` depends on `{b}` (continuous state or time); a rate reads parameters and discrete state, which events change"),
-            element: id.to_string(),
-        });
-    }
+    time || reads.iter().any(|i| scope.model.bindings[*i].role == Role::Continuous)
 }
 
 /// Bindings read by `refs`, following derived definitions (not flows).

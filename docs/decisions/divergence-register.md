@@ -1618,3 +1618,26 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** `prismal_present::restarted`; `Interactive::restart`, `reseed` reworked; timeline `Restart` (a new run version); IR action `restart`; parser, lowering, formatter, checker, host action list, word lists; frame `grid_step` and grid bars; PK-6.3d, PK-6.3e, PK-9.2 table; reference, working syntax, guide chapter 15; `examples/reaction.md` and its index row; tests `restart_keeps_the_settings` and `histogram_bars_follow_the_grid_of_the_values`.
 - **History:**
   - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-086: Rates that vary between events
+
+- **Status:** Accepted
+- **Original position:** D-083 (MK-15.16) let a random event's rate read only parameters, constants, discrete state and derived values of those, so that a rate is constant between transitions; a rate reading continuous state or `t` was MK-E27, "a later extension".
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers); the owner chose on 2026-10-13 to finish the stochastic leftovers before the next capability.
+- **Builds on:** D-004, D-083; MK-15.15, RC-7.5, RC-7.6, RC-13.8.
+- **Question:** How does a model write chance whose rate changes continuously: a counter moving away from a source, an ageing part that fails more often with time, a reaction rate that follows a temperature?
+- **Content the change serves:** inverse-square counting, hazard rates that grow with age (Weibull lifetimes), reactions in a changing environment, infection pressure from a continuous quantity.
+- **Options considered:**
+  1. **Keep MK-E27**; authors approximate with `every Δ` and `bernoulli(λ Δ)`. Wrong by a step-size error, and the step is the author's to choose.
+  2. **Thinning** (Lewis and Shedler 1979): draw candidates at a bounding rate and accept with probability `λ / λ_max`. Needs a bound the author declares or the runtime guesses; a wrong bound gives a wrong law silently.
+  3. **The integral of the rate as hidden continuous state** in the solver, with the occurrence located as a crossing of `Λ = P`. Exact to the solver's accuracy, but the rate's integral enters the solver's error control and changes the steps of every flow in the model.
+  4. **The integral of the rate by quadrature on the dense output of each step** (taken). Within a step the discrete state is fixed and the dense output gives the continuous state at any instant, so the rate is a smooth function of time on the step: its integral is computed by adaptive Gauss-Legendre panels, and the occurrence is located by bisection and cut as a crossing is.
+- **Accepted position:** option 4, under the owner's standing delegation of 2026-09-30.
+  - MK-15.16: a rate may read continuous state and time, directly or through derived values; MK-E27 is retired. The checker marks such a rate as varying (`CTrigger::Random { varying }`).
+  - RC-13.8a: a varying clock has no scheduled instant; its integral grows along each accepted step; reaching its target cuts the step there (to `ε_t`), and it fires as any clock. Targets come from the same stream as before, so a constant rate made varying keeps its draws.
+  - A negative rate inside a step is a model failure, located to `ε_t`.
+  - No new syntax: `random(λ)` takes any rate expression.
+- **Reason:** option 4 is exact to the solver's accuracy (the law tested against the closed forms below), adds no state to the solver, leaves models without varying rates bit for bit as they were, and keeps every guarantee of D-083 (streams by event identity, snapshots, resumed runs).
+- **Consequences:** MK-15.15, MK-15.16; RC-13.8a; `prismal_kernel::check::random_rate_varies`; runtime `integrate_rates`, `locate_clocks`, `fire_clock`; guide chapter 15 (Rates that change between events) and the reference (MK-E27 retired); tests: a count under the rate `k t / tau` against its Poisson law (mean and variance), its waiting time (first two moments), a rate read from cooling continuous state, resumed runs, a rate that turns negative.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.

@@ -370,7 +370,7 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
             .events
             .iter()
             .map(|ev| match ev.trigger {
-                Some(CTrigger::Random(_)) => {
+                Some(CTrigger::Random { .. }) => {
                     Some(Clock { rate: 0.0, integral: 0.0, t_last: cfg.t0, target: Uniforms::new(cfg.seed, fnv1a(&ev.id), CLOCK_SITE, 0).exp1(), fired: 0 })
                 }
                 _ => None,
@@ -499,16 +499,23 @@ impl<'a> Engine<'a> {
 
     /// RC-13.8: after a transition, each random event's clock integrates its rate up to now,
     /// takes the rate of the committed state and schedules its next occurrence, never at the
-    /// current instant.
+    /// current instant. A clock whose rate varies between transitions (RC-13.8a) is
+    /// integrated along the steps instead and has no scheduled instant.
     fn refresh_clocks(&mut self) -> Result<(), RunDiag> {
         for ei in 0..self.cm.events.len() {
-            let Some(CTrigger::Random(rate)) = &self.cm.events[ei].trigger else { continue };
+            let Some(CTrigger::Random { rate, varying }) = &self.cm.events[ei].trigger else { continue };
             let r = rate.eval(&self.ctx(&self.vals)).map_err(|s| self.diag(Category::Model, s.cause, Some(&self.cm.events[ei].id)))?.num();
             if r < 0.0 {
-                return Err(self.diag(Category::Model, format!("the rate of `{}` is negative ({r})", self.cm.events[ei].name), Some(&self.cm.events[ei].id)));
+                return Err(self.negative_rate(ei, r));
             }
             let t = self.t;
             let c = self.clocks[ei].as_mut().unwrap();
+            if *varying {
+                c.t_last = t;
+                c.rate = r;
+                self.time_next[ei] = None;
+                continue;
+            }
             c.integral += c.rate * (t - c.t_last);
             c.t_last = t;
             c.rate = r;
@@ -542,22 +549,143 @@ impl<'a> Engine<'a> {
                     self.every_k[ei] += 1;
                     self.time_next[ei] = Some(f + self.every_k[ei] as f64 * d);
                 }
-                Some(CTrigger::Random(_)) => {
-                    // RC-13.8: the integral has reached the target; the next target is one
-                    // more standard exponential from the clock's stream.
-                    let stream = fnv1a(&self.cm.events[ei].id);
-                    let (seed, t) = (self.cfg.seed, self.t);
-                    let c = self.clocks[ei].as_mut().unwrap();
-                    c.integral = c.target;
-                    c.t_last = t;
-                    c.fired += 1;
-                    c.target += Uniforms::new(seed, stream, CLOCK_SITE, c.fired).exp1();
-                    self.time_next[ei] = None;
-                }
+                Some(CTrigger::Random { .. }) => self.fire_clock(ei),
                 _ => self.time_next[ei] = None,
             }
         }
         due
+    }
+
+    /// RC-13.8: the integral has reached the target; the next target is one more standard
+    /// exponential from the clock's stream.
+    fn fire_clock(&mut self, ei: usize) {
+        let stream = fnv1a(&self.cm.events[ei].id);
+        let (seed, t) = (self.cfg.seed, self.t);
+        let c = self.clocks[ei].as_mut().unwrap();
+        c.integral = c.target;
+        c.t_last = t;
+        c.fired += 1;
+        c.target += Uniforms::new(seed, stream, CLOCK_SITE, c.fired).exp1();
+        self.time_next[ei] = None;
+    }
+
+    fn negative_rate(&self, ei: usize, r: f64) -> RunDiag {
+        self.diag(Category::Model, format!("the rate of `{}` is negative ({r})", self.cm.events[ei].name), Some(&self.cm.events[ei].id))
+    }
+
+    /// The rates of the random events `which` at `t` inside a step (RC-13.8a). A negative
+    /// rate is a model failure, reported at the first instant of the step found negative, by
+    /// bisection to the time tolerance.
+    fn rates_in_step(&self, step: &Step, scratch: &[Value], t: f64, which: &[usize], out: &mut [f64]) -> Result<(), RunDiag> {
+        let rates = |t: f64, out: &mut [f64]| -> Result<Option<usize>, RunDiag> {
+            let vals = self.state_in_step(step, scratch, t).map_err(|s| self.diag(Category::Model, s.cause, None))?;
+            let c = Ctx { vals: &vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: None };
+            for (k, (o, &ei)) in out.iter_mut().zip(which).enumerate() {
+                let Some(CTrigger::Random { rate, .. }) = &self.cm.events[ei].trigger else { unreachable!() };
+                *o = rate.eval(&c).map_err(|s| self.diag(Category::Model, s.cause, Some(&self.cm.events[ei].id)))?.num();
+                if *o < 0.0 {
+                    return Ok(Some(k));
+                }
+            }
+            Ok(None)
+        };
+        let Some(mut k) = rates(t, out)? else { return Ok(()) };
+        let (mut lo, mut hi, mut r) = (self.t, t, out[k]);
+        let mut probe = vec![0.0; which.len()];
+        while hi - lo > self.cfg.eps_t() {
+            let mid = 0.5 * (lo + hi);
+            if mid <= lo || mid >= hi {
+                break;
+            }
+            match rates(mid, &mut probe)? {
+                Some(j) => {
+                    (hi, k, r) = (mid, j, probe[j]);
+                }
+                None => lo = mid,
+            }
+        }
+        Err(RunDiag { t: hi, ..self.negative_rate(which[k], r) })
+    }
+
+    /// Three-point Gauss-Legendre integrals over `[a, b]` of the rates of `which`.
+    fn rate_panel(&self, step: &Step, scratch: &[Value], a: f64, b: f64, which: &[usize]) -> Result<Vec<f64>, RunDiag> {
+        const X: [f64; 3] = [-0.774_596_669_241_483_4, 0.0, 0.774_596_669_241_483_4];
+        const W: [f64; 3] = [5.0 / 9.0, 8.0 / 9.0, 5.0 / 9.0];
+        let (m, r) = (0.5 * (a + b), 0.5 * (b - a));
+        let mut sum = vec![0.0; which.len()];
+        let mut rates = vec![0.0; which.len()];
+        for (x, w) in X.iter().zip(W) {
+            self.rates_in_step(step, scratch, m + r * x, which, &mut rates)?;
+            for (s, q) in sum.iter_mut().zip(&rates) {
+                *s += w * r * q;
+            }
+        }
+        Ok(sum)
+    }
+
+    /// The integrals over `[a, b]` of the rates of `which` along a step's dense output:
+    /// Gauss-Legendre panels halved until the two halves agree with the whole to `1e-10`
+    /// (absolute and relative) for every rate (RC-13.8a).
+    fn integrate_rates(&self, step: &Step, scratch: &[Value], a: f64, b: f64, which: &[usize]) -> Result<Vec<f64>, RunDiag> {
+        if b <= a {
+            return Ok(vec![0.0; which.len()]);
+        }
+        let mut total = vec![0.0; which.len()];
+        let mut stack = vec![(a, b, self.rate_panel(step, scratch, a, b, which)?, 0u32)];
+        while let Some((a, b, whole, depth)) = stack.pop() {
+            let m = 0.5 * (a + b);
+            let (l, r) = (self.rate_panel(step, scratch, a, m, which)?, self.rate_panel(step, scratch, m, b, which)?);
+            let close = whole.iter().zip(l.iter().zip(&r)).all(|(w, (x, y))| (w - (x + y)).abs() <= 1e-10 * (1.0 + (x + y).abs()));
+            if close || depth >= 30 || m <= a || m >= b {
+                for (t, (x, y)) in total.iter_mut().zip(l.iter().zip(&r)) {
+                    *t += x + y;
+                }
+            } else {
+                stack.push((m, b, r, depth + 1));
+                stack.push((a, m, l, depth + 1));
+            }
+        }
+        Ok(total)
+    }
+
+    /// RC-13.8a: the first instant in the step at which a varying clock reaches its target,
+    /// by bisection to the time tolerance (the far end of the bracket, as RC-7.6), and the
+    /// clocks reached there. `total` holds the integrals over the whole step.
+    fn locate_clocks(&self, step: &Step, scratch: &[Value], which: &[usize], total: &[f64], t1: f64, eps_t: f64) -> Result<Option<(f64, Vec<usize>)>, RunDiag> {
+        let need: Vec<f64> = which.iter().map(|&ei| self.clocks[ei].as_ref().map(|c| c.target - c.integral).unwrap()).collect();
+        let reach = |at: &[f64]| at.iter().zip(&need).any(|(i, n)| i >= n);
+        if !reach(total) {
+            return Ok(None);
+        }
+        let (mut lo, mut hi) = (self.t, t1);
+        let mut at_lo = vec![0.0; which.len()];
+        let mut at_hi = total.to_vec();
+        while hi - lo > eps_t {
+            let mid = 0.5 * (lo + hi);
+            if mid <= lo || mid >= hi {
+                break;
+            }
+            let add = self.integrate_rates(step, scratch, lo, mid, which)?;
+            let at_mid: Vec<f64> = at_lo.iter().zip(&add).map(|(x, y)| x + y).collect();
+            if reach(&at_mid) {
+                hi = mid;
+                at_hi = at_mid;
+            } else {
+                lo = mid;
+                at_lo = at_mid;
+            }
+        }
+        let reached = which.iter().zip(at_hi.iter().zip(&need)).filter(|(_, (i, n))| i >= n).map(|(&ei, _)| ei).collect();
+        Ok(Some((hi, reached)))
+    }
+
+    /// Adds to the varying clocks `which` the integrals of their rates up to `t`.
+    fn advance_clocks(&mut self, which: &[usize], add: &[f64], t: f64) {
+        for (&ei, a) in which.iter().zip(add) {
+            let c = self.clocks[ei].as_mut().unwrap();
+            c.integral += a;
+            c.t_last = t;
+        }
     }
 
     fn diag(&self, category: Category, message: String, element: Option<&str>) -> RunDiag {
@@ -772,6 +900,8 @@ impl<'a> Engine<'a> {
         let mut h: Option<f64> = self.h;
         let mut pending: VecDeque<Scheduled> = sorted_log(&self.cfg.log).into_iter().skip(self.consumed).collect();
         let mut steps = 0usize;
+        // RC-13.8a: random events whose rate varies along a step.
+        let varying: Vec<usize> = (0..cm.events.len()).filter(|&ei| matches!(cm.events[ei].trigger, Some(CTrigger::Random { varying: true, .. }))).collect();
         loop {
             // RC-14.3: a snapshot at the start, where actions apply, and every few steps.
             let due = pending.front().map(|s| s.t <= self.t).unwrap_or(false);
@@ -893,10 +1023,21 @@ impl<'a> Engine<'a> {
                 }
                 new_refs[ei] = r;
             }
+            let mut clocks_total = vec![];
+            if !varying.is_empty() {
+                clocks_total = self.integrate_rates(&step, &rhs.scratch, self.t, t1, &varying)?;
+                if let Some((th, reached)) = self.locate_clocks(&step, &rhs.scratch, &varying, &clocks_total, t1, eps_t)? {
+                    found.extend(reached.into_iter().map(|ei| (ei, th)));
+                }
+            }
 
             if !found.is_empty() {
                 let te = found.iter().map(|x| x.1).fold(f64::INFINITY, f64::min);
                 let due: Vec<usize> = found.iter().filter(|x| x.1 <= te + eps_t).map(|x| x.0).collect();
+                if !varying.is_empty() {
+                    let add = if te == t1 { clocks_total.clone() } else { self.integrate_rates(&step, &rhs.scratch, self.t, te, &varying)? };
+                    self.advance_clocks(&varying, &add, te);
+                }
                 step.t1 = te;
                 let mut ye = vec![0.0; n_y];
                 step.eval(te, &mut ye);
@@ -907,6 +1048,11 @@ impl<'a> Engine<'a> {
                 cm.update_derived(&mut self.vals, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
                 self.commit();
                 self.after_step_checks()?;
+                for &ei in &due {
+                    if matches!(cm.events[ei].trigger, Some(CTrigger::Random { .. })) {
+                        self.fire_clock(ei);
+                    }
+                }
                 self.iterate(due, vec![])?;
                 self.refresh_clocks()?;
                 self.retake_refs();
@@ -921,6 +1067,7 @@ impl<'a> Engine<'a> {
             if let Err(d) = self.check_constraints(&v1, false) {
                 return Err(self.fail_in_step(step, base, d));
             }
+            self.advance_clocks(&varying, &clocks_total, t1);
             self.run.segments.push(Segment { step, base });
             self.t = t1;
             self.n = 0;

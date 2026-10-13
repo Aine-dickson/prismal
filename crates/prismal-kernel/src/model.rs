@@ -52,8 +52,9 @@ pub enum CTrigger {
     Start,
     Request,
     Input(usize),
-    /// The jumps of a Poisson process at this rate (D-083).
-    Random(CExpr),
+    /// The jumps of a Poisson process at this rate (D-083). `varying`: the rate reads
+    /// continuous state or time, so it changes between transitions (MK-15.16).
+    Random { rate: CExpr, varying: bool },
 }
 
 #[derive(Clone, Debug)]

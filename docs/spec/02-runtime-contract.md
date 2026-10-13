@@ -298,6 +298,7 @@ The stochastic modes (D-013) are specified by D-083: random events (MK-15.15) an
 - **RC-13.6** The generator is Philox4x32-10 (Salmon and others 2011). The key is `splitmix64(seed) XOR fnv1a64(event identity)`, split into two 32-bit words (low first); the counter is `(k low, k high, site, j)` for due count `k` and block `j`. Uniform number `i` of a draw is taken from block `i / 2`, words `2 (i mod 2)` and `2 (i mod 2) + 1` as the high and low halves of 64 bits, whose top 53 bits divided by `2^53` give a number in `[0, 1)`.
 - **RC-13.7** Distributions are computed from uniform numbers `u`: uniform `a + (b - a) u`; normal by Box-Muller, `m + s sqrt(-2 ln(1 - u1)) cos(2π u2)` per component; exponential `-ln(1 - u) / r`; Bernoulli `u < p`; integer `a + floor(u (b - a + 1))`; choice the argument numbered `floor(u k)`; Poisson by multiplication of uniforms below a mean of 30 and by Hörmann's PTRS from 30; binomial by inversion when `n min(p, 1 - p) < 30` and by Hörmann's BTRS otherwise (with `n - X` for `p > 1/2`).
 - **RC-13.8** A random event keeps a **clock** (the modified next reaction method, Anderson 2007): the integral `Λ` of its rate since the run's start and a target `P`, a sum of standard exponential numbers from the event's stream at site `2^32 - 1` (counter 0 for the first, `k` after the k-th occurrence). After initialization and after every transition (including actions) the clock adds the previous rate times the time elapsed to `Λ`, reads the new rate `λ`, and schedules the event as a time event at `t + (P - Λ) / λ` (never at the current instant; none when `λ = 0`). When it occurs, `Λ` becomes `P` and `P` grows by the next exponential number. Snapshots (RC-14.1) hold the clocks and the due counts.
+- **RC-13.8a** (D-086) The clock of a rate that reads continuous state or time (MK-15.16) has no scheduled instant. Over every accepted step the runtime integrates the rate along the step's dense output, with three-point Gauss-Legendre panels halved until each half-pair agrees with its whole to `1e-10` (absolute and relative), and adds the integral to `Λ`. When the integral over a step reaches `P - Λ`, the occurrence is located by bisection to `ε_t` and the step is cut there, as for a crossing (RC-7.5, RC-7.6); events found within `ε_t` of it are due with it. A rate found negative inside a step is a model failure at the first instant located negative, to `ε_t`. Varying and constant clocks draw their targets from the same stream (RC-13.8), so an edit that makes a rate vary keeps the event's targets.
 
 ---
 
@@ -414,7 +415,7 @@ Each program (D-012) is checked for whether this contract determines its expecte
 
 | Item | Where it will be specified |
 |---|---|
-| Stochastic modes: per-step sampling and event-time sampling (D-013) | Done (D-083, RC-13.5 to RC-13.8); rates varying between events later |
+| Stochastic modes: per-step sampling and event-time sampling (D-013) | Done (D-083, RC-13.5 to RC-13.8); rates varying between events (D-086, RC-13.8a) |
 | Algorithmic process execution (RUN-04) | Slice that needs it |
 | Field state discretization and solvers (D-010) | Slice that needs it |
 | Stiff and implicit solvers; multiple solvers in one model (06 sections 49-51) | When a reference program needs them |
