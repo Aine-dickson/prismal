@@ -146,7 +146,7 @@ pub fn constant_as(cm: &CModel, e: &Expr, expected: Option<&prismal_ir::Type>) -
         return Err("the expression reads bindings of the model; it is not a constant".into());
     }
     let (c, _) = compile_expr(cm, e, expected).map_err(|d| d.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("; "))?;
-    c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[] }).map_err(|s| s.cause)
+    c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None }).map_err(|s| s.cause)
 }
 
 /// A constant number (a quantity in coherent SI units, or an instant in seconds).
@@ -185,6 +185,7 @@ pub fn config(cm: &CModel, case: &RunCase, default_end: f64) -> Result<Config, S
         Some("rk4") => SolverConfig::Rk4 { h },
         _ => SolverConfig::Dopri5 { rtol: rtol.unwrap_or(1e-6), atol: atol.unwrap_or(1e-9), h_max: f64::INFINITY },
     };
+    cfg.seed = case.config.seed.unwrap_or(0);
     for o in &case.params {
         cfg = cfg.param(&o.binding, o.value.clone());
     }

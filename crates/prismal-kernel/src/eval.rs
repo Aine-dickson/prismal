@@ -1,6 +1,6 @@
 //! Values, statuses and evaluation of compiled expressions (MK sections 2, 5, 10).
 
-use prismal_ir::{BinOp, Func};
+use prismal_ir::{BinOp, Dist, Func};
 use prismal_ir::Func as F;
 use std::fmt;
 use std::rc::Rc;
@@ -31,7 +31,7 @@ impl Arr {
         }
         r
     }
-    fn map(&self, f: impl Fn(f64) -> f64) -> Arr {
+    fn map(&self, mut f: impl FnMut(f64) -> f64) -> Arr {
         let mut r = *self;
         for i in 0..self.n as usize {
             r.v[i] = f(self.v[i]);
@@ -190,6 +190,28 @@ pub enum CExpr {
     Extreme(Func, Vec<(CExpr, CExpr)>),
     /// The item whose number, from 1, the first expression gives; only it is evaluated (D-058).
     Pick(Box<CExpr>, Vec<CExpr>),
+    /// A draw (MK-10.4, D-083).
+    Draw(Box<CDraw>),
+}
+
+/// A compiled draw: its distribution and arguments, and its stream (RC-13.5): the event that
+/// draws (`event`, an index into the model's events, and `stream`, the number of its
+/// identity) and the draw site's number in that event.
+#[derive(Clone, Debug)]
+pub struct CDraw {
+    pub dist: Dist,
+    pub args: Vec<CExpr>,
+    pub event: usize,
+    pub stream: u64,
+    pub site: u32,
+}
+
+/// What draws read during event handling: the run's seed and each event's due count
+/// (RC-13.5).
+#[derive(Clone, Copy, Debug)]
+pub struct Draws<'a> {
+    pub seed: u64,
+    pub due: &'a [u64],
 }
 
 /// The environment of an evaluation.
@@ -204,6 +226,8 @@ pub struct Ctx<'a> {
     /// The payloads of the occurrences being handled, by event index (D-050); empty outside
     /// event handling.
     pub payloads: &'a [Option<Value>],
+    /// The random streams, during event handling only (D-083).
+    pub draws: Option<Draws<'a>>,
 }
 
 fn finite(x: f64, what: &str) -> EvalResult {
@@ -294,7 +318,7 @@ impl CExpr {
                 Func(body) => {
                     let vals: Result<std::vec::Vec<Value>, Status> = args.iter().map(|a| a.eval(c)).collect();
                     let vals = vals?;
-                    let inner = Ctx { vals: c.vals, der: c.der, t: c.t, t0: c.t0, args: &vals, payloads: c.payloads };
+                    let inner = Ctx { vals: c.vals, der: c.der, t: c.t, t0: c.t0, args: &vals, payloads: c.payloads, draws: c.draws };
                     body.eval(&inner)
                 }
                 v => Err(Status::invalid(format!("{v} is not a function"))),
@@ -348,6 +372,7 @@ impl CExpr {
                 }
                 best.map(Num).ok_or_else(|| Status::invalid(format!("`{}` over no member has no value", if *f == F::Min { "min" } else { "max" })))
             }
+            CExpr::Draw(d) => draw(d, c),
             CExpr::Payload(i) => c.payloads.get(*i).cloned().flatten().ok_or_else(|| Status::invalid("no payload for this occurrence".to_string())),
             CExpr::Match(e, arms) => match e.eval(c)? {
                 Case(i) => arms.get(i as usize).ok_or_else(|| Status::invalid(format!("no arm for case {i}")))?.eval(c),
@@ -417,4 +442,41 @@ pub fn distance(a: &Value, b: &Value) -> Option<f64> {
         }
         _ => None,
     }
+}
+
+/// Samples a draw from its stream (RC-13.5 to RC-13.7).
+fn draw(d: &CDraw, c: &Ctx) -> EvalResult {
+    use crate::random::{invalid_args, Uniforms};
+    let Some(dr) = c.draws else {
+        return Err(Status::invalid("a draw outside the handling of an event"));
+    };
+    let mut u = Uniforms::new(dr.seed, d.stream, d.site, dr.due[d.event]);
+    if d.dist == Dist::Choice {
+        let i = ((u.next() * d.args.len() as f64) as usize).min(d.args.len() - 1);
+        return d.args[i].eval(c);
+    }
+    let vals = d.args.iter().map(|a| a.eval(c)).collect::<Result<std::vec::Vec<Value>, Status>>()?;
+    if let (Dist::Normal, Value::Vec(m) | Value::Point(m)) = (d.dist, &vals[0]) {
+        let s = vals[1].num();
+        if let Some(why) = invalid_args(d.dist, &[0.0, s]) {
+            return Err(Status::invalid(why));
+        }
+        let a = m.map(|x| x + s * u.normal());
+        return Ok(if matches!(vals[0], Value::Point(_)) { Value::Point(a) } else { Value::Vec(a) });
+    }
+    let x: std::vec::Vec<f64> = vals.iter().map(|v| v.num()).collect();
+    if let Some(why) = invalid_args(d.dist, &x) {
+        return Err(Status::invalid(why));
+    }
+    let r = match d.dist {
+        Dist::Uniform => x[0] + (x[1] - x[0]) * u.next(),
+        Dist::Normal => x[0] + x[1] * u.normal(),
+        Dist::Exponential => u.exp1() / x[0],
+        Dist::Bernoulli => return Ok(Value::Bool(u.next() < x[0])),
+        Dist::Integer => (x[0] + (u.next() * (x[1] - x[0] + 1.0)).floor()).min(x[1]),
+        Dist::Poisson => u.poisson(x[0]),
+        Dist::Binomial => u.binomial(x[0], x[1]),
+        Dist::Choice => unreachable!(),
+    };
+    finite(r, "draw")
 }

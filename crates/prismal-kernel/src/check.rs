@@ -3,7 +3,7 @@
 //! The checker types every expression with expected-type propagation (D-030, D-032),
 //! reports the static diagnostics of MK section 18, and produces a compiled model.
 
-use crate::eval::{Arr, CExpr, Value};
+use crate::eval::{Arr, CDraw, CExpr, Value};
 use crate::model::*;
 use prismal_ir::*;
 use std::collections::{BTreeSet, HashMap};
@@ -43,6 +43,9 @@ pub(crate) struct Tc<'a, 'b> {
     closed: Option<String>,
     /// While checking an event with a payload: its identity, index and payload type (D-050).
     pub payload: Option<(Id, usize, Type)>,
+    /// While checking an event's condition and operations: the event's index, the number of
+    /// its identity and the next draw site's number (D-083).
+    pub draws: Option<(usize, u64, u32)>,
 }
 
 type Typed = Option<(CExpr, Type)>;
@@ -62,7 +65,7 @@ fn is_dimensioned(t: &Type) -> bool {
 
 impl<'a, 'b> Tc<'a, 'b> {
     pub fn new(scope: &'b Scope<'a>, diags: &'b mut Vec<Diagnostic>, element: &str) -> Self {
-        Tc { scope, diags, element: element.to_string(), lambda: vec![], closed: None, payload: None }
+        Tc { scope, diags, element: element.to_string(), lambda: vec![], closed: None, payload: None, draws: None }
     }
 
     /// MK-E18: a declared function's body reads something other than its parameters,
@@ -266,6 +269,7 @@ impl<'a, 'b> Tc<'a, 'b> {
             }
             Expr::Bin { bin, l, r } => self.binary(*bin, l, r, exp),
             Expr::Call { call, args } => self.call(*call, args),
+            Expr::Draw { draw, args } => self.draw(*draw, args, exp),
             Expr::Apply { apply, args } => {
                 let (fc, ft) = self.expr(apply, None)?;
                 let (params, result) = match ft {
@@ -578,6 +582,73 @@ impl<'a, 'b> Tc<'a, 'b> {
     }
 }
 
+impl Tc<'_, '_> {
+    /// A draw from a distribution (MK-10.4, D-083): only in an event's condition and
+    /// operations (MK-E28). Counts (`integer`, `poisson`, `binomial`) are whole numbers of
+    /// type `Real`.
+    fn draw(&mut self, d: Dist, args: &[Expr], exp: Option<&Type>) -> Typed {
+        let Some((event, stream, _)) = self.draws else {
+            return self.err("MK-E28", format!("`{}(...)` draws at random, so it is written only in an event's condition or operations (MK-10.4)", d.name()));
+        };
+        let arity = match d {
+            Dist::Exponential | Dist::Bernoulli | Dist::Poisson => 1,
+            Dist::Choice => args.len().max(1),
+            _ => 2,
+        };
+        if args.len() != arity {
+            return self.err("MK-E01", format!("`{}` takes {arity} argument{}", d.name(), if arity == 1 { "" } else { "s" }));
+        }
+        let real = Type::real();
+        let (cargs, ty) = match d {
+            Dist::Uniform => {
+                let (a, at) = self.expr(&args[0], exp)?;
+                if !matches!(at, Type::Quantity { .. }) {
+                    return self.err("MK-E01", format!("`uniform` draws a quantity, not {}", show(&at)));
+                }
+                let b = self.expect(&args[1], &at)?;
+                (vec![a, b], at)
+            }
+            Dist::Normal => {
+                let (m, mt) = self.expr(&args[0], exp)?;
+                let dim = match &mt {
+                    Type::Quantity { dim } | Type::Vector { dim, .. } => *dim,
+                    Type::Point { .. } => Dim::length(),
+                    other => return self.err("MK-E01", format!("`normal` draws a quantity, vector or point, not {}", show(other))),
+                };
+                let s = self.expect(&args[1], &Type::Quantity { dim })?;
+                (vec![m, s], mt)
+            }
+            Dist::Exponential => {
+                let (r, rt) = self.expr(&args[0], None)?;
+                let Type::Quantity { dim } = rt else {
+                    return self.err("MK-E01", format!("`exponential` takes a rate, not {}", show(&rt)));
+                };
+                (vec![r], Type::Quantity { dim: dim.pow(Ratio::new(-1, 1)) })
+            }
+            Dist::Bernoulli => (vec![self.expect(&args[0], &real)?], Type::Boolean),
+            Dist::Poisson => (vec![self.expect(&args[0], &real)?], real.clone()),
+            Dist::Integer | Dist::Binomial => {
+                let a = self.expect(&args[0], &real)?;
+                let b = self.expect(&args[1], &real)?;
+                (vec![a, b], real.clone())
+            }
+            Dist::Choice => {
+                let (a, at) = self.expr(&args[0], exp)?;
+                let mut v = vec![a];
+                for x in &args[1..] {
+                    v.push(self.expect(x, &at)?);
+                }
+                (v, at)
+            }
+        };
+        let site = self.draws.as_ref().map_or(0, |d| d.2);
+        if let Some(d) = self.draws.as_mut() {
+            d.2 += 1;
+        }
+        Some((CExpr::Draw(Box::new(CDraw { dist: d, args: cargs, event, stream, site })), ty))
+    }
+}
+
 /// The type of `der(x)` for a continuous state of type `t` (MK-14.5).
 fn derivative_type(t: &Type) -> Option<Type> {
     let inv_t = Dim::time().inv();
@@ -869,6 +940,11 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             },
             Trigger::Start => Some(CTrigger::Start),
             Trigger::Request => Some(CTrigger::Request),
+            Trigger::Random { rate } => {
+                let r = tc.expect(rate, &Type::Quantity { dim: Dim::time().pow(Ratio::new(-1, 1)) });
+                random_rate(&scope, tc.diags, &e.id, &e.name, rate);
+                r.map(CTrigger::Random)
+            }
             Trigger::Input { binding } => index.get(binding).map(|&i| CTrigger::Input(i)),
         };
         // D-050: an event with a payload gets it from a request, or from the event it
@@ -884,6 +960,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             }
         }
         tc.payload = e.payload.as_ref().map(|p| (e.id.clone(), cevents.len(), p.ty.clone()));
+        tc.draws = Some((cevents.len(), crate::random::fnv1a(&e.id), 0));
         let enable = e.enable.as_ref().and_then(|x| tc.expect(x, &Type::Boolean));
         if e.each.is_some() {
             tc.err("MK-E00", format!("event `{}` is repeated per member in a model that was not elaborated (D-057)", e.name));
@@ -1213,6 +1290,28 @@ fn flow_conditions(scope: &Scope, diags: &mut Vec<Diagnostic>, f: &Flow) {
             code: "MK-E12",
             message: format!("a flow condition depends on `{name}` (continuous state or time); use an event that sets discrete state"),
             element: f.id.clone(),
+        });
+    }
+}
+
+/// MK-15.16 (D-083): a random event's rate reads only parameters, constants, discrete state
+/// and derived values of those, not continuous state or time (MK-E27).
+fn random_rate(scope: &Scope, diags: &mut Vec<Diagnostic>, id: &str, name: &str, rate: &Expr) {
+    let mut bad = None;
+    rate.walk(&mut |x| {
+        if matches!(x, Expr::Builtin { builtin: Builtin::T | Builtin::Elapsed }) {
+            bad = Some("t".to_string());
+        }
+    });
+    let reads = closure_derived(scope.model, scope.index, &rate.refs());
+    if let Some(i) = reads.iter().find(|i| scope.model.bindings[**i].role == Role::Continuous) {
+        bad = Some(scope.model.bindings[*i].name.clone());
+    }
+    if let Some(b) = bad {
+        diags.push(Diagnostic {
+            code: "MK-E27",
+            message: format!("the rate of random event `{name}` depends on `{b}` (continuous state or time); a rate reads parameters and discrete state, which events change"),
+            element: id.to_string(),
         });
     }
 }

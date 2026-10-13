@@ -3,7 +3,8 @@
 
 use crate::solver::{Attempt, Dopri5, Rhs, Rk4, Step};
 use prismal_ir::{Expr, Id, Op, Policy, Role, Type};
-use prismal_kernel::{check_intervention, compile_expr, distance, CExpr, CModel, COp, CTrigger, Ctx, Dir, Status, Value};
+use prismal_kernel::random::{fnv1a, Uniforms, CLOCK_SITE};
+use prismal_kernel::{check_intervention, compile_expr, distance, CExpr, CModel, COp, CTrigger, Ctx, Dir, Draws, Status, Value};
 use std::collections::VecDeque;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +52,8 @@ pub struct Config {
     pub params: Vec<(Id, Expr)>,
     /// The input and intervention log (RC-3.1).
     pub log: Vec<Scheduled>,
+    /// The seed of every random stream (RC-13.1, D-083).
+    pub seed: u64,
 }
 
 impl Config {
@@ -68,6 +71,7 @@ impl Config {
             w_zeno: None,
             params: vec![],
             log: vec![],
+            seed: 0,
         }
     }
     pub fn param(mut self, id: &str, value: Expr) -> Config {
@@ -76,6 +80,10 @@ impl Config {
     }
     pub fn solver(mut self, s: SolverConfig) -> Config {
         self.solver = s;
+        self
+    }
+    pub fn seed(mut self, seed: u64) -> Config {
+        self.seed = seed;
         self
     }
     pub fn at(mut self, t: f64, action: Action) -> Config {
@@ -185,6 +193,8 @@ pub struct Snapshot {
     time_next: Vec<Option<f64>>,
     every_k: Vec<u64>,
     payloads: Vec<Option<Value>>,
+    due_k: Vec<u64>,
+    clocks: Vec<Option<Clock>>,
     h: Option<f64>,
     /// Lengths of the run's records at the snapshot.
     committed: usize,
@@ -198,6 +208,17 @@ pub struct Snapshot {
     /// logged after `theta` (and after `t`) leaves the trajectory before the snapshot as it
     /// is (RC-14.2).
     pub theta: f64,
+}
+
+/// The clock of a random event (RC-13.8, the modified next reaction method): the integral
+/// of its rate up to `t_last`, the rate since then, and the integral at which it occurs next.
+#[derive(Clone, Debug)]
+struct Clock {
+    rate: f64,
+    integral: f64,
+    t_last: f64,
+    target: f64,
+    fired: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -219,6 +240,9 @@ struct Engine<'a> {
     every_k: Vec<u64>,
     /// Payloads of the occurrences handled at the current microstep, by event (D-050).
     payloads: Vec<Option<Value>>,
+    /// How many times each event has been due (RC-13.5): the counter of its draws.
+    due_k: Vec<u64>,
+    clocks: Vec<Option<Clock>>,
     run: Run,
     /// The solver's proposed next step (`None` after an event or an action, RC-8.6).
     h: Option<f64>,
@@ -269,6 +293,17 @@ fn reach(t: f64, h: f64) -> f64 {
     t + h * (1.0 + 1e-9) + 1e-12 * t.abs().max(1.0)
 }
 
+/// The smallest instant after `t`.
+fn after(t: f64) -> f64 {
+    if t == 0.0 {
+        f64::from_bits(1)
+    } else if t > 0.0 {
+        f64::from_bits(t.to_bits() + 1)
+    } else {
+        f64::from_bits(t.to_bits() - 1)
+    }
+}
+
 /// The action log in the order a run applies it: by instant, in log order at one instant.
 fn sorted_log(log: &[Scheduled]) -> Vec<Scheduled> {
     let mut l = log.to_vec();
@@ -303,7 +338,7 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
         };
         let v = compile_expr(cm, e, Some(&cm.bindings[i].ty))
             .map_err(|d| format!("{d:?}"))
-            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[] }).map_err(|s| s.cause));
+            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[], draws: None }).map_err(|s| s.cause));
         match v {
             Ok(v) => overrides.push((i, v)),
             Err(m) => {
@@ -330,13 +365,24 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
         time_next: vec![None; cm.events.len()],
         every_k: vec![0; cm.events.len()],
         payloads: vec![None; cm.events.len()],
+        due_k: vec![0; cm.events.len()],
+        clocks: cm
+            .events
+            .iter()
+            .map(|ev| match ev.trigger {
+                Some(CTrigger::Random(_)) => {
+                    Some(Clock { rate: 0.0, integral: 0.0, t_last: cfg.t0, target: Uniforms::new(cfg.seed, fnv1a(&ev.id), CLOCK_SITE, 0).exp1(), fired: 0 })
+                }
+                _ => None,
+            })
+            .collect(),
         run,
         h: None,
         consumed: 0,
         theta: f64::NEG_INFINITY,
         acting: false,
     };
-    if let Err(d) = e.schedule_time_events() {
+    if let Err(d) = e.schedule_time_events().and_then(|_| e.refresh_clocks()) {
         e.run.status = RunStatus::NotStarted(RunDiag { category: Category::Initialization, ..d });
         return e.run;
     }
@@ -352,7 +398,7 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
     // RC-5.3: `on start` and time events at t0 are due at (t0, 0).
     let mut start: Vec<usize> = cm.events.iter().enumerate().filter(|(_, ev)| matches!(ev.trigger, Some(CTrigger::Start))).map(|(i, _)| i).collect();
     start.extend(e.take_time_events());
-    if let Err(d) = e.iterate(start, vec![]) {
+    if let Err(d) = e.iterate(start, vec![]).and_then(|_| e.refresh_clocks()) {
         e.run.status = RunStatus::Stopped(d);
         return e.run;
     }
@@ -409,6 +455,8 @@ pub fn resume(prev: &Run, cfg: Config) -> Run {
         time_next: snap.time_next.clone(),
         every_k: snap.every_k.clone(),
         payloads: snap.payloads.clone(),
+        due_k: snap.due_k.clone(),
+        clocks: snap.clocks.clone(),
         run: r,
         h: snap.h,
         consumed: snap.consumed,
@@ -449,6 +497,31 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// RC-13.8: after a transition, each random event's clock integrates its rate up to now,
+    /// takes the rate of the committed state and schedules its next occurrence, never at the
+    /// current instant.
+    fn refresh_clocks(&mut self) -> Result<(), RunDiag> {
+        for ei in 0..self.cm.events.len() {
+            let Some(CTrigger::Random(rate)) = &self.cm.events[ei].trigger else { continue };
+            let r = rate.eval(&self.ctx(&self.vals)).map_err(|s| self.diag(Category::Model, s.cause, Some(&self.cm.events[ei].id)))?.num();
+            if r < 0.0 {
+                return Err(self.diag(Category::Model, format!("the rate of `{}` is negative ({r})", self.cm.events[ei].name), Some(&self.cm.events[ei].id)));
+            }
+            let t = self.t;
+            let c = self.clocks[ei].as_mut().unwrap();
+            c.integral += c.rate * (t - c.t_last);
+            c.t_last = t;
+            c.rate = r;
+            self.time_next[ei] = if r > 0.0 {
+                let next = t + (c.target - c.integral) / r;
+                Some(if next > t { next } else { after(t) })
+            } else {
+                None
+            };
+        }
+        Ok(())
+    }
+
     fn next_time_event(&self) -> Option<f64> {
         self.time_next.iter().flatten().copied().fold(None, |m, t| Some(m.map_or(t, |x: f64| x.min(t))))
     }
@@ -469,6 +542,18 @@ impl<'a> Engine<'a> {
                     self.every_k[ei] += 1;
                     self.time_next[ei] = Some(f + self.every_k[ei] as f64 * d);
                 }
+                Some(CTrigger::Random(_)) => {
+                    // RC-13.8: the integral has reached the target; the next target is one
+                    // more standard exponential from the clock's stream.
+                    let stream = fnv1a(&self.cm.events[ei].id);
+                    let (seed, t) = (self.cfg.seed, self.t);
+                    let c = self.clocks[ei].as_mut().unwrap();
+                    c.integral = c.target;
+                    c.t_last = t;
+                    c.fired += 1;
+                    c.target += Uniforms::new(seed, stream, CLOCK_SITE, c.fired).exp1();
+                    self.time_next[ei] = None;
+                }
                 _ => self.time_next[ei] = None,
             }
         }
@@ -480,7 +565,7 @@ impl<'a> Engine<'a> {
     }
 
     fn ctx<'v>(&'v self, vals: &'v [Value]) -> Ctx<'v> {
-        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads }
+        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: Some(Draws { seed: self.cfg.seed, due: &self.due_k }) }
     }
 
     fn snapshot(&mut self) {
@@ -494,6 +579,8 @@ impl<'a> Engine<'a> {
             time_next: self.time_next.clone(),
             every_k: self.every_k.clone(),
             payloads: self.payloads.clone(),
+            due_k: self.due_k.clone(),
+            clocks: self.clocks.clone(),
             h: self.h,
             committed: r.committed.len(),
             segments: r.segments.len(),
@@ -604,7 +691,7 @@ impl<'a> Engine<'a> {
         let der = self.cm.der_values(&self.vals, self.t, self.cfg.t0).ok();
         for q in &self.cm.equations {
             let Some(tol) = q.check_tol else { continue };
-            let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: &[], payloads: &[] };
+            let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None };
             let res = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
                 (Ok(a), Ok(b)) => distance(&a, &b),
                 _ => None,
@@ -710,6 +797,7 @@ impl<'a> Engine<'a> {
                 acted = true;
             }
             if acted {
+                self.refresh_clocks()?;
                 self.retake_refs();
                 h = None;
             }
@@ -820,6 +908,7 @@ impl<'a> Engine<'a> {
                 self.commit();
                 self.after_step_checks()?;
                 self.iterate(due, vec![])?;
+                self.refresh_clocks()?;
                 self.retake_refs();
                 h = None;
                 continue;
@@ -843,6 +932,7 @@ impl<'a> Engine<'a> {
             if !timed.is_empty() {
                 self.commit();
                 self.iterate(timed, vec![])?;
+                self.refresh_clocks()?;
                 self.retake_refs();
                 h = None;
             }
@@ -870,7 +960,7 @@ impl<'a> Engine<'a> {
 
     /// The guard of crossing event `ei` in a state at `t`.
     fn guard_in(&self, vals: &[Value], t: f64, ei: usize) -> Result<f64, Status> {
-        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[] };
+        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None };
         match &self.cm.events[ei].trigger {
             Some(CTrigger::Crossing { guard, .. }) => Ok(guard.eval(&c)?.num()),
             _ => unreachable!(),
@@ -961,6 +1051,25 @@ impl<'a> Engine<'a> {
             for (ei, p) in &requested {
                 self.payloads[*ei] = p.clone();
             }
+            // RC-13.5: each event due at this microstep draws with its due count, which
+            // advances after it, whether or not the event is enabled.
+            let mut counted: Vec<usize> = due.iter().copied().chain(requested.iter().map(|r| r.0)).collect();
+            counted.sort();
+            counted.dedup();
+            let r = self.microstep(&mut due, &mut requested, &mut carried);
+            for ei in counted {
+                self.due_k[ei] += 1;
+            }
+            if !r? {
+                return Ok(());
+            }
+        }
+    }
+
+    /// One microstep of `iterate_with`: false when no event is enabled; otherwise `due`,
+    /// `requested` and `carried` become those of the next microstep.
+    fn microstep(&mut self, due: &mut Vec<usize>, requested: &mut Vec<(usize, Option<Value>)>, carried: &mut Vec<Option<Value>>) -> Result<bool, RunDiag> {
+        {
             // Step 2: enabling conditions.
             let vals = self.vals.clone();
             due.retain(|&ei| match &self.cm.events[ei].enable {
@@ -975,7 +1084,7 @@ impl<'a> Engine<'a> {
             due.sort();
             due.dedup();
             if due.is_empty() && requested.is_empty() {
-                return Ok(());
+                return Ok(false);
             }
             if self.n >= self.cfg.n_micro {
                 return Err(self.diag(Category::Cascade, format!("more than {} microsteps at t = {}", self.cfg.n_micro, self.t), None));
@@ -983,7 +1092,7 @@ impl<'a> Engine<'a> {
             // Zeno policies replace handlers at an accumulating occurrence (RC-9.3).
             let mut handled: Vec<(usize, bool, bool)> = vec![];
             let mut ops: Vec<COp> = vec![];
-            for &ei in &due {
+            for &ei in due.iter() {
                 let is_crossing = matches!(self.cm.events[ei].trigger, Some(CTrigger::Crossing { .. }));
                 if is_crossing && self.zeno_detected(ei) {
                     match self.cm.events[ei].zeno.as_ref().unwrap().settle.clone() {
@@ -1000,7 +1109,7 @@ impl<'a> Engine<'a> {
                     handled.push((ei, false, false));
                 }
             }
-            for (ei, _) in &requested {
+            for (ei, _) in requested.iter() {
                 ops.extend(self.cm.events[*ei].handler.clone());
                 handled.push((*ei, false, true));
             }
@@ -1016,7 +1125,7 @@ impl<'a> Engine<'a> {
             // (MK-15.3, MK-15.10, D-041), and crossings caused by jumps (RC-8.5). An event
             // carries its occurrence's payload, or the payload it was emitted with (D-050).
             let occurred: Vec<usize> = handled.iter().map(|h| h.0).collect();
-            carried = vec![None; self.cm.events.len()];
+            *carried = vec![None; self.cm.events.len()];
             for &ei in &occurred {
                 carried[ei] = self.payloads[ei].clone();
             }
@@ -1043,9 +1152,10 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
-            due = next;
-            requested = vec![];
+            *due = next;
+            *requested = vec![];
         }
+        Ok(true)
     }
 
     /// One transition (MK-16.3): conflicts, proposed state, constraints, commit.
@@ -1200,7 +1310,7 @@ impl<'a> Engine<'a> {
                 }
                 // The environment's value reads nothing of the model but its constants.
                 let value = match compile_expr(self.cm, e, Some(&self.cm.bindings[i].ty)) {
-                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[] }),
+                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None }),
                     Err(d) => return reject(self, format!("the value of `{}`: {}", self.cm.bindings[i].name, d.iter().map(|x| x.message.clone()).collect::<Vec<_>>().join("; "))),
                 };
                 let v = match value {
@@ -1227,7 +1337,7 @@ impl<'a> Engine<'a> {
                 let payload = match (action, declared) {
                     (Action::Request(_), None) => None,
                     (Action::RequestWith(_, e), Some(p)) => match compile_expr(self.cm, e, Some(&p.ty)) {
-                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[] }) {
+                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None }) {
                             Ok(v) => Some(v),
                             Err(s) => {
                                 let rd = self.diag(Category::Intervention, format!("the payload of `{}`: {}", self.cm.events[ei].name, s.cause), Some(id));
@@ -1260,7 +1370,7 @@ impl<'a> Engine<'a> {
                 if let Some(c) = &self.cm.events[ei].enable {
                     let mut payloads = vec![None; self.cm.events.len()];
                     payloads[ei] = payload.clone();
-                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads };
+                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads, draws: None };
                     let why = match c.eval(&ctx) {
                         Ok(Value::Bool(true)) => None,
                         Ok(_) => Some(self.not_enabled(ei, payload.as_ref())),
@@ -1302,7 +1412,7 @@ impl Run {
 
     fn eval_on(&self, c: &CExpr, vals: &[Value], t: f64) -> Result<Value, Status> {
         let der = self.model.der_values(vals, t, self.config.t0).ok();
-        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[] })
+        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[], draws: None })
     }
 
     /// The state at time `t`: the final microstep at an event time (RC-4.3), otherwise the

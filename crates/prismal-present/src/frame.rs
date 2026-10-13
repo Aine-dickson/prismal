@@ -1075,7 +1075,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 for i in 0..=n {
                     let x = lo + (hi - lo) * i as f64 / n as f64;
                     let args = [Value::Num(x)];
-                    let y = body.eval(&Ctx { vals, der: None, t, t0: run.config.t0, args: &args, payloads: &[] });
+                    let y = body.eval(&Ctx { vals, der: None, t, t0: run.config.t0, args: &args, payloads: &[], draws: None });
                     if let Ok(Value::Num(y)) = y {
                         pts.push([x, y]);
                     }

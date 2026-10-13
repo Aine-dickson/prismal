@@ -52,6 +52,8 @@ pub enum CTrigger {
     Start,
     Request,
     Input(usize),
+    /// The jumps of a Poisson process at this rate (D-083).
+    Random(CExpr),
 }
 
 #[derive(Clone, Debug)]
@@ -147,7 +149,7 @@ impl CModel {
                 continue;
             }
             if let Some(e) = &b.init {
-                if let Ok(v) = e.eval(&Ctx { vals: &vals, der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[] }) {
+                if let Ok(v) = e.eval(&Ctx { vals: &vals, der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None }) {
                     vals[i] = v;
                 }
             }
@@ -170,7 +172,7 @@ impl CModel {
                 continue;
             }
             if let Some((w, none)) = &b.when {
-                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[] };
+                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None };
                 if !w.eval(&c)?.boolean() {
                     vals[i] = none.clone();
                     continue;
@@ -186,7 +188,7 @@ impl CModel {
                 _ => b.init.as_ref(),
             };
             let v = {
-                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[] };
+                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None };
                 e.expect("checked").eval(&c).map_err(|s| Status { kind: s.kind, cause: format!("initializing `{}`: {}", b.name, s.cause) })?
             };
             vals[i] = v;
@@ -198,7 +200,7 @@ impl CModel {
     pub fn update_derived(&self, vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
         for &i in &self.derived_order {
             let v = {
-                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[] };
+                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None };
                 match &self.bindings[i].when {
                     Some((w, none)) if !w.eval(&c)?.boolean() => none.clone(),
                     _ => self.bindings[i].def.as_ref().expect("checked").eval(&c)?,
@@ -231,7 +233,7 @@ impl CModel {
     /// The combined flow of every continuous state (MK-14.5), written into `dy`.
     /// `vals` must hold current stored values and derived bindings.
     pub fn rhs(&self, vals: &[Value], t: f64, t0: f64, dy: &mut [f64]) -> Result<(), Status> {
-        let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[] };
+        let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None };
         for s in &self.cont {
             let out = &mut dy[s.offset..s.offset + s.len];
             match &s.flows {

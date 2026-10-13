@@ -35,7 +35,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 
 **Modifiers:** `symbol "θ"` (display symbol), `unit deg` (display unit of an angle), `intervenable` (state the learner may change), `private`, `combine sum|product|min|max|any|all` (discrete state that takes contributions).
 
-**Triggers:** `rising(g)`, `falling(g)`, `crossing(g)` (zero crossings of `g`), `at τ`, `every Δ [from τ0]`, `start`, `request`, `E` (after event `E` occurs or is emitted), `input(i)`. `request(p: T)` and `E(p: T)` receive a payload named `p` (chapter 5); `request(b in c)` receives a member of the collection `c`, and `request(b in c, p: T)` several payloads (chapter 9).
+**Triggers:** `rising(g)`, `falling(g)`, `crossing(g)` (zero crossings of `g`), `at τ`, `every Δ [from τ0]`, `start`, `request`, `E` (after event `E` occurs or is emitted), `input(i)`, `random(λ)` (at random instants, on average `λ` per unit of time, chapter 15). `request(p: T)` and `E(p: T)` receive a payload named `p` (chapter 5); `request(b in c)` receives a member of the collection `c`, and `request(b in c, p: T)` several payloads (chapter 9).
 
 **Inputs:** `input { x: T [= default] }`, values from the environment; a case supplies them with `input { x = v; x = v at τ }` (chapter 5).
 
@@ -60,6 +60,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `a`, `Phase.a` | a case of an enumeration | 5 |
 | `t`, `t0`, `elapsed` | current time, start, time since start | 4 |
 | `sin cos tan sqrt exp log abs min max atan2` | functions | 2 |
+| `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
 Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms min h kg g N J W Pa Hz A K mol cd rad deg rev %`.
 
@@ -129,7 +130,7 @@ Two forms add details to a form, one for each place they appear (D-081):
 ```prismal
 run Name of Model with Presentation {
   param  { p = value; ... }
-  config { solver = rk4; h = 0.01 s }        // or rtol = ...; atol = ...
+  config { solver = rk4; h = 0.01 s }        // or rtol = ...; atol = ...; seed = 7
   until t0 + 10 s
   learner { at 15 s: set slider h = 20 m; at 16 s: continue }
   expect { ... }
@@ -153,7 +154,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `branch` | a timeline action: the lesson continues on a new run version | 8 |
 | `camera` | a timeline animation of a view's centre and zoom | 8 |
 | `checked` | `equation N: a == b checked within tol` is checked while running | 6 |
-| `config` | a run's solver settings | 6 |
+| `config` | a run's solver settings and its seed (`seed = 7`) | 6, 15 |
 | `const` | constants: never change | 2 |
 | `constraint` | a condition checked while running, with a policy | 6 |
 | `continue` | a learner step that ends an explore beat or a continue point | 8 |
@@ -211,6 +212,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `propose` | the binding change an inverse proposes | 7 |
 | `relation` | a relation type, whose endpoints are members of collections | 9 |
 | `undirected` | before `relation`: a relation whose two endpoints have no order, read with `s.has(o)` and `s.other(o)` | 9 |
+| `random` | an event at random instants at a rate: `on random(lambda * n)` | 15 |
 | `request` | an event requested from outside (a button, a lesson) | 5 |
 | `undo`, `redo` | in `button(...)`, a lab's runtime controls, with `reset` | 7, 8 |
 | `run` | a test case; in timelines, `run rate r` | 1, 8 |
@@ -230,7 +232,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random`.
 
 ## Diagnostics
 
@@ -265,6 +267,8 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E24 | event payload with no source |
 | MK-E25 | `index` read outside the overrides of a collection |
 | MK-E26 | a member that does not exist, a part used as a value, or an aggregate that has no value |
+| MK-E27 | a random event's rate depends on continuous state or `t` |
+| MK-E28 | a distribution outside an event's condition and operations |
 
 **Presentation** (`PK`): E01 broken reference, E02 expression does not check (the kernel's message is quoted), E03 control or action targets something the learner may not change, E04 missing or wrong scale or axis dimension, E05 representation unsuited to its sources or view, E06 representation kind not implemented.
 

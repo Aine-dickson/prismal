@@ -216,6 +216,7 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
         }
         Expr::Call { call: Func::Sqrt, args } => MathBox::Sqrt { body: Box::new(row(args.iter().map(p).collect())) },
         Expr::Call { call: Func::Abs, args } => MathBox::Fenced { open: "|".into(), close: "|".into(), body: Box::new(list(args.iter().map(p).collect())) },
+        Expr::Draw { draw, args } => row(vec![upright(draw.name()), parens(list(args.iter().map(p).collect()))]),
         Expr::Call { call, args } => {
             let name = match call {
                 Func::Sin => "sin",

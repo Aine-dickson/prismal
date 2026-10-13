@@ -271,6 +271,7 @@ pub fn print(e: &Expr, cm: &CModel, params: &[String]) -> String {
             };
             format!("{name}({})", args.iter().map(p).collect::<Vec<_>>().join(", "))
         }
+        Expr::Draw { draw, args } => format!("{}({})", draw.name(), args.iter().map(p).collect::<Vec<_>>().join(", ")),
         Expr::Apply { apply, args } => format!("{}({})", wrap(apply, 8), args.iter().map(p).collect::<Vec<_>>().join(", ")),
         Expr::If { r#if, then, r#else } => format!("if {} then {} else {}", p(r#if), p(then), p(r#else)),
         Expr::Tuple { tuple } => format!("({})", tuple.iter().map(p).collect::<Vec<_>>().join(", ")),

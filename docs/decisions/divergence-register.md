@@ -102,6 +102,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-080 | Findings from the objects example: event detection cost, texts in the framing | Accepted |
 | D-081 | Syntax stability review: options and clauses, and version 1 | Accepted |
 | D-082 | Release numbering: 0.x releases, branch per minor version | Accepted |
+| D-083 | The stochastic slice: random events, draws and seeds | Accepted |
 
 ---
 
@@ -1543,3 +1544,28 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** tag `v0.1.0`; branch `v0.2`; workspace version `0.2.0` on that branch; PROJECT-STATE conventions.
 - **History:**
   - 2026-10-13 chosen by the owner and recorded.
+
+## D-083: The stochastic slice: random events, draws and seeds
+
+- **Status:** Accepted
+- **Original position:** D-013 accepted two stochastic modes, per-step sampling and exact event-time sampling (exponential waiting times, Gillespie), to be specified when the stochastic slice is planned. MK-10.4 keeps expressions free of draws; RC section 13 fixed only reproducibility (one seed per run, counter-based streams keyed by element identity). MK-14.2 reserved the `stochastic` process kind.
+- **Raised by:** the owner, 2026-10-13: version 0.2 starts with the stochastic slice (D-082).
+- **Builds on:** D-004, D-013, D-015, D-050, D-057, R-10, R-30, R-61; RC section 13.
+- **Question:** How does a model write random behavior, what exactly does a run compute, and how is it reproduced?
+- **Content the slice serves:** radioactive decay of individual atoms and of a population, random walks and diffusion, reaction kinetics (A + B to C, reversible reactions) compared with their rate equations, epidemics, dice, coins and sampling experiments.
+- **Options considered:**
+  1. **Stochastic processes as a new kind of block** (`process decay stochastic { ... }`), with their own rules for time. A second event machinery beside the existing one.
+  2. **A random trigger and distribution functions inside the existing event machinery** (taken). Event-time sampling is a trigger, `random(λ)`, whose occurrences are the instants of a Poisson process of rate `λ`; per-step sampling is an ordinary time event (`every Δ`) whose condition or handler draws from a distribution. Handlers, payloads, members, conflicts, logs and snapshots stay as they are.
+  3. **Random expressions anywhere** (`derived { noise = normal(0, 1) }`). Breaks MK-10.4: a value read twice would differ, and replay would depend on how often the runtime evaluates.
+- **Accepted position:** option 2, under the owner's standing delegation of 2026-09-30.
+  - **Random trigger.** `event E on random(λ)`: `λ` is a rate, `Quantity<1/T>` (a frequency; `0.5 /s`). Its occurrences are the jumps of a Poisson process whose intensity is `λ` evaluated on the committed state: between two transitions the rate is constant and the waiting time is exponential, and a transition that changes the rate changes the law from that instant on (memorylessness). A rate of `0` makes no occurrence; a negative rate is a model failure. In v0.2 the rate reads only parameters, constants, discrete state and derived values of those, not continuous state or `t` (MK-E27, as MK-14.12 for flow conditions); rates that vary between events are a later extension. Gillespie's direct method is the special case of one event per reaction channel; the runtime computes the same law by the modified next reaction method (Anderson 2007), which keeps one clock per event and so needs no global ordering of draws.
+  - **Zeno.** A random event is not a crossing; MK-15.12 does not apply. A handler may change its own rate (a population decaying at `λ N`).
+  - **Draws.** A distribution is a built-in function, written as any call, `normal(0 m, s)`, and allowed only in an event's enabling condition and its operations (handler and Zeno settle operations), MK-E28 elsewhere; the IR keeps it as its own form, `draw`. A name the author declares wins over a distribution, so no version 1 program changes meaning. Distributions: `uniform(a, b)`, `normal(m, s)` (for a vector `m`, independent components with deviation `s`), `exponential(r)` (a rate; the result has the inverse dimension), `bernoulli(p)` (a Boolean), `integer(a, b)` (both ends included), `poisson(m)`, `binomial(n, p)`, `choice(x1, ..., xk)` (equally likely). Invalid arguments (`s < 0`, `p` outside `[0, 1]`, `a > b`) make the draw invalid, a model failure.
+  - **Streams.** A draw is a pure function of the run's seed, the event's identity, the draw site's number in the event (sites numbered in order through the elaborated condition, handler and settle operations) and the event's due count (how many times the event has been due, from 0). A random event's clock is one more stream of the event. Draws do not depend on the order in which the runtime evaluates events, nor on draws of other events (RC-13.3). The generator is Philox4x32-10 (Salmon and others 2011).
+  - **Seed.** A run's configuration has a `seed` (a whole number, default 0), one more entry of the existing block: `config { seed = 7 }`. The same seed reproduces the run bit for bit on one build and platform (D-015).
+  - **Members.** A random event repeated per member (`for a in atoms { event decay on random(lambda) { destroy a } }`) has one clock per member; a member not alive has rate 0.
+- **Reason:** the event machinery already gives what random behavior needs (atomic handlers, cascades, payloads, members, logs, snapshots), so random events cost one trigger and one expression and keep every guarantee. Keying draws by event identity and due count keeps a run reproducible under edits elsewhere in the model, and lets a learner compare two seeds of one model.
+- **New syntax kept to one form** (owner, 2026-10-13: no new syntax where existing syntax covers the need). Per-step sampling needs none: `every Δ` and a distribution. The seed needs none: an entry of `config`. A keyword `draw` before distributions was considered and dropped: calls already mark a computed value, and the checker confines distributions to events. The trigger `random(λ)` is the one addition, written in the existing trigger form and contextual (no reserved word, working syntax section 1.7). Exact event times written with existing triggers (`at next` with `set next = t + exponential(r)`) are correct only when the author resamples every clock whose rate an event changes, which silently fails for reactions sharing species.
+- **Consequences:** MK-10.4, MK-15.3 (trigger table), MK-15.15 to MK-15.17, MK-E27, MK-E28; RC-13.5 to RC-13.8; 04-ir `random` trigger and `draw` expression; working syntax sections 1.1, 1.3, 1.5; `prismal_kernel::random` (Philox4x32-10 checked against the Random123 known answers, samplers checked by their moments); `CExpr::Draw`, `Ctx::draws`; the runtime's clocks and due counts, kept in snapshots; `Config::seed`, `RunConfig::seed`; parser, lowering and formatter; guide chapter 15 (Chance) and the reference; `prismal-present/tests/random.rs` (population and per-member decay against the exponential law, a random walk, a reversible reaction at equilibrium, seeds, resumed runs, diagnostics, shadowing).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30.

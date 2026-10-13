@@ -897,6 +897,7 @@ impl<'a> ModelCx<'a> {
             ast::TriggerExpr::Start => Trigger::Start,
             ast::TriggerExpr::Input(i) => Trigger::Input { binding: self.binding(i) },
             ast::TriggerExpr::Request(_) => Trigger::Request,
+            ast::TriggerExpr::Random(r) => Trigger::Random { rate: self.expr(r, &[]) },
             ast::TriggerExpr::On(n, _) => Trigger::On { event: self.event_id(n) },
         };
         let id = format!("{}.event.{}", self.name, e.name.text);
@@ -1498,6 +1499,10 @@ impl<'a> ModelCx<'a> {
                 self.err("SX-E08", format!("`{name}` takes {n} argument(s), found {}", lowered.len()), span);
             }
             return build::call(*func, lowered);
+        }
+        // Distributions are drawn from in an event's condition and operations (D-083).
+        if let Some(d) = prismal_ir::Dist::from_name(name) {
+            return Expr::Draw { draw: d, args: lowered };
         }
         self.err("SX-E03", format!("unknown function `{name}`"), f.span);
         Self::placeholder()
