@@ -1707,3 +1707,28 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** IR `Arg::On`; AST `Arg.on`, parser, lowering, formatter, elaboration; `HistSource` in `prismal_present::frame`; host layout `x_elapsed`; SVG and web renderers; PK-6.3e, 04-ir, HI-5.1, working syntax, reference; guide chapter 15 (Waiting times); `prismal-present/tests/histograms.rs` (a die's faces, waits against the exponential law, a sampled level).
 - **History:**
   - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-090: Noise in flows: stochastic differential equations
+
+- **Status:** Accepted
+- **Original position:** D-013 accepted per-step and event-time sampling; D-083 implemented both with random events and draws in handlers, and kept expressions free of draws (MK-10.4). Noise inside a flow, a stochastic differential equation, was left for later: it needs a stochastic integrator (2026-10-13 handover).
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: SDE-style noise in flows); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-004, D-013, D-015, D-083, D-086; MK-10.4, MK-14 (flows), RC-6, RC-7, RC-13, RC-14.
+- **Question:** How does a model write a continuous quantity pushed at random at every instant (Brownian motion, Langevin's equation, a noisy oscillator, geometric Brownian motion), and how is it integrated?
+- **Content it serves:** Brownian motion and Einstein's diffusion law, Langevin's equation and the Ornstein-Uhlenbeck process, thermal noise, first passage times, geometric Brownian motion, noisy population growth.
+- **Options considered:**
+  1. **Per-step draws in an event** (`every Δ` with `set x = x + normal(0 m, s)`). A random walk, not a flow: no drift integrated with it, the step is the author's to tune, and events cannot be located inside the walk's steps.
+  2. **A separate noise statement** (`noise der(x) = b`), the diffusion term apart from the flow. A second statement for one equation; the drift and the diffusion of one quantity are written in two places.
+  3. **White noise as a built-in term of a flow** (taken): `der(x) = a + b * noise`, as physics texts write Langevin's equation (`dv/dt = -γ v + ξ(t)`). `noise` is a quantity of dimension `T^(-1/2)`, so `sqrt(2 * D) * noise` checks with `D` an area per time. Each occurrence is an independent noise, so a vector of independent components is `(k * noise, k * noise)`.
+  For the integrator: **Euler-Maruyama** with a fixed step (taken), weak order 1 and strong order 1/2 (1 for additive noise), the method of textbooks; higher-order schemes (Milstein, stochastic Runge-Kutta) need derivatives of the noise coefficients or more evaluations and can come later behind the same syntax.
+- **Accepted position:** option 3 with Euler-Maruyama, under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13 (reuse forms; one built-in name, no new statement).
+  - MK-14.16: flows linear in each noise (MK-E30); `noise` only in flows (MK-E29); Itô's reading; a name the author declares wins over `noise`, so no version 1 program changes meaning.
+  - RC-13.9: a model with noise steps by Euler-Maruyama with the case's `h`, else `t_ref / 1000`. One evaluation of the flows per step, with each noise at `N / sqrt(h)`, is exactly the Euler-Maruyama step because the flows are linear in the noises: no symbolic separation of drift and diffusion. `N` comes from Philox, keyed by the flow's identity and the occurrence, counted by the step's start instant, so runs resume from snapshots bit for bit. The dense output is the straight line between steps; events and varying random clocks (D-086) work on it unchanged.
+  - **Units with half powers.** Noise coefficients have half-integer dimensions (a volatility in `1/s^0.5`). Unit exponents may now be whole or half numbers (`s^0.5`, `s^-1.5`); dimensions already held rational powers.
+  - **Found while checking a still of the guide's lab:** an author's `line: solid` on a trace was dropped from frames (solid being every other shape's default), so a Brownian path could only be drawn dashed, and the web player drew any unnamed style as dotted. Frames now carry `solid`, and both renderers draw it without dashes.
+  - **Found by the step count:** looking up the state at an instant scanned every segment; a run with noise has one per millisecond. The lookup is now a bisection (same segment, same results).
+- **Reason:** writing the noise where the physics puts it keeps one equation in one place, and the dimension of white noise makes a wrong coefficient a type error; linearity in the noise is both what makes the equation meaningful and what lets one evaluation give the Euler-Maruyama step.
+- **Version 1 (D-081):** an addition: `noise` was an unknown name before, and declared names keep their meaning.
+- **Consequences:** IR builtin `noise`; `CExpr::Noise`, `Ctx::noise`, `CModel::noise`, `rhs_noisy`; checker MK-E29, MK-E30 (`noise_linear`); runtime Euler-Maruyama branch, `Dense::Linear`, `Config::h_noise` and `noise_step`, case `h`; unit exponents in halves (parser, `Unit::parse`); formatter, text and formula (`ξ`); frames carry `line: solid`, SVG and web renderers; `Run::state_at` by bisection; MK-14.16, RC-13.9, reference, guide chapter 15 (Noise in flows); `prismal-present/tests/noise.rs` (diffusion `2 D T`, independent components, Ornstein-Uhlenbeck spread, geometric Brownian motion in Itô's sense, first passage, reproducibility and resumed runs, step count, diagnostics).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.

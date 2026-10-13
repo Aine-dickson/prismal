@@ -4,6 +4,7 @@
 //! reports the static diagnostics of MK section 18, and produces a compiled model.
 
 use crate::eval::{Arr, CDraw, CExpr, Value};
+use crate::random::fnv1a;
 use crate::model::*;
 use prismal_ir::*;
 use std::collections::{BTreeSet, HashMap};
@@ -46,6 +47,9 @@ pub(crate) struct Tc<'a, 'b> {
     /// While checking an event's condition and operations: the event's index, the number of
     /// its identity and the next draw site's number (D-083).
     pub draws: Option<(usize, u64, u32)>,
+    /// While checking a flow: the number of its first noise in the model and how many it
+    /// has so far (D-090).
+    pub noise: Option<(usize, usize)>,
 }
 
 type Typed = Option<(CExpr, Type)>;
@@ -65,7 +69,7 @@ fn is_dimensioned(t: &Type) -> bool {
 
 impl<'a, 'b> Tc<'a, 'b> {
     pub fn new(scope: &'b Scope<'a>, diags: &'b mut Vec<Diagnostic>, element: &str) -> Self {
-        Tc { scope, diags, element: element.to_string(), lambda: vec![], closed: None, payload: None, draws: None }
+        Tc { scope, diags, element: element.to_string(), lambda: vec![], closed: None, payload: None, draws: None, noise: None }
     }
 
     /// MK-E18: a declared function's body reads something other than its parameters,
@@ -228,6 +232,14 @@ impl<'a, 'b> Tc<'a, 'b> {
                 Builtin::T0 => (CExpr::Time0, Type::Instant { dim: Dim::time() }),
                 Builtin::Elapsed => (CExpr::Elapsed, Type::Quantity { dim: Dim::time() }),
                 Builtin::Index => return self.err("MK-E25", "`index` is the number of a member, read only in the overrides of a collection (D-055)".into()),
+                // MK-14.16 (D-090): white noise, `T^(-1/2)`, only in flows.
+                Builtin::Noise => match &mut self.noise {
+                    Some((base, n)) => {
+                        *n += 1;
+                        (CExpr::Noise(*base + *n - 1), Type::Quantity { dim: Dim::time().pow(Ratio::new(-1, 2)) })
+                    }
+                    None => return self.err("MK-E29", "`noise` is white noise, written only in a flow: `der(x) = a + b * noise` (MK-14.16)".into()),
+                },
             }),
             // A named constant is a bare dimensionless literal (MK-3.8, D-039).
             Expr::Const { r#const } => self.num(r#const.value(), None, exp),
@@ -857,7 +869,8 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         offset += len;
     }
 
-    // Flows (MK section 14).
+    // Flows (MK section 14). The stream key of each white noise, in order (D-090).
+    let mut noise_keys: Vec<u64> = vec![];
     for f in &model.flows {
         let mut tc = Tc::new(&scope, &mut diags, &f.id);
         let bi = match index.get(&f.target) {
@@ -876,7 +889,15 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             Some(t) => t,
             None => continue,
         };
+        tc.noise = Some((noise_keys.len(), 0));
         let compiled = tc.expect(&f.expr, &want);
+        let n_noise = tc.noise.map(|n| n.1).unwrap_or(0);
+        noise_keys.extend((0..n_noise).map(|k| fnv1a(&format!("{}|noise|{k}", f.id))));
+        if n_noise > 0 {
+            if let Err(m) = noise_linear(&f.expr) {
+                diags.push(Diagnostic { code: "MK-E30", message: format!("{m}: a flow is linear in each noise, `der(x) = a + b * noise` with `a` and `b` free of noise (MK-14.16)"), element: f.id.clone() });
+            }
+        }
         flow_conditions(&scope, &mut diags, f);
         let Some(c) = compiled else { continue };
         let cs = cont.iter_mut().find(|c| c.binding == bi).unwrap();
@@ -1062,6 +1083,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         constraints: cconstraints,
         functions: funcs,
         is_static,
+        noise: noise_keys,
     })
 }
 
@@ -1314,6 +1336,41 @@ fn random_rate_varies(scope: &Scope, rate: &Expr) -> bool {
         }
     }
     time || reads.iter().any(|i| scope.model.bindings[*i].role == Role::Continuous)
+}
+
+/// MK-14.16 (D-090): whether `e` is linear in each white noise: noise appears only in sums,
+/// differences, negations, products and quotients by factors free of noise, conditional
+/// branches and the components of a tuple. Returns whether `e` holds noise.
+fn noise_linear(e: &Expr) -> Result<bool, String> {
+    let has = |e: &Expr| {
+        let mut found = false;
+        e.walk(&mut |x| found |= matches!(x, Expr::Builtin { builtin: Builtin::Noise }));
+        found
+    };
+    match e {
+        Expr::Builtin { builtin: Builtin::Noise } => Ok(true),
+        Expr::Neg { neg } => noise_linear(neg),
+        Expr::Bin { bin: BinOp::Add | BinOp::Sub, l, r } => Ok(noise_linear(l)? | noise_linear(r)?),
+        Expr::Bin { bin: BinOp::Mul, l, r } => match (noise_linear(l)?, noise_linear(r)?) {
+            (true, true) => Err("noise multiplies noise".into()),
+            (a, b) => Ok(a || b),
+        },
+        Expr::Bin { bin: BinOp::Div, l, r } => {
+            if has(r) {
+                return Err("noise divides".into());
+            }
+            noise_linear(l)
+        }
+        Expr::If { r#if, then, r#else } => {
+            if has(r#if) {
+                return Err("a condition reads noise".into());
+            }
+            Ok(noise_linear(then)? | noise_linear(r#else)?)
+        }
+        Expr::Tuple { tuple } => tuple.iter().try_fold(false, |acc, x| Ok(noise_linear(x)? | acc)),
+        other if has(other) => Err("noise inside a function, a power or a comparison".into()),
+        _ => Ok(false),
+    }
 }
 
 /// Bindings read by `refs`, following derived definitions (not flows).

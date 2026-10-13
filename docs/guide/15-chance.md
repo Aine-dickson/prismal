@@ -369,6 +369,53 @@ run waits of Geiger with GeigerLab {
 - Both handler lines read the values from before the click: `gap` gets the time since the previous click, then `last` moves on.
 - With a rate of 2 per second the mean wait is half a second, and the deviation is the same: for the exponential law the two are equal. A histogram over many runs (`at τ over n runs`, above) shows how runs differ; a histogram of one run shows what happens again and again within it.
 
+## Noise in flows
+
+**Goal.** A pollen grain in water, jostled by molecules too small to see: the learner watches its path wander, and checks Einstein's law that the mean square distance grows in proportion to time, `4 D t` in a plane.
+**How it is built.** The position is continuous `state` with a `flow`, as for any motion, but its rate of change is **white noise**: `noise`, a random push at every instant. Each `noise` written is a separate, independent noise, so the two components get one each. `D` is the diffusion coefficient, an area per time.
+
+```text
+space Water = euclidean(2)
+
+model Pollen in Water {
+  param { D: Quantity<L^2/T> = 0.5 m^2/s }    // diffusion coefficient
+  state { pos: Point = origin }
+
+  flow der(pos) = (sqrt(2 * D) * noise, sqrt(2 * D) * noise)
+}
+
+presentation PollenLab for Pollen {
+  view water: spatial(Water, scale: 1 m -> 60 px, y: up) {
+    axes
+    trace(pos every 0.01 s, line: solid)
+    marker(pos) as grain
+  }
+  panel controls {
+    slider(D, range: [0.1 m^2/s, 2 m^2/s])
+    button(reseed, label: "Another grain")
+  }
+  observe {
+    spread = |pos - origin|^2 at t0 + 1 s over 300 runs
+  }
+}
+```
+
+```cases
+run einstein of Pollen with PollenLab {
+  config { seed = 2 }
+  until t0 + 1 s
+  expect {
+    mean(spread) == 2 m^2 within 0.35 m^2
+  }
+}
+```
+
+- `noise` has the unit `1/s^0.5`: white noise is the rate of change of a random walk whose spread grows with the square root of time. So `sqrt(2 * D) * noise` is a velocity when `D` is an area per time, and the flow checks like any other.
+- A flow is **linear** in each noise: `der(x) = a + b * noise`, with `a` and `b` free of noise (MK-E30). `a` is the drift, the push that does not average out; `b` scales the noise. Several noises are added as several terms. `noise` is written only in flows (MK-E29).
+- The runtime steps such a model by the Euler-Maruyama method, every millisecond unless the case gives `h` in `config` (RC-13.9). Averages over many runs, like `mean(spread)`, are then accurate to about the step.
+- A drift and a noise together give much of statistical physics: `der(v) = -v / tau + s * sqrt(2 / tau) * noise` is a velocity relaxing to a random spread `s` (Langevin's equation, Ornstein-Uhlenbeck), and `der(S) = mu * S + sigma * S * noise` is geometric Brownian motion, where `sigma` has the unit `1/s^0.5`. The noise is read in Itô's sense: the coefficient takes the value at the start of each step.
+- Events see noisy paths: `event hit on falling(x)` finds the first instant a noisy `x` reaches 0.
+
 ## Measuring with an instrument
 
 **Goal.** A ball dropped from 2 m and measured with a ruler that reads to the centimetre and errs by about 2 cm: the learner sees the readings scatter about the true height, and repeated measurements spread by the ruler's uncertainty.

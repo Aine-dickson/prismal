@@ -375,6 +375,7 @@ impl<'a> Printer<'a> {
                 Builtin::T0 => "t0".into(),
                 Builtin::Elapsed => "elapsed".into(),
                 Builtin::Index => "index".into(),
+                Builtin::Noise => "noise".into(),
             },
             Expr::Const { .. } => "π".into(),
             Expr::Origin { .. } => "origin".into(),

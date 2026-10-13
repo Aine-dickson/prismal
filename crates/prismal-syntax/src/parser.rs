@@ -1011,7 +1011,12 @@ impl<'a> Parser<'a> {
                 if self.tok().space_before {
                     return Err(self.unexpected("an exponent written without spaces"));
                 }
-                let n = self.int()?;
+                // A whole or half number (D-090): `s^2`, `s^0.5`.
+                let n = match self.peek() {
+                    Tok::Num(n) if (2.0 * n).fract() == 0.0 && n.abs() < 1e6 => *n,
+                    _ => return Err(self.unexpected("a whole or half number as a unit's exponent")),
+                };
+                self.bump();
                 text.push_str(&format!("^{}{n}", if neg { "-" } else { "" }));
                 continue;
             }

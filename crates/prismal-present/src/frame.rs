@@ -169,9 +169,11 @@ fn style_props(rep: &Rep) -> Result<Rep, PDiag> {
     Ok(Rep { props: rep.props.iter().filter(|p| p.name != "color" && p.name != "line").cloned().collect(), ..rep.clone() })
 }
 
+/// The author's style word (D-061). `line: solid` is carried too: a trace is dashed unless
+/// its author says otherwise (D-090, a Brownian path).
 fn style_word(rep: &Rep, name: &str) -> Option<String> {
     match rep.prop(name) {
-        Some(Arg::Word { word }) if !(name == "line" && word == "solid") => Some(word.clone()),
+        Some(Arg::Word { word }) => Some(word.clone()),
         _ => None,
     }
 }
@@ -1157,7 +1159,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 for i in 0..=n {
                     let x = lo + (hi - lo) * i as f64 / n as f64;
                     let args = [Value::Num(x)];
-                    let y = body.eval(&Ctx { vals, der: None, t, t0: run.config.t0, args: &args, payloads: &[], draws: None });
+                    let y = body.eval(&Ctx { vals, der: None, t, t0: run.config.t0, args: &args, payloads: &[], draws: None, noise: &[] });
                     if let Ok(Value::Num(y)) = y {
                         pts.push([x, y]);
                     }
@@ -1638,8 +1640,6 @@ fn jumped(run: &Run, e: &CExpr, a: f64, b: f64) -> bool {
     false
 }
 
-/// Sample instants `t0, t0 + dt, ...` up to `t`, and `t` itself (PK-6.3, PK-7.5: a trace
-/// ends at the instant shown).
 /// One reading of a measured series: a point with no label.
 fn dot(id: Id, at: [f64; 2], color: Option<String>) -> RepFrame {
     RepFrame {
@@ -1680,6 +1680,8 @@ fn measured(text: String, meter: &Option<Meter>) -> String {
     }
 }
 
+/// Sample instants `t0, t0 + dt, ...` up to `t`, and `t` itself (PK-6.3, PK-7.5: a trace
+/// ends at the instant shown).
 fn samples(run: &Run, t: f64, dt: f64) -> impl Iterator<Item = f64> {
     let t0 = run.config.t0;
     let end = t.min(run.end_time());

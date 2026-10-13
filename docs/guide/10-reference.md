@@ -59,6 +59,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `match p { a => x, b => y }` | a value per case of an enumeration, every case once | 5 |
 | `a`, `Phase.a` | a case of an enumeration | 5 |
 | `t`, `t0`, `elapsed` | current time, start, time since start | 4 |
+| `noise` | white noise in a flow, `der(x) = a + b * noise`: each occurrence independent, of dimension `T^(-1/2)` | 15 |
 | `sin cos tan sqrt exp log abs min max atan2` | functions | 2 |
 | `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
@@ -276,6 +277,8 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E26 | a member that does not exist, a part used as a value, or an aggregate that has no value |
 | MK-E27 | retired (D-086): rates may read continuous state and `t` |
 | MK-E28 | a distribution outside an event's condition and operations |
+| MK-E29 | `noise` outside a flow |
+| MK-E30 | a flow that is not linear in `noise` |
 
 **Presentation** (`PK`): E01 broken reference, E02 expression does not check (the kernel's message is quoted), E03 control or action targets something the learner may not change, E04 missing or wrong scale or axis dimension, E05 representation unsuited to its sources or view, E06 representation kind not implemented.
 

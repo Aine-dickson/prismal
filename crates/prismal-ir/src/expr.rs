@@ -32,6 +32,9 @@ pub enum Builtin {
     /// The number of the member being declared, from 1, in the overrides of a collection
     /// (D-055).
     Index,
+    /// White noise in a flow, `der(x) = a + b * noise` (MK-14.16, D-090): each occurrence an
+    /// independent standard white noise, of dimension `T^(-1/2)`.
+    Noise,
 }
 
 /// Aggregates over the members of a collection (MK-8.3, D-055).

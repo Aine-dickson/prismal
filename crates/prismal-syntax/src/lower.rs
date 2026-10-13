@@ -1438,6 +1438,8 @@ impl<'a> ModelCx<'a> {
             "t" => build::t(),
             "t0" => build::t0(),
             "elapsed" => build::elapsed(),
+            // White noise in flows (D-090); a name the author declares wins.
+            "noise" => Expr::Builtin { builtin: Builtin::Noise },
             "π" | "pi" => build::pi(),
             "origin" => {
                 let s = self.space_id(span);

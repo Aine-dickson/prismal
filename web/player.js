@@ -557,7 +557,7 @@ function drawRep(v, g, r, u, colorIndex) {
   }
   if (r.line && r.drawn == null && r.valid !== false) {
     // The author's line style (D-061), as prismal-svg draws it.
-    const dash = r.line === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
+    const dash = r.line === 'solid' ? 'none' : r.line === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
     for (const e of grp.querySelectorAll('line, polyline, polygon, path')) {
       if (e.parentNode.classList.contains('arrow') && e.tagName === 'polygon') continue;
       e.style.strokeDasharray = dash;

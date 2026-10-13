@@ -1,7 +1,7 @@
 //! Runs (RC sections 3 to 11): initialization, continuous evolution, event detection and
 //! location, event iteration, Zeno detection, failures, interventions and requests.
 
-use crate::solver::{Attempt, Dopri5, Rhs, Rk4, Step};
+use crate::solver::{Attempt, Dense, Dopri5, Rhs, Rk4, Step};
 use prismal_ir::{Expr, Id, Op, Policy, Role, Type};
 use prismal_kernel::random::{fnv1a, Uniforms, CLOCK_SITE};
 use prismal_kernel::{check_intervention, compile_expr, distance, CExpr, CModel, COp, CTrigger, Ctx, Dir, Draws, Status, Value};
@@ -54,6 +54,9 @@ pub struct Config {
     pub log: Vec<Scheduled>,
     /// The seed of every random stream (RC-13.1, D-083).
     pub seed: u64,
+    /// The step of the Euler-Maruyama solver of a model with noise in its flows (RC-13.9);
+    /// `None`: the fixed step `h` of `rk4` if one is given, else `t_ref / 1000`.
+    pub h_noise: Option<f64>,
 }
 
 impl Config {
@@ -72,6 +75,7 @@ impl Config {
             params: vec![],
             log: vec![],
             seed: 0,
+            h_noise: None,
         }
     }
     pub fn param(mut self, id: &str, value: Expr) -> Config {
@@ -92,6 +96,14 @@ impl Config {
     }
     fn eps_t(&self) -> f64 {
         self.eps_t.unwrap_or(1e-10 * self.t_ref)
+    }
+    /// The step of the Euler-Maruyama solver (RC-13.9).
+    pub fn noise_step(&self) -> f64 {
+        let fixed = match self.solver {
+            SolverConfig::Rk4 { h } => h,
+            _ => None,
+        };
+        self.h_noise.or(fixed).unwrap_or(1e-3 * self.t_ref)
     }
 }
 
@@ -254,18 +266,20 @@ struct Engine<'a> {
     acting: bool,
 }
 
-/// The right-hand side over one segment: discrete state and parameters fixed.
+/// The right-hand side over one segment: discrete state and parameters fixed. `noise`: the
+/// values of the white noises during an Euler-Maruyama step (D-090).
 struct SegmentRhs<'a> {
     cm: &'a CModel,
     scratch: Vec<Value>,
     t0: f64,
+    noise: Vec<f64>,
 }
 
 impl Rhs for SegmentRhs<'_> {
     fn f(&mut self, t: f64, y: &[f64], dy: &mut [f64]) -> Result<(), Status> {
         self.cm.load_y(&mut self.scratch, y);
         self.cm.update_derived(&mut self.scratch, t, self.t0)?;
-        self.cm.rhs(&self.scratch, t, self.t0, dy)
+        self.cm.rhs_noisy(&self.scratch, t, self.t0, &self.noise, dy)
     }
 }
 
@@ -338,7 +352,7 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
         };
         let v = compile_expr(cm, e, Some(&cm.bindings[i].ty))
             .map_err(|d| format!("{d:?}"))
-            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[], draws: None }).map_err(|s| s.cause));
+            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] }).map_err(|s| s.cause));
         match v {
             Ok(v) => overrides.push((i, v)),
             Err(m) => {
@@ -579,7 +593,7 @@ impl<'a> Engine<'a> {
     fn rates_in_step(&self, step: &Step, scratch: &[Value], t: f64, which: &[usize], out: &mut [f64]) -> Result<(), RunDiag> {
         let rates = |t: f64, out: &mut [f64]| -> Result<Option<usize>, RunDiag> {
             let vals = self.state_in_step(step, scratch, t).map_err(|s| self.diag(Category::Model, s.cause, None))?;
-            let c = Ctx { vals: &vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: None };
+            let c = Ctx { vals: &vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: None, noise: &[] };
             for (k, (o, &ei)) in out.iter_mut().zip(which).enumerate() {
                 let Some(CTrigger::Random { rate, .. }) = &self.cm.events[ei].trigger else { unreachable!() };
                 *o = rate.eval(&c).map_err(|s| self.diag(Category::Model, s.cause, Some(&self.cm.events[ei].id)))?.num();
@@ -693,7 +707,7 @@ impl<'a> Engine<'a> {
     }
 
     fn ctx<'v>(&'v self, vals: &'v [Value]) -> Ctx<'v> {
-        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: Some(Draws { seed: self.cfg.seed, due: &self.due_k }) }
+        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: Some(Draws { seed: self.cfg.seed, due: &self.due_k }), noise: &[] }
     }
 
     fn snapshot(&mut self) {
@@ -819,7 +833,7 @@ impl<'a> Engine<'a> {
         let der = self.cm.der_values(&self.vals, self.t, self.cfg.t0).ok();
         for q in &self.cm.equations {
             let Some(tol) = q.check_tol else { continue };
-            let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None };
+            let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] };
             let res = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
                 (Ok(a), Ok(b)) => distance(&a, &b),
                 _ => None,
@@ -940,10 +954,27 @@ impl<'a> Engine<'a> {
                 next_stop = next_stop.min(te);
             }
             let base = self.run.committed.len() - 1;
-            let mut rhs = SegmentRhs { cm, scratch: self.vals.clone(), t0: self.cfg.t0 };
+            let mut rhs = SegmentRhs { cm, scratch: self.vals.clone(), t0: self.cfg.t0, noise: vec![] };
             let span = next_stop - self.t;
             // One accepted step (RC-6.7: never past the next stop).
-            let (y1, step, h_next) = match &self.cfg.solver {
+            let (y1, step, h_next) = if !cm.noise.is_empty() {
+                // RC-13.9 (D-090): an Euler-Maruyama step. Each noise takes `ΔW / h` with
+                // `ΔW = sqrt(h) N`, `N` standard normal from the noise's stream at the step's
+                // start, so the flows give the drift plus the noise's coefficient times `ΔW`.
+                let hf = self.cfg.noise_step();
+                let land = self.t + hf >= next_stop - 1e-12 * hf;
+                let hs = if land { span } else { hf };
+                self.theta = self.theta.max(if land { next_stop } else { reach(self.t, hf) });
+                let (seed, t) = (self.cfg.seed, self.t);
+                rhs.noise = cm.noise.iter().map(|&key| Uniforms::new(seed, key, 0, t.to_bits()).normal() / hs.sqrt()).collect();
+                let mut dy = vec![0.0; n_y];
+                rhs.f(self.t, &y, &mut dy).map_err(|s| self.diag(Category::Model, s.cause, None))?;
+                let y1: Vec<f64> = y.iter().zip(&dy).map(|(a, d)| a + hs * d).collect();
+                rhs.noise.clear();
+                let step = Step::new(self.t, hs, Dense::Linear { y0: y.clone(), y1: y1.clone() });
+                (y1, step, None)
+            } else {
+                match &self.cfg.solver {
                 SolverConfig::Rk4 { h: Some(hf) } => {
                     let land = self.t + hf >= next_stop - 1e-12 * hf;
                     let hs = if land { span } else { *hf };
@@ -985,6 +1016,7 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+            }
             };
             h = h_next;
             let t1 = if step.t1 >= next_stop - 1e-12 * (step.t1 - step.t0) { next_stop } else { step.t1 };
@@ -1107,7 +1139,7 @@ impl<'a> Engine<'a> {
 
     /// The guard of crossing event `ei` in a state at `t`.
     fn guard_in(&self, vals: &[Value], t: f64, ei: usize) -> Result<f64, Status> {
-        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None };
+        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] };
         match &self.cm.events[ei].trigger {
             Some(CTrigger::Crossing { guard, .. }) => Ok(guard.eval(&c)?.num()),
             _ => unreachable!(),
@@ -1457,7 +1489,7 @@ impl<'a> Engine<'a> {
                 }
                 // The environment's value reads nothing of the model but its constants.
                 let value = match compile_expr(self.cm, e, Some(&self.cm.bindings[i].ty)) {
-                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None }),
+                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] }),
                     Err(d) => return reject(self, format!("the value of `{}`: {}", self.cm.bindings[i].name, d.iter().map(|x| x.message.clone()).collect::<Vec<_>>().join("; "))),
                 };
                 let v = match value {
@@ -1484,7 +1516,7 @@ impl<'a> Engine<'a> {
                 let payload = match (action, declared) {
                     (Action::Request(_), None) => None,
                     (Action::RequestWith(_, e), Some(p)) => match compile_expr(self.cm, e, Some(&p.ty)) {
-                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None }) {
+                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] }) {
                             Ok(v) => Some(v),
                             Err(s) => {
                                 let rd = self.diag(Category::Intervention, format!("the payload of `{}`: {}", self.cm.events[ei].name, s.cause), Some(id));
@@ -1517,7 +1549,7 @@ impl<'a> Engine<'a> {
                 if let Some(c) = &self.cm.events[ei].enable {
                     let mut payloads = vec![None; self.cm.events.len()];
                     payloads[ei] = payload.clone();
-                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads, draws: None };
+                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads, draws: None, noise: &[] };
                     let why = match c.eval(&ctx) {
                         Ok(Value::Bool(true)) => None,
                         Ok(_) => Some(self.not_enabled(ei, payload.as_ref())),
@@ -1559,7 +1591,7 @@ impl Run {
 
     fn eval_on(&self, c: &CExpr, vals: &[Value], t: f64) -> Result<Value, Status> {
         let der = self.model.der_values(vals, t, self.config.t0).ok();
-        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[], draws: None })
+        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[], draws: None, noise: &[] })
     }
 
     /// The state at time `t`: the final microstep at an event time (RC-4.3), otherwise the
@@ -1568,11 +1600,13 @@ impl Run {
         if let Some(c) = self.committed.iter().rev().find(|c| c.t == t) {
             return c.vals.clone();
         }
-        let seg = self
-            .segments
-            .iter()
-            .find(|s| s.step.t0 <= t && t <= s.step.t1)
-            .unwrap_or_else(|| panic!("time {t} is outside the run"));
+        // Segments are in time order: the first that ends at or after `t`, found by bisection
+        // (a run with noise has a segment per millisecond, D-090), is the first containing it.
+        let k = self.segments.partition_point(|s| s.step.t1 < t);
+        let seg = match self.segments.get(k) {
+            Some(s) if s.step.t0 <= t => s,
+            _ => self.segments.iter().find(|s| s.step.t0 <= t && t <= s.step.t1).unwrap_or_else(|| panic!("time {t} is outside the run")),
+        };
         let mut y = vec![0.0; self.model.n_y()];
         seg.step.eval(t, &mut y);
         let mut vals = self.committed[seg.base].vals.clone();

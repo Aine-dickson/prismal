@@ -432,6 +432,8 @@ x(t) = x(t_a⁺) + ∫[t_a, t] F_x(s) ds
 
 where `x(t_a⁺)` is the value committed at `t_a` and `F_x` is the combined flow of `x`. Derived bindings hold their defining expressions at every `t`. The runtime computes an approximation of this solution; its accuracy is execution configuration (runtime contract).
 
+- **MK-14.16** (D-090) A flow MAY contain the built-in **white noise** `noise`, of type `Quantity<T^(-1/2)>`, linearly: `der(x) = a + b_1 * noise + ... + b_k * noise`, with `a` (the drift) and each `b_i` free of noise. Each occurrence of `noise` in the elaborated model is an independent standard white noise `ξ_i = dW_i / dt`, and the flow means the Itô stochastic differential equation `dx = a dt + Σ b_i dW_i`. Linear means: noise appears only in sums, differences, negations, products and quotients by factors free of noise, conditional branches whose condition is free of noise, and the components of a tuple (MK-E30). `noise` elsewhere than in a flow is MK-E29. A name the author declares wins over `noise`. Expressions that read `der(x)` (MK-11.5) read the drift.
+
 ### 14.6 Time
 
 - **MK-14.14** Every model has the built-in binding `t : Instant<T>` (simulation time, R-23) and `t0 : Instant<T>` (the run's start instant). `elapsed = t - t0` is a built-in derived `Quantity<T>`.
@@ -586,6 +588,8 @@ The kernel defines these static errors. They are detected before execution, on t
 | MK-E24 | Event payload without a source: not requested, and not following an event that carries a payload of the same type (members of the same collection) | MK-15.1a, MK-15.1c |
 | MK-E25 | `index` read outside the overrides of a collection | MK-8.3a |
 | MK-E26 | A member that does not exist or is not constant, a part used as a value, an unknown object type, a derived binding given a value in a part, or an aggregate without a value | MK-7.13, MK-8.3a |
+| MK-E29 | `noise` outside a flow | MK-14.16 |
+| MK-E30 | A flow that is not linear in each `noise` | MK-14.16 |
 
 Conflicts between different events can only be detected at run time.
 
