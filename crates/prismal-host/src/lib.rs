@@ -26,7 +26,7 @@ const KINDS: &[&str] = &[
     "equation", "formula", "table", "slider", "number_input", "toggle", "button", "group", "histogram",
 ];
 const ACTIONS: &[&str] = &[
-    "show", "reveal", "hide", "highlight", "camera", "narrate", "wait", "wait_until", "run", "hold", "seek", "reset", "branch", "intervene", "request",
+    "show", "reveal", "hide", "highlight", "camera", "narrate", "wait", "wait_until", "run", "hold", "seek", "reset", "restart", "branch", "intervene", "request",
     "explore", "sequence",
 ];
 

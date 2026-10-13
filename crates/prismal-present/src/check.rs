@@ -200,7 +200,7 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                 }
             }
             Action::Narrate { duration: Some(d), .. } | Action::Wait { duration: d } => expr(cm, d, Some(duration), beat, out),
-            Action::Narrate { .. } | Action::Hold | Action::Reset | Action::Branch => {}
+            Action::Narrate { .. } | Action::Hold | Action::Reset | Action::Restart | Action::Branch => {}
             Action::Run { rate } => {
                 expr(cm, rate, Some(&Type::real()), beat, out);
                 if number(cm, rate).is_ok_and(|r| r < 0.0) {

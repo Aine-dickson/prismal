@@ -508,6 +508,22 @@ impl Player {
                 let rate = self.open.rate;
                 self.map(p, self.cur(), t0, rate);
             }
+            // D-085: a new run version from `t0`, with the parameters of the instant shown.
+            TAction::Restart => {
+                let s = self.sim_at(p);
+                let old = &self.pb.runs[self.cur()];
+                let cfg = crate::restarted(&old.run, s);
+                let t0 = cfg.t0;
+                let run = prismal_runtime::run(&old.run.model, cfg.clone());
+                let lineage = old.lineage.clone();
+                self.pb.runs.push(RunVersion { lineage, config: cfg, run });
+                self.pb.current = self.pb.runs.len() - 1;
+                if lineage_is(&self.pb.runs[self.pb.current], "lesson") {
+                    self.lesson = self.pb.current;
+                }
+                let rate = self.open.rate;
+                self.map(p, self.pb.current, t0, rate);
+            }
             TAction::Branch => {
                 self.branch(p);
             }

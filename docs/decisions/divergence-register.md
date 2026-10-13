@@ -104,6 +104,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-082 | Release numbering: 0.x releases, branch per minor version | Accepted |
 | D-083 | The stochastic slice: random events, draws and seeds | Accepted |
 | D-084 | Many runs: another seed in labs, ensembles, histograms, statistics, staircases | Accepted |
+| D-085 | Findings from the reaction example: `restart`, histogram bars on the values' grid | Accepted |
 
 ---
 
@@ -1592,5 +1593,28 @@ The exploration documents are frozen. They are not edited to reflect later decis
   - PK-6.3d: **found while checking a still of the guide's lab**: a `series_plot` of a count was drawn as separate points, because the breaks of D-078 cut the path at every event. A value that changes only at transitions is now drawn as an exact staircase from the committed states (up to 4000 steps); a flowing value that jumps keeps its breaks. Sampling a staircase every `Δ` was tried first and rejected: with 0.5 s samples a decay of single nuclei looked like jumps of 40.
 - **Reason:** each need is met by a form authors already know (a runtime-control button, an argument like a sampled source, a function in an expectation), with one new contextual word. The ensemble keeps the model free of presentation concerns: the runs are the run configuration's, varied only in seed.
 - **Consequences:** `Interactive::reseed`, `seed`; host `session_info.seed`; IR `Arg::Ensemble`, `Schedule::At.runs`, `Subject::Statistic`; `data::ensemble`, `MAX_RUNS`; `CKind::Histogram` with its cache, `piecewise_constant`, `stairs`; parser (`at τ over n runs` in arguments and schedules), lowering, formatter; word lists (`runs`, `reseed`); PK-3.8, PK-4.1a, PK-6.3d, PK-6.3e; 04-ir; working syntax; guide chapter 15 (Many runs) and the reference; tests: a lab that replays or draws another run, a histogram of many runs, statistics in a case, and the count at the half-life against the binomial law by a chi-square test (the earlier tests checked means only).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-085: Findings from the reaction example: `restart`, histogram bars on the values' grid
+
+- **Status:** Accepted
+- **Original position:** D-069 gave labs `button(reset)`: a new run with the presentation's configuration and an empty log. PK-9.2 gave lessons `reset`: the lesson's run shown again from `t0`. D-084's histogram divided its range into equal bins.
+- **Raised by:** the fourth complete example, `examples/reaction.md` (a reversible reaction with few and many molecules), checked by rendering its lab and lesson.
+- **Builds on:** D-069, D-078 to D-080 (findings from examples), D-083, D-084; PK-9.2, PK-9.2a.
+- **Findings:**
+  1. **A setting that is a starting value could not be tried.** The number of molecules `n0` sets the starting counts. In the lesson, `intervene { set n0 = 20 }; reset` showed the first run again (where `n0` was still 1000) and then applied the change at 8 s to the old counts: the panel read "share 37.50". In the lab, a learner who moved the slider to 20 and pressed Replay (`reset`) lost the setting. Neither form can mean "start again with the settings as they are", and `reset` keeps its meaning in `examples/chain.md`, whose lesson resets to the starting spread.
+  2. **A histogram of values on a coarse grid showed a comb.** With 20 molecules the share takes the values `k / 20`; with 25 bins over `[0.5, 1]`, most bins fell between two values and stayed empty.
+  3. A fixed `y` range suits either a narrow histogram (a thousand molecules, over 100 runs in one bin) or a wide one: the plot option `follow: y` (D-070) already grows the range to the bars; the example uses it.
+  4. Two narrations ran shorter than the system voice; the exporter's notes (D-079) gave the durations.
+- **Options considered (finding 1):**
+  1. **Change `reset`** to keep the parameter values. Breaks the meaning `examples/chain.md` relies on and makes "back to the start" impossible to write.
+  2. **A modeling idiom**: an `on request` event that sets the counts from `n0` (as `relaunch` in `examples/projectile.md`). Time does not start again, so plots against elapsed time continue, and every model would repeat its starting values in a handler.
+  3. **A new word, `restart`** (taken), in both places a reset is written: a timeline action and a lab's runtime-control button. A new run from `t0`, every parameter overridden by its value at the instant shown, an empty log.
+- **Accepted position:** option 3 for finding 1; for finding 2, bars on the values' grid. Under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13 (choose the form that serves both existing and new needs).
+  - `restart` (contextual): in a lab, `button(restart)`; in a timeline, an action that makes a new run version and maps the beat to its `t0`. `reseed` is now a restart with the next seed (D-084 had it reset, which also dropped the learner's settings). `reset` is unchanged.
+  - PK-6.3e: values on a grid coarser than the bins get one bar per grid value, `d` wide; values on finer grids or none are binned as before.
+- **Reason:** "start again with what I have chosen" and "back to how it was" are both things learners and lesson authors mean, and one word cannot carry both. The run already separates configuration (parameters, seed) from the log of actions, so a restart is the configuration of the instant shown with an empty log: no new runtime machinery.
+- **Consequences:** `prismal_present::restarted`; `Interactive::restart`, `reseed` reworked; timeline `Restart` (a new run version); IR action `restart`; parser, lowering, formatter, checker, host action list, word lists; frame `grid_step` and grid bars; PK-6.3d, PK-6.3e, PK-9.2 table; reference, working syntax, guide chapter 15; `examples/reaction.md` and its index row; tests `restart_keeps_the_settings` and `histogram_bars_follow_the_grid_of_the_values`.
 - **History:**
   - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.

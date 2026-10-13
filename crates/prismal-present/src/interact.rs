@@ -173,11 +173,30 @@ impl Interactive {
         self.grow();
     }
 
-    /// A new run from `t0` with the next seed (D-084): the learner sees another outcome of
-    /// the same model; `reset` replays the current one.
+    /// A new run from `t0` with the parameters as they are at the instant shown (D-085): the
+    /// learner's settings stay, everything else starts again. `reset` goes back to the
+    /// presentation's own starting values.
+    pub fn restart(&mut self) {
+        self.drag = None;
+        let mut cfg = crate::restarted(&self.session.current, self.t);
+        cfg.t_end = self.cfg.t_end;
+        self.session = Session::new(self.cm.clone(), cfg);
+        self.t = self.cfg.t0;
+        self.grow();
+    }
+
+    /// A restart with the next seed (D-084, D-085): another outcome of the same model with the
+    /// learner's settings; `reset` and `restart` keep the seed.
     pub fn reseed(&mut self) {
-        self.cfg.seed = self.cfg.seed.wrapping_add(1);
-        self.reset();
+        let seed = self.session.current.config.seed.wrapping_add(1);
+        self.cfg.seed = seed;
+        self.drag = None;
+        let mut cfg = crate::restarted(&self.session.current, self.t);
+        cfg.t_end = self.cfg.t_end;
+        cfg.seed = seed;
+        self.session = Session::new(self.cm.clone(), cfg);
+        self.t = self.cfg.t0;
+        self.grow();
     }
 
     /// The seed of the run shown (RC-13.1).
@@ -257,7 +276,7 @@ impl Interactive {
     }
 
     /// Presses a button: requests its event at the instant shown (D-027, RC-11.4a), or
-    /// applies its runtime control: `reset`, `undo`, `redo` (D-069), `reseed` (D-084).
+    /// applies its runtime control: `reset`, `undo`, `redo` (D-069), `reseed` (D-084), `restart` (D-085).
     pub fn press(&mut self, rep: &str) -> Result<(), Report> {
         let Some((_, r)) = self.rep(rep) else { return self.report(Why::Refused, format!("no button `{rep}`")) };
         match &r.kind {
@@ -273,6 +292,7 @@ impl Interactive {
                 match control.as_str() {
                     "reset" => self.reset(),
                     "reseed" => self.reseed(),
+                    "restart" => self.restart(),
                     "undo" => self.undo(),
                     _ => self.redo(),
                 }

@@ -25,7 +25,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "for", "view", "panel", "observe", "live", "over", "microstep", "show", "as", "drag", "click", "propose", "permit",
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
-    "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed",
+    "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -1651,6 +1651,9 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("reset") {
             return Ok(Action::Reset);
+        }
+        if self.eat_word("restart") {
+            return Ok(Action::Restart);
         }
         if self.eat_word("branch") {
             return Ok(Action::Branch);

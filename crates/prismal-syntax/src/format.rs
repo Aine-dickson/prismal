@@ -1204,6 +1204,7 @@ impl<'a> Printer<'a> {
             Action::Hold => "hold".into(),
             Action::Seek { time } => format!("seek {}", self.expr(time)),
             Action::Reset => "reset".into(),
+            Action::Restart => "restart".into(),
             Action::Branch => "branch".into(),
             Action::Intervene { ops } => format!("intervene {}", block(ops.iter().map(|o| self.op(o)).collect())),
             Action::Request { event, payload } => match payload {

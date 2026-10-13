@@ -13,7 +13,7 @@ use prismal_ir::{Expr, Id, Model, Space};
 use std::collections::HashMap;
 
 /// Runtime controls a `button` can offer instead of an event (PK-6.3, D-069).
-pub const RUN_CONTROLS: &[&str] = &["reset", "undo", "redo", "reseed"];
+pub const RUN_CONTROLS: &[&str] = &["reset", "undo", "redo", "reseed", "restart"];
 
 /// Representation kinds of the first slice (PK-6.3).
 const KINDS: &[&str] = &[
@@ -559,6 +559,7 @@ impl PresCx<'_, '_> {
                 }
                 ast::Action::Hold => out.push(Action::Hold),
                 ast::Action::Reset => out.push(Action::Reset),
+                ast::Action::Restart => out.push(Action::Restart),
                 ast::Action::Branch => out.push(Action::Branch),
                 ast::Action::Highlight(n) => match self.aliases.get(&n.text) {
                     Some(id) => out.push(Action::Highlight { target: id.clone() }),
