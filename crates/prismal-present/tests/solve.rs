@@ -184,3 +184,49 @@ fn solves_are_checked() {
     let d = codes("model M { unknown { x: Real }\n equation a: x == 2\n equation b: x == 2 checked within 1e-9 }");
     assert!(d.is_empty(), "{d:?}");
 }
+
+const RATES: &str = r#"model Coil {
+  param {
+    V0: Voltage    = 12 V
+    R:  Resistance = 6 Ω
+    L:  Inductance = 3 H
+  }
+  state { I: Current = 0 A }
+  equation faraday: L * der(I) == V0 - R * I
+}
+
+model Spring {
+  param {
+    m: Mass = 2 kg
+    k: Quantity<M/T^2> = 8 N/m
+  }
+  state {
+    x: Length = 0.1 m
+    v: Velocity = 0 m/s
+  }
+  flow der(x) = v
+  equation newton: m * der(v) == -k * x
+  event turn on rising(v)
+}
+"#;
+
+/// An equation that gives a rate: the current through a coil rises as `V0/R (1 - e^(-Rt/L))`.
+#[test]
+fn equations_give_rates() {
+    let prog = program(RATES);
+    let cm = prog.model("Coil");
+    let r = run(cm, Config::until(1.0));
+    assert!(matches!(r.status, RunStatus::Completed), "{:?}", r.status);
+    let i = r.state_at(1.0)[cm.idx("Coil.I")].num();
+    let exact = 2.0 * (1.0 - (-2.0f64).exp());
+    assert!((i - exact).abs() < 1e-6, "{i} against {exact}");
+    // Newton's law as an equation: the spring turns after half a period, π sqrt(m / k).
+    let cm = prog.model("Spring");
+    let r = run(cm, Config::until(2.0));
+    let t = r.log.iter().find(|e| e.name == "turn").expect("turn").t;
+    assert!((t - std::f64::consts::PI / 2.0).abs() < 1e-6, "{t}");
+    // The authored text keeps the equation as written.
+    let text = format(&compile(RATES).unwrap().doc);
+    assert!(text.contains("equation faraday: L * der(I) == V0 - R * I"), "{text}");
+    assert!(!text.contains("@rate"), "{text}");
+}
