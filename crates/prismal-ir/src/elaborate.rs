@@ -493,6 +493,7 @@ impl<'a> Cx<'a> {
             Expr::Norm { norm } => Expr::Norm { norm: b(self, norm) },
             Expr::Bin { bin, l, r } => Expr::Bin { bin: *bin, l: b(self, l), r: b(self, r) },
             Expr::Call { call, args } => Expr::Call { call: *call, args: args.iter().map(|a| self.expr(s, a)).collect() },
+            Expr::Draw { draw, args } => Expr::Draw { draw: *draw, args: args.iter().map(|a| self.expr(s, a)).collect() },
             Expr::Apply { apply, args } => Expr::Apply { apply: b(self, apply), args: args.iter().map(|a| self.expr(s, a)).collect() },
             Expr::If { r#if, then, r#else } => Expr::If { r#if: b(self, r#if), then: b(self, then), r#else: b(self, r#else) },
             Expr::Tuple { tuple } => Expr::Tuple { tuple: tuple.iter().map(|a| self.expr(s, a)).collect() },
@@ -881,12 +882,15 @@ impl<'a> Cx<'a> {
             Trigger::Level { cond } => Trigger::Level { cond: self.expr(s, cond) },
             Trigger::Start => Trigger::Start,
             Trigger::Request => Trigger::Request,
+            Trigger::Random { rate } => Trigger::Random { rate: self.expr(s, rate) },
         };
         // The guard of a member not alive is not evaluated: its values may not exist (D-058).
         let trigger = match (trigger, &live) {
             (Trigger::Rising { guard }, Some(l)) => Trigger::Rising { guard: Self::guarded(l, guard) },
             (Trigger::Falling { guard }, Some(l)) => Trigger::Falling { guard: Self::guarded(l, guard) },
             (Trigger::Crossing { guard }, Some(l)) => Trigger::Crossing { guard: Self::guarded(l, guard) },
+            // A member not alive has rate 0 (D-083).
+            (Trigger::Random { rate }, Some(l)) => Trigger::Random { rate: Self::guarded(l, rate) },
             (t, _) => t,
         };
         let enable = e.enable.as_ref().map(|c| self.expr(s, c));

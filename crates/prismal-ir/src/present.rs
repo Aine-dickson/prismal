@@ -502,6 +502,9 @@ pub struct RunConfig {
     pub rtol: Option<Expr>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub atol: Option<Expr>,
+    /// The seed of the run's random streams (RC-13.1, D-083); 0 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

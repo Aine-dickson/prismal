@@ -331,7 +331,7 @@ The first slice (D-001) exercises neither dynamic collections nor relations. The
 - **MK-10.2** Conditionals are total: every `if` has an `else` branch, and `match` on an enumeration covers every alternative.
 - **MK-10.3** A **declared function** has typed parameters, a result type and a body expression. Functions are values (`A -> B`). A declared function is pure and cannot read bindings other than its parameters and constants; a declared function that needs model state takes it as an argument (D-029).
 - **MK-10.3a** In v0 a declared function is declared in a model and is known by its identity (D-048). Its body may read its parameters, constants and other declared functions; reading any other binding, the time (`t`, `t0`, `elapsed`) or a derivative is MK-E18. A function calls no function that calls it back, directly or through others (MK-E23). A declared function is a value of function type (`A -> B`) and is applied like a derived function value (MK-10.7). A `match` (MK-10.2) has exactly one arm per case of its enumeration; a missing or repeated case is MK-E17.
-- **MK-10.4** Expressions do not draw random numbers. Sampling a distribution happens only in stochastic processes and operations with a declared random stream (R-10, R-30, D-013; deferred, section 21).
+- **MK-10.4** Expressions do not draw random numbers, except a **draw**, `D(args)` for a distribution `D` (D-083), written only in an event's enabling condition and operations (MK-E28 elsewhere). A draw's value is fixed by its stream (RC section 13), so evaluating it twice at one occurrence gives one value. Distributions: `uniform(a, b)` (a quantity in `[a, b)`), `normal(m, s)` (a quantity, vector or point `m`, each component with deviation `s`), `exponential(r)` (a rate `r`; the result has the inverse dimension), `bernoulli(p)` (a Boolean), `integer(a, b)` (a whole number from `a` to `b`), `poisson(m)`, `binomial(n, p)` (whole numbers of type `Real`), `choice(x1, ..., xk)` (one argument, equally likely). Invalid arguments make the draw `invalid` (MK-2.8).
 - **MK-10.5** Evaluation that does not terminate within the runtime's evaluation limit yields `invalid` (runtime contract).
 - **MK-10.6** Every expression keeps its symbolic structure in the IR. Its evaluated value is separate from it (R-48: expression is not evaluated value). This lets equations and definitions be displayed, differentiated symbolically by libraries, and consumed by a later acausal solver (D-007).
 - **MK-10.7** A **derived function value** is a derived binding (MK-6.4) of function type whose body MAY read model bindings, for example `f(x) = a * x^2` with `a` a parameter. Like every derived binding it is evaluated at every instant on current values, so an application `f(2)` always uses the current `a`; nothing is captured or stored. Its dependencies (section 13) are the bindings its body reads. A stored binding (constant, parameter, input, state) of function type MUST hold a closed function: one that reads no bindings other than its parameters and constants (D-029).
@@ -468,6 +468,7 @@ where `x(t_a⁺)` is the value committed at `t_a` and `F_x` is the combined flow
 | `on start` | run start, after initialization | |
 | `on input(i)` | the environment changes input `i` | |
 | `on request` | an intervention requests this event (D-027) | the event may declare a typed payload, supplied by the request |
+| `random(λ)` | at the jumps of a Poisson process of rate `λ` (MK-15.15, D-083) | `λ : Quantity<1/T>`, read on the committed state |
 
 - **MK-15.4** Continuous guards are crossings, never level conditions (D-004). A crossing is due at the instant the guard function changes sign in the declared direction; a guard that touches zero without changing sign is not a crossing.
 - **MK-15.5** A level condition (a Boolean over state) is permitted only as an enabling condition or in a discrete-time trigger. The enabling condition is evaluated at the instant the trigger is due; the event occurs only if it is true.
@@ -487,6 +488,12 @@ where `x(t_a⁺)` is the value committed at `t_a` and `F_x` is the combined flow
   - `stop`: when accumulation is detected, stop the run with a diagnostic.
   - `settle { operations }`: when accumulation is detected, apply the given operations instead of the handler, typically setting discrete state that switches to a resting mode (section 14.4).
 - **MK-15.13** Accumulation is detected when the event occurs more than `N` times within a window of simulation time `w`, or when successive occurrences are closer than `ε`. The event MAY declare `N`, `w` and `ε`; defaults are set in the runtime contract.
+
+### 15.4a Random events (D-083)
+
+- **MK-15.15** An event with the trigger `random(λ)` is due at the jump instants of a Poisson process whose intensity at `t` is `λ` evaluated on the state committed last before `t`. Between two transitions the intensity is constant and the waiting time is exponential; a transition that changes `λ` changes the law from that instant on. `λ = 0` makes no occurrence; a negative `λ` is a model failure.
+- **MK-15.16** In v0.2 `λ` reads only parameters, constants, discrete state and derived values of those, not continuous state or time (MK-E27, as MK-14.12). Rates that vary between events are a later extension.
+- **MK-15.17** A random event is not a crossing: MK-15.12 does not apply, and its handler may change its own rate. A random event repeated per member (MK-15.1b) has rate 0 while its member is not alive.
 
 ### 15.5 Ordering
 
@@ -762,7 +769,8 @@ Positions that elaborate accepted decisions without changing them are specified 
 | Item | Where it will be specified |
 |---|---|
 | Event location, microstep ordering, cascade and Zeno defaults, solver accuracy | `02-runtime-contract.md` |
-| Random streams and stochastic processes (D-013) | Runtime contract, stochastic slice |
+| Random streams and stochastic processes (D-013) | Done: MK-10.4, MK-15.15 to MK-15.17, RC-13.5 to RC-13.8 (D-083) |
+| Random rates that depend on continuous state or time | Later extension of D-083 |
 | Algorithmic process mode (RUN-04) | Slice that needs it |
 | Field state evolution (D-010) | Slice that needs it |
 | Acausal equations, constraint enforcement (D-007, D-020) | Later extension |

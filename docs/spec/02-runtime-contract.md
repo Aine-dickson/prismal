@@ -288,12 +288,16 @@ Execution control acts on runs, not on the model (MK-17.4). It is how the explan
 - **Decisions:** D-013, D-015.
 - **Prior art:** follows counter-based random number generators (Salmon and others, "Parallel random numbers: as easy as 1, 2, 3", the Random123 library), where each value is a pure function of a key and a counter, so draws do not depend on execution order.
 
-The stochastic modes (D-013) are specified with the stochastic slice. v0 fixes only what makes them reproducible.
+The stochastic modes (D-013) are specified by D-083: random events (MK-15.15) and draws (MK-10.4). RC-13.1 to RC-13.4 make them reproducible; RC-13.5 to RC-13.8 fix the streams, the generator, the distributions and the clocks of random events.
 
 - **RC-13.1** A run has one **seed** in its run configuration.
 - **RC-13.2** Randomness is drawn from **streams**. A stream is identified by the seed and the identity of the element that consumes it (a stochastic event or process, and the object it acts on). Draws from a stream are numbered by a counter. A draw is a pure function of seed, stream identity and counter.
 - **RC-13.3** There is no global generator whose state depends on the order in which elements draw. Adding, removing or reordering one element changes only its own stream.
 - **RC-13.4** The generator algorithm is part of the runtime build and is named in the reproducibility record (section 14).
+- **RC-13.5** (D-083) The stream of a draw is identified by the event that draws (its identity in the elaborated model) and the draw site's number in it: sites are numbered from 0 in order through the event's enabling condition, handler and Zeno settle operations. Its counter is the event's **due count**: how many times the event was due before, counting each microstep at which it was due or requested once, whether or not its condition held. A draw needing several uniform numbers takes them in order from its stream.
+- **RC-13.6** The generator is Philox4x32-10 (Salmon and others 2011). The key is `splitmix64(seed) XOR fnv1a64(event identity)`, split into two 32-bit words (low first); the counter is `(k low, k high, site, j)` for due count `k` and block `j`. Uniform number `i` of a draw is taken from block `i / 2`, words `2 (i mod 2)` and `2 (i mod 2) + 1` as the high and low halves of 64 bits, whose top 53 bits divided by `2^53` give a number in `[0, 1)`.
+- **RC-13.7** Distributions are computed from uniform numbers `u`: uniform `a + (b - a) u`; normal by Box-Muller, `m + s sqrt(-2 ln(1 - u1)) cos(2π u2)` per component; exponential `-ln(1 - u) / r`; Bernoulli `u < p`; integer `a + floor(u (b - a + 1))`; choice the argument numbered `floor(u k)`; Poisson by multiplication of uniforms below a mean of 30 and by Hörmann's PTRS from 30; binomial by inversion when `n min(p, 1 - p) < 30` and by Hörmann's BTRS otherwise (with `n - X` for `p > 1/2`).
+- **RC-13.8** A random event keeps a **clock** (the modified next reaction method, Anderson 2007): the integral `Λ` of its rate since the run's start and a target `P`, a sum of standard exponential numbers from the event's stream at site `2^32 - 1` (counter 0 for the first, `k` after the k-th occurrence). After initialization and after every transition (including actions) the clock adds the previous rate times the time elapsed to `Λ`, reads the new rate `λ`, and schedules the event as a time event at `t + (P - Λ) / λ` (never at the current instant; none when `λ = 0`). When it occurs, `Λ` becomes `P` and `P` grows by the next exponential number. Snapshots (RC-14.1) hold the clocks and the due counts.
 
 ---
 
@@ -410,7 +414,7 @@ Each program (D-012) is checked for whether this contract determines its expecte
 
 | Item | Where it will be specified |
 |---|---|
-| Stochastic modes: per-step sampling and event-time sampling (D-013) | Stochastic slice |
+| Stochastic modes: per-step sampling and event-time sampling (D-013) | Done (D-083, RC-13.5 to RC-13.8); rates varying between events later |
 | Algorithmic process execution (RUN-04) | Slice that needs it |
 | Field state discretization and solvers (D-010) | Slice that needs it |
 | Stiff and implicit solvers; multiple solvers in one model (06 sections 49-51) | When a reference program needs them |

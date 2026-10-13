@@ -89,6 +89,47 @@ pub enum Func {
     Atan2,
 }
 
+/// Distributions a `draw` samples (D-083, MK-10.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Dist {
+    /// `uniform(a, b)`: a quantity in `[a, b)`.
+    Uniform,
+    /// `normal(m, s)`: mean `m` (a quantity or a vector, by component), deviation `s`.
+    Normal,
+    /// `exponential(r)`: a waiting time at rate `r`, of the inverse dimension.
+    Exponential,
+    /// `bernoulli(p)`: true with probability `p`.
+    Bernoulli,
+    /// `integer(a, b)`: an integer from `a` to `b`, both included, equally likely.
+    Integer,
+    /// `poisson(m)`: a count with mean `m`.
+    Poisson,
+    /// `binomial(n, p)`: the number of successes in `n` trials of probability `p`.
+    Binomial,
+    /// `choice(x1, ..., xk)`: one of the arguments, equally likely.
+    Choice,
+}
+
+impl Dist {
+    pub fn name(self) -> &'static str {
+        match self {
+            Dist::Uniform => "uniform",
+            Dist::Normal => "normal",
+            Dist::Exponential => "exponential",
+            Dist::Bernoulli => "bernoulli",
+            Dist::Integer => "integer",
+            Dist::Poisson => "poisson",
+            Dist::Binomial => "binomial",
+            Dist::Choice => "choice",
+        }
+    }
+    pub fn from_name(s: &str) -> Option<Dist> {
+        Dist::ALL.into_iter().find(|d| d.name() == s)
+    }
+    pub const ALL: [Dist; 8] = [Dist::Uniform, Dist::Normal, Dist::Exponential, Dist::Bernoulli, Dist::Integer, Dist::Poisson, Dist::Binomial, Dist::Choice];
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Lambda {
     pub params: Vec<Type>,
@@ -151,6 +192,12 @@ pub enum Expr {
     },
     Apply {
         apply: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    /// A value drawn from a distribution, only in an event's condition and operations
+    /// (MK-10.4, D-083).
+    Draw {
+        draw: Dist,
         args: Vec<Expr>,
     },
     If {
@@ -292,7 +339,7 @@ impl Expr {
                 l.walk(f);
                 r.walk(f);
             }
-            Expr::Call { args, .. } | Expr::Tuple { tuple: args } => args.iter().for_each(|a| a.walk(f)),
+            Expr::Call { args, .. } | Expr::Draw { args, .. } | Expr::Tuple { tuple: args } => args.iter().for_each(|a| a.walk(f)),
             Expr::Apply { apply, args } => {
                 apply.walk(f);
                 args.iter().for_each(|a| a.walk(f));

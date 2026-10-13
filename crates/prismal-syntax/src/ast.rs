@@ -193,6 +193,8 @@ pub enum TriggerExpr {
     Start,
     Input(Name),
     Request(Vec<PayloadDecl>),
+    /// `random(λ)`: at random instants, at rate `λ` (D-083).
+    Random(Expr),
     /// `on E` or `on E(p: T)`, receiving `E`'s payload as `p` (D-050).
     On(Name, Vec<PayloadDecl>),
 }

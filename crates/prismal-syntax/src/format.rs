@@ -432,6 +432,7 @@ impl<'a> Printer<'a> {
                 };
                 format!("{name}({})", args.iter().map(p).collect::<Vec<_>>().join(", "))
             }
+            Expr::Draw { draw, args } => format!("{}({})", draw.name(), args.iter().map(p).collect::<Vec<_>>().join(", ")),
             Expr::Apply { apply, args } => format!("{}({})", w(apply, P_ATOM), args.iter().map(p).collect::<Vec<_>>().join(", ")),
             Expr::If { r#if, then, r#else } => format!("if {} then {} else {}", p(r#if), p(then), p(r#else)),
             Expr::Tuple { tuple } => format!("({})", tuple.iter().map(p).collect::<Vec<_>>().join(", ")),
@@ -772,6 +773,7 @@ impl<'a> Printer<'a> {
             Trigger::Start => "start".into(),
             Trigger::Input { binding } => format!("input({})", self.binding_name(binding)),
             Trigger::Request => "request".into(),
+            Trigger::Random { rate } => format!("random({})", self.expr(rate)),
             // Not expressible in the working syntax (MK-E13); printed as a crossing of the
             // condition's value so that the text shows what the IR holds.
             Trigger::Level { cond } => format!("crossing({})", self.expr(cond)),
@@ -1302,6 +1304,9 @@ impl<'a> Printer<'a> {
             if let Some(v) = v {
                 cfg.push(format!("{k} = {}", self.expr(v)));
             }
+        }
+        if let Some(seed) = r.config.seed {
+            cfg.push(format!("seed = {seed}"));
         }
         if !cfg.is_empty() {
             let _ = writeln!(s, "{INDENT}config {{ {} }}", cfg.join("; "));

@@ -25,7 +25,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "for", "view", "panel", "observe", "live", "over", "microstep", "show", "as", "drag", "click", "propose", "permit",
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
-    "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title",
+    "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -741,12 +741,21 @@ impl<'a> Parser<'a> {
         if self.eat_word("request") {
             return Ok(TriggerExpr::Request(self.payload_decl()?));
         }
+        // `random(λ)` (D-083), a contextual word: `random(p: T)` still follows an event named
+        // `random` with a payload.
+        if self.is_word("random") && matches!(self.peek_at(1), Tok::Punct("(")) {
+            let payload = matches!(self.peek_at(2), Tok::Ident(_)) && (matches!(self.peek_at(3), Tok::Punct(":")) || self.is_word_at(3, "in"));
+            if !payload {
+                self.bump();
+                return Ok(TriggerExpr::Random(paren(self)?));
+            }
+        }
         match self.peek() {
             Tok::Ident(s) if !is_reserved(s) => {
                 let e = self.name("an event name")?;
                 Ok(TriggerExpr::On(e, self.payload_decl()?))
             }
-            _ => Err(self.unexpected("a trigger (`rising(g)`, `falling(g)`, `crossing(g)`, `at`, `every`, `start`, `input(i)`, `request` or an event name)")),
+            _ => Err(self.unexpected("a trigger (`rising(g)`, `falling(g)`, `crossing(g)`, `at`, `every`, `start`, `input(i)`, `request`, `random(rate)` or an event name)")),
         }
     }
 

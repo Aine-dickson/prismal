@@ -12,7 +12,7 @@ pub mod units;
 pub use dim::{Dim, Ratio};
 pub mod elaborate;
 
-pub use expr::{Agg, Arm, BinOp, Builtin, Constant, Expr, Func, Guarded, Lambda};
+pub use expr::{Agg, Arm, BinOp, Builtin, Constant, Dist, Expr, Func, Guarded, Lambda};
 pub use units::Unit;
 
 use serde::{Deserialize, Serialize};
@@ -261,6 +261,8 @@ pub enum Trigger {
     Start,
     Input { binding: Id },
     Request,
+    /// The jumps of a Poisson process of rate `rate` (D-083, MK-15.15).
+    Random { rate: Expr },
     /// Invalid in a checked model (MK-E13); exists so that such IR can be represented and rejected.
     Level { cond: Expr },
 }

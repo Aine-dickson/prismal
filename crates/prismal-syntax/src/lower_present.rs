@@ -827,7 +827,11 @@ pub(crate) fn run(
             "h" => config.h = Some(cx.expr(v, &[])),
             "rtol" => config.rtol = Some(cx.expr(v, &[])),
             "atol" => config.atol = Some(cx.expr(v, &[])),
-            other => cx.err("SX-E03", format!("unknown run configuration `{other}`: `solver`, `h`, `rtol`, `atol`"), k.span),
+            "seed" => match &v.kind {
+                ExprKind::Num(x, None) if *x >= 0.0 && x.fract() == 0.0 && *x < 9.007_199_254_740_992e15 => config.seed = Some(*x as u64),
+                _ => cx.err("SX-E03", "a seed is a whole number, 0 or more (RC-13.1)", v.span),
+            },
+            other => cx.err("SX-E03", format!("unknown run configuration `{other}`: `solver`, `h`, `rtol`, `atol`, `seed`"), k.span),
         }
     }
     let end = r.until.as_ref().map(|u| cx.expr(u, &[]));
