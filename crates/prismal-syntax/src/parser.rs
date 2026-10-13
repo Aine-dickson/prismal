@@ -26,7 +26,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
-    "instrument",
+    "instrument", "grid", "boundary", "periodic",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -399,6 +399,27 @@ impl<'a> Parser<'a> {
         if self.is_word("event") {
             return Ok(vec![Member::Event(self.event_decl()?)]);
         }
+        // `grid rod(x: [0 m, 1 m], cells: 100)` (D-091); contextual, before a name.
+        if self.is_word("grid") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            self.bump();
+            let name = self.name("a grid name")?;
+            let args = self.args()?;
+            return Ok(vec![Member::Grid { name, args, span: self.since(start) }]);
+        }
+        // `boundary T { left = e; right = e }`, `boundary T periodic` (D-091).
+        if self.is_word("boundary") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            self.bump();
+            let field = self.name("a field name")?;
+            if self.eat_word("periodic") {
+                return Ok(vec![Member::Boundary { field, periodic: true, fixed: vec![], span: self.since(start) }]);
+            }
+            let fixed = self.block(|p| {
+                let edge = p.name("an edge (`left`, `right`)")?;
+                p.expect_punct("=")?;
+                Ok(vec![(edge, p.expr()?)])
+            })?;
+            return Ok(vec![Member::Boundary { field, periodic: false, fixed, span: self.since(start) }]);
+        }
         // `for b in drops { event ... }`: events repeated per member (D-057).
         if self.eat_word("for") {
             let var = self.name("a member name")?;
@@ -561,7 +582,18 @@ impl<'a> Parser<'a> {
         let start = self.span();
         let notes = self.notes_before(start.line);
         let name = self.name("a binding name")?;
-        let params = if self.is_punct("(") { Some(self.typed_params()?) } else { None };
+        // `T(x in rod)`: a field over a grid (D-091).
+        let over = if self.is_punct("(") && matches!(self.peek_at(1), Tok::Ident(_)) && matches!(self.peek_at(2), Tok::Ident(w) if w == "in") {
+            self.bump();
+            let x = self.name("a coordinate name")?;
+            self.expect_word("in")?;
+            let g = self.name("a grid name")?;
+            self.expect_punct(")")?;
+            Some((x, g))
+        } else {
+            None
+        };
+        let params = if over.is_none() && self.is_punct("(") { Some(self.typed_params()?) } else { None };
         self.expect_punct(":")?;
         let ty = self.type_expr()?;
         let value = if self.eat_punct("=") { Some(self.expr_no_in()?) } else { None };
@@ -592,7 +624,7 @@ impl<'a> Parser<'a> {
                 },
             }
         }
-        Ok(Decl { role, name, params, ty, value, range, modifiers, notes, span: self.since(start) })
+        Ok(Decl { role, name, params, over, ty, value, range, modifiers, notes, span: self.since(start) })
     }
 
     /// A flow, or `for b in row { flows }` (D-055).
@@ -667,6 +699,14 @@ impl<'a> Parser<'a> {
             member = Some(Expr { kind: ExprKind::Name(first.text.clone()), span: first.span });
             target = self.name("a state name")?;
         }
+        // `der(T(x))`: a field's flow with its coordinate (D-091).
+        let coord = if member.is_none() && self.eat_punct("(") {
+            let x = self.name("a coordinate name")?;
+            self.expect_punct(")")?;
+            Some(x)
+        } else {
+            None
+        };
         self.expect_punct(")")?;
         let contribute = if self.eat_punct("+=") {
             true
@@ -676,7 +716,7 @@ impl<'a> Parser<'a> {
             return Err(self.unexpected("`=` or `+=`"));
         };
         let expr = self.expr()?;
-        Ok(FlowStmt { target, member, each: None, contribute, expr, span: self.since(start) })
+        Ok(FlowStmt { target, member, each: None, coord, contribute, expr, span: self.since(start) })
     }
 
     fn event_decl(&mut self) -> P<EventDecl> {
@@ -839,9 +879,17 @@ impl<'a> Parser<'a> {
         let start = self.span();
         if self.eat_word("set") {
             let target = self.path()?;
+            // `set T(p) = e`: a field set in each cell (D-091).
+            let coord = if target.member.is_none() && target.component.is_none() && self.eat_punct("(") {
+                let x = self.name("a coordinate name")?;
+                self.expect_punct(")")?;
+                Some(x)
+            } else {
+                None
+            };
             self.expect_punct("=")?;
             let value = self.expr()?;
-            return Ok(OpStmt::Set { target, value, span: self.since(start) });
+            return Ok(OpStmt::Set { target, coord, value, span: self.since(start) });
         }
         if self.eat_word("contribute") {
             let target = self.path()?;
@@ -1464,6 +1512,10 @@ impl<'a> Parser<'a> {
             let args = self.args()?;
             return Ok(vec![PresItem::Instrument { name, args, span: self.since(start) }]);
         }
+        // `until t0 + 20 s`: the run's length (D-091), as in a case.
+        if self.eat_word("until") {
+            return Ok(vec![PresItem::Until(self.expr()?)]);
+        }
         // `title "Projectile motion"` (D-076).
         if self.eat_word("title") {
             return match self.peek().clone() {
@@ -1927,7 +1979,7 @@ fn belongs(word: &str) -> Option<&'static str> {
         "slider" | "number_input" | "toggle" | "button" | "label" => {
             "A control belongs in a presentation, inside `panel name { ... }` (or inside a view's braces)"
         }
-        "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" | "axes" | "grid"
+        "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" | "heatmap" | "axes" | "grid"
         | "formula" | "equation" | "table" | "group" => "A representation is drawn in a view: it belongs inside `view name: plot(...) { ... }` or `view name: spatial(...) { ... }` of a presentation",
         "view" | "panel" | "observe" | "instrument" | "permit" | "timeline" | "layout" => "This belongs directly inside a `presentation Name for Model { ... }`",
         "scene" | "beat" | "narrate" | "explore" | "hold" => "This belongs in a presentation's `timeline { ... }` (a lesson)",

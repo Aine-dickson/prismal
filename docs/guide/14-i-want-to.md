@@ -46,6 +46,22 @@ model Ball in Plane {                            // `in Plane` gives Point and V
 
 See [chapter 3](03-space-and-vectors.md) and [chapter 4](04-motion.md).
 
+### Give a quantity a value at every point
+
+Combine a **grid**, a **field** in state, a **flow** with `laplacian`, and a **boundary**.
+
+```prismal
+// model
+grid rod(x: [0 m, 1 m], cells: 50)
+state { T(x in rod): Real = 20 }
+flow der(T) = alpha * laplacian(T)
+boundary T { left = 100 }
+// presentation / a plot view
+function_graph(T)
+```
+
+In the plane, the grid takes `y: [...]` and the presentation draws `heatmap(T)` in a spatial view. See [chapter 16](16-fields.md).
+
 ### Add up several influences on one rate
 
 Write each influence as a **contribution** with `+=`, usually in a named **process**.

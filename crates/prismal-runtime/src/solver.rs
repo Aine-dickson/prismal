@@ -15,7 +15,7 @@ pub enum Dense {
     Dopri { r: [Vec<f64>; 5] },
     /// An Euler-Maruyama step (RC-13.9): the straight line between its two states, the
     /// mean of the Brownian bridge.
-    Linear { y0: Vec<f64>, y1: Vec<f64> },
+    Linear { y0: std::rc::Rc<Vec<f64>>, y1: std::rc::Rc<Vec<f64>> },
 }
 
 /// One accepted step. `t1` may be truncated at an event (RC-7.6); the interpolant stays the

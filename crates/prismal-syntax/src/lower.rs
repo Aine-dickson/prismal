@@ -46,7 +46,7 @@ pub fn named_dim(name: &str) -> Option<Dim> {
     })
 }
 
-const FUNCS: [(&str, Func, usize); 10] = [
+const FUNCS: [(&str, Func, usize); 14] = [
     ("sin", Func::Sin, 1),
     ("cos", Func::Cos, 1),
     ("tan", Func::Tan, 1),
@@ -57,6 +57,11 @@ const FUNCS: [(&str, Func, usize); 10] = [
     ("min", Func::Min, 2),
     ("max", Func::Max, 2),
     ("atan2", Func::Atan2, 2),
+    // Of fields (D-091); `min` and `max` of one field are its smallest and largest value.
+    ("laplacian", Func::Laplacian, 1),
+    ("gradient", Func::Gradient, 1),
+    ("integral", Func::Integral, 1),
+    ("mean", Func::Mean, 1),
 ];
 
 pub fn lower(file: &ast::File) -> (Document, SourceMap, Vec<Diag>) {
@@ -189,6 +194,8 @@ pub(crate) struct ModelCx<'a> {
     pub(crate) enums: HashMap<String, (Id, Vec<String>)>,
     /// Declared functions by name (D-048).
     pub(crate) functions: HashMap<String, Id>,
+    /// Grids by name (D-091).
+    pub(crate) grids: HashMap<String, Id>,
     /// While lowering an event with payloads: each value payload's name, the event, and its
     /// component when the event carries several (D-050, D-059). Member payloads are in `vars`.
     payload: Vec<(String, Id, Option<usize>)>,
@@ -226,6 +233,7 @@ impl<'a> ModelCx<'a> {
             events: m.events.iter().map(|ev| (ev.name.clone(), ev.id.clone())).collect(),
             enums: m.enums.iter().map(|e| (e.name.clone(), (e.id.clone(), e.cases.clone()))).collect(),
             functions: m.functions.iter().map(|f| (f.name.clone(), f.id.clone())).collect(),
+            grids: m.grids.iter().map(|g| (g.name.clone(), g.id.clone())).collect(),
             payload: vec![],
             diags,
             map,
@@ -265,6 +273,7 @@ impl<'a> ModelCx<'a> {
             events: HashMap::new(),
             enums: HashMap::new(),
             functions: HashMap::new(),
+            grids: HashMap::new(),
             payload: vec![],
             diags,
             map,
@@ -618,6 +627,11 @@ impl<'a> ModelCx<'a> {
                         self.err("SX-E09", format!("function `{}` declared twice", f.name.text), f.name.span);
                     }
                 }
+                Member::Grid { name, .. } => {
+                    if self.grids.insert(name.text.clone(), format!("{}.grid.{}", self.name, name.text)).is_some() {
+                        self.err("SX-E09", format!("grid `{}` declared twice", name.text), name.span);
+                    }
+                }
                 _ => {}
             }
         }
@@ -651,6 +665,9 @@ impl<'a> ModelCx<'a> {
                     }
                 }
                 Member::Flow(f) => self.flow(f, None),
+                Member::Grid { name, args, span } => self.grid(name, args, *span),
+                // After the declarations: below.
+                Member::Boundary { .. } => {}
                 Member::Process(p) => {
                     if processes.insert(p.name.text.clone(), p.span).is_some() {
                         self.err("SX-E09", format!("process `{}` declared twice", p.name.text), p.name.span);
@@ -705,6 +722,12 @@ impl<'a> ModelCx<'a> {
                 Member::Parts(ps) => self.parts_decl(ps),
             }
         }
+        // Boundary conditions attach to fields declared anywhere in the model (D-091).
+        for mem in &m.members {
+            if let Member::Boundary { field, periodic, fixed, .. } = mem {
+                self.boundary(field, *periodic, fixed);
+            }
+        }
         std::mem::replace(&mut self.model, build::ModelBuilder::new("").finish())
     }
 
@@ -751,9 +774,29 @@ impl<'a> ModelCx<'a> {
         };
         let mut ty = self.ty(&d.ty);
         let (mut init, mut def) = (None, None);
-        let locals: Vec<String> = d.params.iter().flatten().map(|(n, _)| n.text.clone()).collect();
+        let mut locals: Vec<String> = d.params.iter().flatten().map(|(n, _)| n.text.clone()).collect();
+        locals.extend(d.over.iter().map(|(x, _)| x.text.clone()));
         let value = d.value.as_ref().map(|v| self.expr(v, &locals));
-        if let Some(ps) = &d.params {
+        if let Some((x, g)) = &d.over {
+            // A field over a grid (D-091): its value a function of the cell's coordinate.
+            let grid = match self.grids.get(&g.text) {
+                Some(id) => id.clone(),
+                None => {
+                    self.err("SX-E03", format!("unknown grid `{}`", g.text), g.span);
+                    format!("{}.grid.{}", self.name, g.text)
+                }
+            };
+            if !matches!(role, Role::Continuous | Role::Derived) {
+                self.err("SX-E08", "a field is `state` or `derived` (MK-9.4)", d.name.span);
+            }
+            ty = Type::Field { grid, of: Box::new(ty) };
+            let body = value.map(|body| build::lambda_named(&[x.text.as_str()], vec![Type::real()], body));
+            if role == Role::Derived {
+                def = body;
+            } else {
+                init = body;
+            }
+        } else if let Some(ps) = &d.params {
             if role != Role::Derived {
                 self.err("SX-E08", "only derived bindings may have parameters (MK-10.7); use `derived`", d.name.span);
             }
@@ -782,6 +825,7 @@ impl<'a> ModelCx<'a> {
             notes: d.notes.clone(),
             when: None,
             combine: None,
+            boundary: None,
         };
         for m in &d.modifiers {
             match m {
@@ -815,6 +859,56 @@ impl<'a> ModelCx<'a> {
                 self.err("SX-E08", "a range (`in` or `where`) is written on a parameter (MK-12.4); use `constraint`", span);
             }
             self.push_constraint(&format!("{}_range", d.name.text), cond, None, Policy::Reject, Some(id), span);
+        }
+    }
+
+    /// `grid rod(x: [0 m, 1 m], cells: 100)` (MK-9.5, D-091).
+    fn grid(&mut self, name: &ast::Name, args: &[ast::Arg], span: Span) {
+        let id = format!("{}.grid.{}", self.name, name.text);
+        self.map.insert(id.clone(), span);
+        let (mut xr, mut yr, mut cells) = (None, None, vec![]);
+        for a in args {
+            match a.name.as_ref().map(|n| n.text.as_str()) {
+                Some(w @ ("x" | "y")) => match &a.value.kind {
+                    ExprKind::List(items) if items.len() == 2 => {
+                        let r = Some((self.expr(&items[0], &[]), self.expr(&items[1], &[])));
+                        if w == "x" {
+                            xr = r;
+                        } else {
+                            yr = r;
+                        }
+                    }
+                    _ => self.err("SX-E02", format!("a grid's axis is an interval: `{w}: [0 m, 1 m]`"), a.value.span),
+                },
+                // `cells: 100`, or one count per axis in the plane, `cells: (50, 25)`.
+                Some("cells") => match &a.value.kind {
+                    ExprKind::Tuple(items) => cells = items.iter().map(|e| self.expr(e, &[])).collect(),
+                    _ => cells = vec![self.expr(&a.value, &[])],
+                },
+                Some(other) => self.err("SX-E08", format!("`grid` takes no option `{other}`; its options are `x`, `y`, `cells`"), a.name.as_ref().unwrap().span),
+                None => self.err("SX-E08", "a grid takes named options: `grid rod(x: [0 m, 1 m], cells: 100)`", a.value.span),
+            }
+        }
+        let ranges: Vec<(Expr, Expr)> = xr.into_iter().chain(yr).collect();
+        if cells.len() == 1 && ranges.len() == 2 {
+            cells.push(cells[0].clone());
+        }
+        if ranges.is_empty() || cells.len() != ranges.len() {
+            self.err("SX-E08", "a grid has an axis and a number of cells, `grid rod(x: [0 m, 1 m], cells: 100)`, or two axes and a number per axis, `grid plate(x: [0 m, 1 m], y: [0 m, 1 m], cells: (50, 50))`", span);
+            return;
+        }
+        let axes = ranges.into_iter().zip(cells).map(|((lo, hi), cells)| GridAxis { lo, hi, cells }).collect();
+        self.model.grids.push(Grid { id, name: name.text.clone(), axes });
+    }
+
+    /// `boundary T { left = e }`, `boundary T periodic` (MK-9.6, D-091).
+    fn boundary(&mut self, field: &ast::Name, periodic: bool, fixed: &[(ast::Name, ast::Expr)]) {
+        let id = self.binding(field);
+        let fixed: Vec<FixedEdge> = fixed.iter().map(|(e, v)| FixedEdge { edge: e.text.clone(), value: self.expr(v, &[]) }).collect();
+        match self.model.bindings.iter_mut().find(|b| b.id == id) {
+            Some(b) if b.boundary.is_none() => b.boundary = Some(Boundary { periodic, fixed }),
+            Some(_) => self.err("SX-E09", format!("`{}` has two boundary statements", field.text), field.span),
+            None => {}
         }
     }
 
@@ -853,7 +947,14 @@ impl<'a> ModelCx<'a> {
                 }
             },
         };
-        let expr = self.expr(&f.expr, &[]);
+        // `der(T(x)) = e`: a function of the cell's coordinate (D-091).
+        let expr = match &f.coord {
+            Some(x) => {
+                let body = self.expr(&f.expr, std::slice::from_ref(&x.text));
+                build::lambda_named(&[x.text.as_str()], vec![Type::real()], body)
+            }
+            None => self.expr(&f.expr, &[]),
+        };
         if each.is_some() {
             self.vars.pop();
         }
@@ -979,6 +1080,10 @@ impl<'a> ModelCx<'a> {
 
     pub(crate) fn op(&mut self, o: &ast::OpStmt) -> Op {
         match o {
+            ast::OpStmt::Set { target, coord: Some(x), value, .. } => {
+                let body = self.expr(value, std::slice::from_ref(&x.text));
+                Op::Set { target: self.target(target), value: build::lambda_named(&[x.text.as_str()], vec![Type::real()], body) }
+            }
             ast::OpStmt::Set { target, value, .. } => Op::Set { target: self.target(target), value: self.expr(value, &[]) },
             ast::OpStmt::Contribute { target, value, .. } => Op::Contribute { target: self.target(target), value: self.expr(value, &[]) },
             ast::OpStmt::Emit { event, payload, .. } => {
@@ -1500,7 +1605,8 @@ impl<'a> ModelCx<'a> {
             return build::apply(callee, lowered);
         }
         if let Some((_, func, n)) = FUNCS.iter().find(|(s, _, _)| *s == name) {
-            if lowered.len() != *n {
+            let one_field = matches!(func, Func::Min | Func::Max) && lowered.len() == 1;
+            if lowered.len() != *n && !one_field {
                 self.err("SX-E08", format!("`{name}` takes {n} argument(s), found {}", lowered.len()), span);
             }
             return build::call(*func, lowered);

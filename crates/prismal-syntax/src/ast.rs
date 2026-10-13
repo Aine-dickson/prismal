@@ -56,6 +56,10 @@ pub enum Member {
     Object(ObjectDecl),
     /// `parts { ball: Ball { ... }  row: Ball[3] { ... } }` (D-055).
     Parts(Vec<PartDecl>),
+    /// `grid rod(x: [0 m, 1 m], cells: 100)` (MK-9.5, D-091).
+    Grid { name: Name, args: Vec<Arg>, span: Span },
+    /// `boundary T { left = e; right = e }` or `boundary T periodic` (MK-9.6, D-091).
+    Boundary { field: Name, periodic: bool, fixed: Vec<(Name, Expr)>, span: Span },
 }
 
 /// An object type: the body of a model, declared in one (D-055). A relation type has
@@ -106,6 +110,8 @@ pub struct Decl {
     pub name: Name,
     /// Parameters of a derived function value: `f(x: Real): Real = e` (MK-10.7).
     pub params: Option<Vec<(Name, TypeExpr)>>,
+    /// A field: `T(x in rod)`, its coordinate and grid (MK-9.4, D-091).
+    pub over: Option<(Name, Name)>,
     pub ty: TypeExpr,
     pub value: Option<Expr>,
     pub range: Option<Range>,
@@ -156,6 +162,8 @@ pub struct FlowStmt {
     pub member: Option<Expr>,
     /// `for b in row { ... }`: the loop variable and the collection.
     pub each: Option<(Name, Name)>,
+    /// `der(T(x))`: the coordinate of a field's flow (D-091).
+    pub coord: Option<Name>,
     pub contribute: bool,
     pub expr: Expr,
     pub span: Span,
@@ -230,7 +238,8 @@ pub struct Path {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum OpStmt {
-    Set { target: Path, value: Expr, span: Span },
+    /// `set x = e`; `set T(p) = e` sets a field in each cell (D-091).
+    Set { target: Path, coord: Option<Name>, value: Expr, span: Span },
     Contribute { target: Path, value: Expr, span: Span },
     Emit { event: Name, payload: Option<Expr>, span: Span },
     /// `create drops { pos = p }` (D-057).
@@ -398,6 +407,8 @@ pub enum PresItem {
     Layout(LayoutNode),
     /// `title "..."` (D-076).
     Title(String),
+    /// `until t0 + 20 s`: how long the presentation's run lasts (D-091).
+    Until(Expr),
     /// `instrument ruler(resolution: 1 mm, range: [0 m, 1 m], noise: 2 mm)` (PK-3.7, D-087).
     Instrument { name: Name, args: Vec<Arg>, span: Span },
 }

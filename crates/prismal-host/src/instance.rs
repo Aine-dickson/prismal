@@ -42,10 +42,22 @@ struct Lesson {
 
 impl Lesson {
     fn replay(prog: &Program, pres: &str, medium: Medium, inputs: Vec<Input>) -> Result<Lesson, Json> {
-        let pb = play(prog, pres, Config::until(LESSON_HORIZON), medium, inputs.clone()).map_err(|ds| pdiags(prog, &ds))?;
+        let p = prog.presentation(pres);
+        let horizon = declared_until(prog, p).unwrap_or(LESSON_HORIZON);
+        let pb = play(prog, pres, Config::until(horizon), medium, inputs.clone()).map_err(|ds| pdiags(prog, &ds))?;
         Ok(Lesson { pres: pres.into(), medium, inputs, pb })
     }
 }
+
+/// A presentation's `until`, seconds after `t0` (D-091).
+fn declared_until(prog: &Program, p: &prismal_ir::present::Presentation) -> Option<f64> {
+    let e = p.until.as_ref()?;
+    prismal_present::number(prog.model(&p.model), e).ok()
+}
+
+/// The session horizon of a model with a large state (fields, D-091), unless a presentation
+/// says otherwise: each second of such a run is costly to compute and keep.
+pub const LARGE_SESSION_HORIZON: f64 = 20.0;
 
 fn pdiags(_prog: &Program, ds: &[prismal_present::PDiag]) -> Json {
     Json::Array(ds.iter().map(|d| json!({ "code": d.code, "message": d.message, "element": d.element })).collect())
@@ -155,7 +167,8 @@ impl Instance {
             // A dynamic model runs to the session horizon, or to the end of the longest time
             // axis the presentation plots; a static one has one instant.
             let cm = self.prog.model(&pres.model);
-            let horizon = match prismal_present::frame::Projector::new(cm, &pres) {
+            let base = if cm.n_y() > prismal_runtime::run::LARGE_STATE { LARGE_SESSION_HORIZON } else { SESSION_HORIZON };
+            let plotted = match prismal_present::frame::Projector::new(cm, &pres) {
                 Ok(pj) => pj
                     .views
                     .iter()
@@ -163,9 +176,10 @@ impl Instance {
                         ViewCtx::Plot { x, dims, .. } if dims.0 == prismal_ir::Dim::time() => Some(x.1),
                         _ => None,
                     })
-                    .fold(SESSION_HORIZON, f64::max),
-                Err(_) => SESSION_HORIZON,
+                    .fold(base, f64::max),
+                Err(_) => base,
             };
+            let horizon = declared_until(&self.prog, &pres).unwrap_or(plotted);
             let i = Interactive::new(&self.prog, &pres.id, Config::until(horizon)).map_err(|ds| pdiags(&self.prog, &ds))?;
             Mode::Interactive(Box::new(i))
         };
@@ -1101,6 +1115,10 @@ fn extent<'a>(shapes: impl Iterator<Item = &'a Shape>) -> [f64; 4] {
             }
             Shape::Polyline { points } | Shape::Polygon { points } => points.iter().for_each(add),
             Shape::Ellipse { .. } => s.curve_points(64).iter().for_each(add),
+            Shape::Raster { from, to, .. } => {
+                add(from);
+                add(to);
+            }
             Shape::Group { members } => members.iter().for_each(|m| walk(&m.shape, add)),
             _ => {}
         }

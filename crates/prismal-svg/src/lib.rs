@@ -307,7 +307,7 @@ impl Map {
     }
 }
 
-const DRAWN: [&str; 8] = ["point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note"];
+const DRAWN: [&str; 9] = ["point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note", "raster"];
 
 fn view_block(vl: &Json, vf: &Json, clip: usize, opts: &Options) -> Block {
     let th = &opts.theme;
@@ -538,6 +538,21 @@ fn arrow_head(from: [f64; 2], to: [f64; 2], size: f64) -> Option<String> {
     ))
 }
 
+/// The colour of `v` in `[0, 1]` on a palette of the frames (D-091): `sequential`, from dark
+/// blue through green to yellow (perceptually ordered, readable without colour vision of
+/// red and green), or `diverging`, blue through near white to red. The web player uses the
+/// same stops.
+pub fn palette(name: &str, v: f64) -> String {
+    const SEQ: [[f64; 3]; 5] = [[68.0, 1.0, 84.0], [59.0, 82.0, 139.0], [33.0, 145.0, 140.0], [94.0, 201.0, 98.0], [253.0, 231.0, 37.0]];
+    const DIV: [[f64; 3]; 3] = [[59.0, 76.0, 192.0], [242.0, 242.0, 242.0], [180.0, 4.0, 38.0]];
+    let stops: &[[f64; 3]] = if name == "diverging" { &DIV } else { &SEQ };
+    let x = v.clamp(0.0, 1.0) * (stops.len() - 1) as f64;
+    let i = (x.floor() as usize).min(stops.len() - 2);
+    let w = x - i as f64;
+    let c: Vec<u8> = (0..3).map(|k| (stops[i][k] + w * (stops[i + 1][k] - stops[i][k])).round() as u8).collect();
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
 /// Draws one representation of a spatial or plot view, as the web player's `drawRep`.
 fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme) {
     let shape = s(&r["shape"]);
@@ -692,6 +707,21 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
                 let piece = all[w[0].min(all.len())..w[1].min(all.len())].iter().map(|p| map.to(pt(p))).map(|p| format!("{},{}", n(p[0]), n(p[1]))).collect::<Vec<_>>().join(" ");
                 let _ = write!(out, "<polyline class=\"{cls}\" points=\"{piece}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{}\"{extra}/>", n(width * u));
             }
+        }
+        // Coloured cells of a field in the plane (D-091), one rectangle per cell.
+        "raster" => {
+            let (from, to) = (map.to(pt(&r["from"])), map.to(pt(&r["to"])));
+            let (cols, rows) = (r["cols"].as_u64().unwrap_or(1) as usize, r["rows"].as_u64().unwrap_or(1) as usize);
+            let (cw, ch) = ((to[0] - from[0]) / cols as f64, (to[1] - from[1]) / rows as f64);
+            let pal = s(&r["palette"]);
+            let _ = write!(out, "<g class=\"raster\" shape-rendering=\"crispEdges\">");
+            for (k, v) in arr(&r["values"]).iter().enumerate() {
+                let (i, j) = ((k % cols) as f64, (k / cols) as f64);
+                let (x0, y0) = (from[0] + i * cw, from[1] + j * ch);
+                let (x, y) = (x0.min(x0 + cw), y0.min(y0 + ch));
+                let _ = write!(out, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>", n(x), n(y), n(cw.abs() + 0.5), n(ch.abs() + 0.5), palette(pal, v.as_f64().unwrap_or(0.0)));
+            }
+            out.push_str("</g>");
         }
         "polygon" => {
             let _ = write!(

@@ -32,6 +32,10 @@ pub struct Presentation {
     /// The presentation's title, shown above its views (D-076).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// How long the presentation's run lasts, `until t0 + 20 s` (PK-10.1a, D-091); hosts
+    /// choose otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<Expr>,
 }
 
 /// A page layout (PK-7.4a, D-063): views side by side in a row or one below the other in a

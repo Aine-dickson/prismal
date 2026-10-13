@@ -269,6 +269,10 @@ pub fn print(e: &Expr, cm: &CModel, params: &[String]) -> String {
                 Func::Min => "min",
                 Func::Max => "max",
                 Func::Atan2 => "atan2",
+                Func::Laplacian => "laplacian",
+                Func::Gradient => "gradient",
+                Func::Integral => "integral",
+                Func::Mean => "mean",
             };
             format!("{name}({})", args.iter().map(p).collect::<Vec<_>>().join(", "))
         }

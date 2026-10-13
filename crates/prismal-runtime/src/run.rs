@@ -192,6 +192,9 @@ pub struct Run {
 /// results).
 pub const SNAPSHOT_STEPS: usize = 8;
 
+/// Above this many continuous state components a run stores its steps compactly (RC-6.2a).
+pub const LARGE_STATE: usize = 4096;
+
 /// Everything needed to continue a run exactly from the top of its evolution loop at a
 /// committed instant (RC-14.1): the state, the event machinery, the solver's proposed next
 /// step, and how much of the trajectory, logs and action list lies before it.
@@ -352,7 +355,7 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
         };
         let v = compile_expr(cm, e, Some(&cm.bindings[i].ty))
             .map_err(|d| format!("{d:?}"))
-            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] }).map_err(|s| s.cause));
+            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None }).map_err(|s| s.cause));
         match v {
             Ok(v) => overrides.push((i, v)),
             Err(m) => {
@@ -587,13 +590,39 @@ impl<'a> Engine<'a> {
         self.diag(Category::Model, format!("the rate of `{}` is negative ({r})", self.cm.events[ei].name), Some(&self.cm.events[ei].id))
     }
 
+    /// Stores an accepted step of the trajectory. A run with more than `LARGE_STATE`
+    /// components (fields, D-091) keeps each step as the straight line between its two
+    /// states, each state shared with the neighbouring step: one state per step instead of
+    /// the solver's interpolant (RC-6.2a). Values at step ends are exact either way.
+    fn keep(&mut self, step: Step, base: usize) {
+        let n = self.cm.n_y();
+        if n <= LARGE_STATE || matches!(step.dense, Dense::Linear { .. }) {
+            self.run.segments.push(Segment { step, base });
+            return;
+        }
+        let prev = self.run.segments.last().and_then(|s| match &s.step.dense {
+            Dense::Linear { y1, .. } if s.step.t1 == step.t0 => Some(y1.clone()),
+            _ => None,
+        });
+        let at = |t: f64| {
+            let mut y = vec![0.0; n];
+            step.eval(t, &mut y);
+            std::rc::Rc::new(y)
+        };
+        let y0 = prev.unwrap_or_else(|| at(step.t0));
+        let y1 = at(step.t1);
+        let mut compact = Step::new(step.t0, step.t1 - step.t0, Dense::Linear { y0, y1 });
+        compact.t1 = step.t1;
+        self.run.segments.push(Segment { step: compact, base });
+    }
+
     /// The rates of the random events `which` at `t` inside a step (RC-13.8a). A negative
     /// rate is a model failure, reported at the first instant of the step found negative, by
     /// bisection to the time tolerance.
     fn rates_in_step(&self, step: &Step, scratch: &[Value], t: f64, which: &[usize], out: &mut [f64]) -> Result<(), RunDiag> {
         let rates = |t: f64, out: &mut [f64]| -> Result<Option<usize>, RunDiag> {
             let vals = self.state_in_step(step, scratch, t).map_err(|s| self.diag(Category::Model, s.cause, None))?;
-            let c = Ctx { vals: &vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: None, noise: &[] };
+            let c = Ctx { vals: &vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: None, noise: &[], point: None };
             for (k, (o, &ei)) in out.iter_mut().zip(which).enumerate() {
                 let Some(CTrigger::Random { rate, .. }) = &self.cm.events[ei].trigger else { unreachable!() };
                 *o = rate.eval(&c).map_err(|s| self.diag(Category::Model, s.cause, Some(&self.cm.events[ei].id)))?.num();
@@ -707,7 +736,7 @@ impl<'a> Engine<'a> {
     }
 
     fn ctx<'v>(&'v self, vals: &'v [Value]) -> Ctx<'v> {
-        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: Some(Draws { seed: self.cfg.seed, due: &self.due_k }), noise: &[] }
+        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: Some(Draws { seed: self.cfg.seed, due: &self.due_k }), noise: &[], point: None }
     }
 
     fn snapshot(&mut self) {
@@ -833,11 +862,21 @@ impl<'a> Engine<'a> {
         let der = self.cm.der_values(&self.vals, self.t, self.cfg.t0).ok();
         for q in &self.cm.equations {
             let Some(tol) = q.check_tol else { continue };
-            let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] };
-            let res = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
-                (Ok(a), Ok(b)) => distance(&a, &b),
-                _ => None,
-            };
+            // An equation over a field: the largest residual over its cells (D-091).
+            let cells = q.field.map(|g| g.cells()).unwrap_or(1);
+            let mut res = Some(0.0f64);
+            for k in 0..cells {
+                let args = q.field.map(|g| [g.coord(k)]);
+                let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: args.as_ref().map(|a| &a[..]).unwrap_or(&[]), payloads: &[], draws: None, noise: &[], point: q.field.map(|_| k) };
+                let r = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
+                    (Ok(a), Ok(b)) => distance(&a, &b),
+                    _ => None,
+                };
+                res = match (res, r) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    _ => None,
+                };
+            }
             if res.map(|r| r > tol).unwrap_or(true) {
                 let message = match res {
                     Some(r) => format!("check equation `{}` at t = {} s: residual {r:.3e} exceeds {tol:e}", q.name, self.t),
@@ -876,7 +915,7 @@ impl<'a> Engine<'a> {
         if a > step.t0 {
             if let Some(v) = state(self, a) {
                 step.t1 = a;
-                self.run.segments.push(Segment { step, base });
+                self.keep(step, base);
                 self.t = a;
                 self.n = 0;
                 self.vals = v;
@@ -971,7 +1010,7 @@ impl<'a> Engine<'a> {
                 rhs.f(self.t, &y, &mut dy).map_err(|s| self.diag(Category::Model, s.cause, None))?;
                 let y1: Vec<f64> = y.iter().zip(&dy).map(|(a, d)| a + hs * d).collect();
                 rhs.noise.clear();
-                let step = Step::new(self.t, hs, Dense::Linear { y0: y.clone(), y1: y1.clone() });
+                let step = Step::new(self.t, hs, Dense::Linear { y0: std::rc::Rc::new(y.clone()), y1: std::rc::Rc::new(y1.clone()) });
                 (y1, step, None)
             } else {
                 match &self.cfg.solver {
@@ -1073,7 +1112,7 @@ impl<'a> Engine<'a> {
                 step.t1 = te;
                 let mut ye = vec![0.0; n_y];
                 step.eval(te, &mut ye);
-                self.run.segments.push(Segment { step, base });
+                self.keep(step, base);
                 self.t = te;
                 self.n = 0;
                 cm.load_y(&mut self.vals, &ye);
@@ -1100,7 +1139,7 @@ impl<'a> Engine<'a> {
                 return Err(self.fail_in_step(step, base, d));
             }
             self.advance_clocks(&varying, &clocks_total, t1);
-            self.run.segments.push(Segment { step, base });
+            self.keep(step, base);
             self.t = t1;
             self.n = 0;
             self.vals = v1;
@@ -1139,7 +1178,7 @@ impl<'a> Engine<'a> {
 
     /// The guard of crossing event `ei` in a state at `t`.
     fn guard_in(&self, vals: &[Value], t: f64, ei: usize) -> Result<f64, Status> {
-        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] };
+        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
         match &self.cm.events[ei].trigger {
             Some(CTrigger::Crossing { guard, .. }) => Ok(guard.eval(&c)?.num()),
             _ => unreachable!(),
@@ -1389,6 +1428,14 @@ impl<'a> Engine<'a> {
                         None => contributions.push((*binding, combine.clone(), vec![v])),
                     }
                 }
+                COp::SetField { binding, grid, value } => {
+                    if contributions.iter().any(|c| c.0 == *binding) || destroyed.contains(binding) || targets.iter().any(|(b, _)| b == binding) {
+                        return Err(conflict(self, *binding));
+                    }
+                    targets.push((*binding, None));
+                    let v = prismal_kernel::per_cell(value, grid, &self.ctx(&self.vals)).map_err(|s| self.diag(Category::Model, s.cause, None))?;
+                    proposed[*binding] = v;
+                }
                 COp::Set { binding, component, value } => {
                     if contributions.iter().any(|c| c.0 == *binding) {
                         return Err(conflict(self, *binding));
@@ -1489,7 +1536,7 @@ impl<'a> Engine<'a> {
                 }
                 // The environment's value reads nothing of the model but its constants.
                 let value = match compile_expr(self.cm, e, Some(&self.cm.bindings[i].ty)) {
-                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] }),
+                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None }),
                     Err(d) => return reject(self, format!("the value of `{}`: {}", self.cm.bindings[i].name, d.iter().map(|x| x.message.clone()).collect::<Vec<_>>().join("; "))),
                 };
                 let v = match value {
@@ -1516,7 +1563,7 @@ impl<'a> Engine<'a> {
                 let payload = match (action, declared) {
                     (Action::Request(_), None) => None,
                     (Action::RequestWith(_, e), Some(p)) => match compile_expr(self.cm, e, Some(&p.ty)) {
-                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] }) {
+                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None }) {
                             Ok(v) => Some(v),
                             Err(s) => {
                                 let rd = self.diag(Category::Intervention, format!("the payload of `{}`: {}", self.cm.events[ei].name, s.cause), Some(id));
@@ -1549,7 +1596,7 @@ impl<'a> Engine<'a> {
                 if let Some(c) = &self.cm.events[ei].enable {
                     let mut payloads = vec![None; self.cm.events.len()];
                     payloads[ei] = payload.clone();
-                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads, draws: None, noise: &[] };
+                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads, draws: None, noise: &[], point: None };
                     let why = match c.eval(&ctx) {
                         Ok(Value::Bool(true)) => None,
                         Ok(_) => Some(self.not_enabled(ei, payload.as_ref())),
@@ -1591,7 +1638,7 @@ impl Run {
 
     fn eval_on(&self, c: &CExpr, vals: &[Value], t: f64) -> Result<Value, Status> {
         let der = self.model.der_values(vals, t, self.config.t0).ok();
-        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[], draws: None, noise: &[] })
+        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None })
     }
 
     /// The state at time `t`: the final microstep at an event time (RC-4.3), otherwise the

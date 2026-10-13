@@ -31,6 +31,9 @@ Candidate A amended as accepted in D-028: A's keyword-led statements, with group
 | `flow { for b in c { der(b.x) = e ... } }` | flows written by the container for each member (MK-8.8) |
 | `parts { c: T[max m]  d: T[n, max m] { ... } }` | a collection whose membership changes (MK-8.2a, D-057): none or `n` members at the start, at most `m` made in a run |
 | `for b in c { event E on ... { ops } }` | an event of the model repeated for each member (MK-15.1b) |
+| `grid g(x: [a, b], cells: n)`, `grid g(x: [a, b], y: [c, d], cells: (n, m))` | a grid of cells on a line or in the model's plane (MK-9.5, D-091) |
+| `state { T(x in g): R = e }`, `derived { q(x in g): R = e }`, `der(T) = e`, `der(T(x)) = e`, `set T(p) = e` | a field over a grid, its flow and a pointwise set; `laplacian(T)`, `gradient(T)` in them, `T(x)`, `integral(T)`, `mean(T)`, `min(T)`, `max(T)` anywhere (MK-9.4 to MK-9.8, D-091) |
+| `boundary T { left = e; right = e; bottom = e; top = e }`, `boundary T periodic` | a field's boundary conditions; edges not named are insulated (MK-9.6) |
 | `relation R(a in c, b in d) { ... }` | relation type (MK-8.5a, D-058); its endpoints are members of `c` and `d`; a part of type `R` is a relation set |
 
 Every block keyword also has a one-line form for a single declaration (`param g: Acceleration = 9.81 m/s^2`, `flow der(x) = v`). Both parse to the same IR; the formatter prints blocks.
@@ -57,6 +60,8 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 | `view v: ... { on click as q request E(q) ... }` | a view that requests an event with the point clicked, where no representation takes the click (D-060) |
 | `group(at: P, rotate: θ, scale: k) [as name] { reps }` | representations placed, turned and scaled together; members are written in the group's frame (D-043) |
 | `trace(pos every 0.02 s)`, `series_plot(y every 0.01 s)` | a sampled source: `expr every Δ`, only as a representation's argument (PK-6.3a) |
+| `heatmap(T, range: [a, b])` | a field in the plane drawn as coloured cells in a spatial view; a field on a line is a `function_graph(T)` (PK-6.3f, D-091) |
+| `until t0 + 20 s` (in a presentation) | how long the presentation's run lasts, as in a case (PK-10.1a, D-091) |
 | `histogram(face on roll)`, `histogram(h every 1 s)` | a histogram of one run: the values at each occurrence of an event, or sampled, up to the instant shown (PK-6.3e, D-089) |
 | `histogram(n at t0 + 7 s over 200 runs, bins: 20)` | an ensemble source: `expr at τ over n runs`, the values in `n` runs with consecutive seeds; also an observation's schedule, `ends = n at τ over n runs` (PK-3.8, D-084) |
 | `instrument ruler(resolution: 1 cm, range: [0 m, 2 m], noise: 2 cm)`; `ruler(y) every 0.05 s` | an instrument, and a source read through it in an observation, a sampled or an ensemble source: rounded, limited, with normal noise (PK-3.7, D-087) |

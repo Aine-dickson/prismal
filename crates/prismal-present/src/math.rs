@@ -158,10 +158,12 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
         Expr::Field { .. } | Expr::Part { .. } | Expr::Item { .. } | Expr::Var { .. } | Expr::Aggregate { .. } | Expr::Extreme { .. } | Expr::End { .. } | Expr::Other { .. } | Expr::Has { .. } | Expr::Pick { .. } => MathBox::Text { text: "…".into() },
         Expr::Const { .. } => ident("π"),
         Expr::Origin { .. } => upright("O"),
-        Expr::Der { der } => MathBox::Frac {
-            num: Box::new(row(vec![ident("d"), ident(&symbol(cm, der))])),
-            den: Box::new(row(vec![ident("d"), ident("t")])),
-        },
+        // A field's rate is a partial derivative, ∂T/∂t (D-091).
+        Expr::Der { der } => {
+            let field = cm.index.get(der).is_some_and(|&i| matches!(cm.bindings[i].ty, prismal_ir::Type::Field { .. }));
+            let d = if field { "∂" } else { "d" };
+            MathBox::Frac { num: Box::new(row(vec![ident(d), ident(&symbol(cm, der))])), den: Box::new(row(vec![ident(d), ident("t")])) }
+        }
         Expr::Neg { neg } => row(vec![op("−", OpKind::Prefix), wrap(neg, 6)]),
         Expr::Not { not } => row(vec![op("¬", OpKind::Prefix), wrap(not, 6)]),
         Expr::Norm { norm } => MathBox::Fenced { open: "|".into(), close: "|".into(), body: Box::new(p(norm)) },
@@ -219,6 +221,10 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
         Expr::Call { call: Func::Sqrt, args } => MathBox::Sqrt { body: Box::new(row(args.iter().map(p).collect())) },
         Expr::Call { call: Func::Abs, args } => MathBox::Fenced { open: "|".into(), close: "|".into(), body: Box::new(list(args.iter().map(p).collect())) },
         Expr::Draw { draw, args } => row(vec![upright(draw.name()), parens(list(args.iter().map(p).collect()))]),
+        // Field operators as physics texts write them (D-091): ∇²T, ∇T, ∫T dx.
+        Expr::Call { call: Func::Laplacian, args } => row(vec![upright("∇²"), wrap(&args[0], 8)]),
+        Expr::Call { call: Func::Gradient, args } => row(vec![upright("∇"), wrap(&args[0], 8)]),
+        Expr::Call { call: Func::Integral, args } => row(vec![upright("∫"), MathBox::Space { em: 0.15 }, wrap(&args[0], 8), MathBox::Space { em: 0.15 }, upright("dx")]),
         Expr::Call { call, args } => {
             let name = match call {
                 Func::Sin => "sin",
@@ -229,7 +235,8 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
                 Func::Min => "min",
                 Func::Max => "max",
                 Func::Atan2 => "atan2",
-                Func::Sqrt | Func::Abs => unreachable!(),
+                Func::Mean => "mean",
+                Func::Sqrt | Func::Abs | Func::Laplacian | Func::Gradient | Func::Integral => unreachable!(),
             };
             row(vec![upright(name), parens(list(args.iter().map(p).collect()))])
         }

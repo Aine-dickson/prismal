@@ -317,7 +317,11 @@ The first slice (D-001) exercises neither dynamic collections nor relations. The
 - **MK-9.1** A **domain** is a set over which a function or field is defined. Domain forms: interval of a quantity (`[0 m, 5 m]`), integer range, finite set, enumeration, space (section 4), product of domains, and the members of a collection. A domain is distinct from a value (R-11).
 - **MK-9.2** Time is a domain: the line of `Instant<T>`. A run covers an interval of it.
 - **MK-9.3** A **formula field** is a function value whose domain is a space or other domain, for example `gravity : Point<Plane> -> Vector<Plane, L/T^2>`. It is an ordinary function (section 10) and has no storage (D-010).
-- **MK-9.4** A **field state** is a state binding whose value is a function over a domain and which evolves. Its discretization (grid or mesh, resolution, boundary treatment) MUST be declared in the model's execution configuration and is visible to the author (D-010). Field state is outside the first slice; its evolution rules are specified with the slice that needs it.
+- **MK-9.4** A **field state** is a state binding whose value is a function over a domain and which evolves. Its discretization (grid or mesh, resolution, boundary treatment) MUST be declared in the model and is visible to the author (D-010). In v0.2 (D-091) the domain is a grid (MK-9.5) and a field holds a number or quantity in each cell: `state { T(x in g): R = e }`, the initial value a function of the cell's coordinate `x`, evaluated in each cell. A **derived field** `derived { q(x in g): R = e }` is defined in each cell the same way. A field is not a parameter, input or discrete state.
+- **MK-9.5** (D-091) A **grid** `grid g(x: [a, b], cells: n)` cuts an interval of a quantity into `n` equal cells; `grid g(x: [a, b], y: [c, d], cells: (n, m))` (or `cells: n` for both axes) cuts a rectangle of the model's plane, which requires the model to be `in` a space of dimension 2, with lengths on both axes. Bounds and counts are constant numbers; a grid has at most a million cells. A field's value is the value at each cell's centre; the coordinate of a cell is its centre, a quantity on a line and a point in the plane. Cells are numbered along `x` first.
+- **MK-9.6** (D-091) **Boundary conditions** `boundary T { left = e; right = e; bottom = e; top = e }` hold the named edges of field `T` at values (expressions of the type of `T`'s values, evaluated when used; they read no field); edges not named are **insulated** (no flux). `boundary T periodic` wraps the grid around on every axis. The edges of a line are `left` and `right`; of a rectangle also `bottom` and `top` (MK-E33).
+- **MK-9.7** (D-091) **Pointwise expressions.** A field's initial value, definition, flow (`der(T) = e`, or `der(T(x)) = e` to name the coordinate), a `set T(p) = e` in a handler and an equation that reads a field are evaluated in each cell of the field's grid: there a field of that grid reads its value in the cell, and `der(T)` its rate (a field of another grid is MK-E31). `laplacian(T)` and `gradient(T)` are written only there (MK-E32) and are second-order central differences across the cell: `(T[i-1] - 2 T[i] + T[i+1]) / h²` summed over the axes, and `(T[i+1] - T[i-1]) / 2h` per axis (a vector of the plane in two dimensions). Beyond an edge held at `g` the difference reads the ghost value `2 g - T` of the cell inside; beyond an insulated edge, the cell inside; on a periodic grid, the cell on the far side. A pointwise `set` reads the values before the transition; it holds no draw (MK-E28), and a field's flow holds no `noise` (MK-E29): each cell would need its own random numbers.
+- **MK-9.8** (D-091) **Reading a field.** `T(x)` is the field at coordinate `x`: linear between cell centres (bilinear in the plane), reaching the edge value on the edges (held: its value; insulated: the edge cell; periodic: the mean of the two edge cells), unavailable outside the grid. `integral(T)` is the sum of the cells times the cell's length (area), `mean(T)` their mean, `min(T)` and `max(T)` their extremes. A field is drawn by `function_graph(T)` on a line and `heatmap(T)` in the plane (PK-6.3f).
 
 ---
 
@@ -588,6 +592,9 @@ The kernel defines these static errors. They are detected before execution, on t
 | MK-E24 | Event payload without a source: not requested, and not following an event that carries a payload of the same type (members of the same collection) | MK-15.1a, MK-15.1c |
 | MK-E25 | `index` read outside the overrides of a collection | MK-8.3a |
 | MK-E26 | A member that does not exist or is not constant, a part used as a value, an unknown object type, a derived binding given a value in a part, or an aggregate without a value | MK-7.13, MK-8.3a |
+| MK-E31 | A field of another grid read in a pointwise expression | MK-9.7 |
+| MK-E32 | `laplacian` or `gradient` outside a pointwise expression of the field's grid | MK-9.7 |
+| MK-E33 | A boundary of a binding that is not a field, an edge the grid lacks or held twice, or periodic with held edges | MK-9.6 |
 | MK-E29 | `noise` outside a flow | MK-14.16 |
 | MK-E30 | A flow that is not linear in each `noise` | MK-14.16 |
 
@@ -776,7 +783,7 @@ Positions that elaborate accepted decisions without changing them are specified 
 | Random streams and stochastic processes (D-013) | Done: MK-10.4, MK-15.15 to MK-15.17, RC-13.5 to RC-13.8 (D-083); rates that vary between events, MK-15.16, RC-13.8a (D-086); white noise in flows, MK-14.16, RC-13.9 (D-090) |
 | Random rates that depend on continuous state or time | Later extension of D-083 |
 | Algorithmic process mode (RUN-04) | Slice that needs it |
-| Field state evolution (D-010) | Slice that needs it |
+| Field state evolution (D-010) | Done on grids of one and two axes: MK-9.4 to MK-9.8 (D-091); meshes, vector fields, fields in objects, noise in fields later |
 | Acausal equations, constraint enforcement (D-007, D-020) | Later extension |
 | Quantity kinds of equal dimension (torque and energy) | Open; to be raised when a reference program needs it |
 | Checks and measurements evaluated at event instants (19.1) | Resolved: `03-presentation-kernel.md` PK-3.4 (`on(E)` observations) and section 4 (expectations) |
