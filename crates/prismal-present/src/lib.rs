@@ -19,6 +19,7 @@ pub mod expect;
 pub mod frame;
 pub mod interact;
 pub mod math;
+pub mod measure;
 pub mod text;
 pub mod timeline;
 

@@ -113,6 +113,26 @@ pub fn check_presentation(cm: &CModel, p: &Presentation) -> Vec<PDiag> {
             }
             Schedule::Live | Schedule::Run => {}
         }
+        // PK-3.7 (D-087): an instrument reads an expression at instants.
+        if let Some(id) = &o.instrument {
+            let problem = match (&o.source, &o.schedule) {
+                (_, Schedule::Live) => Some("an instrument reads at instants: observe `every`, `at`, `on` or `over`, not `live`".to_string()),
+                (Source::Expr { expr: e }, _) => match compile_expr(cm, e, None) {
+                    Ok((_, ty)) => crate::measure::meter(cm, &p.instruments, Some(id), e, &ty).err(),
+                    Err(_) => None,
+                },
+                _ => Some("an instrument reads values, not logs".to_string()),
+            };
+            if let Some(m) = problem {
+                out.push(PDiag { code: "PK-E04", message: format!("{m} (PK-3.7)"), element: o.id.clone() });
+            }
+        }
+    }
+    // Every instrument is valid for some value, so that an unused one is still checked.
+    for i in &p.instruments {
+        for e in i.resolution.iter().chain(i.noise.iter()).chain(i.range.iter().flat_map(|(a, b)| [a, b])) {
+            expr(cm, e, None, &i.id, &mut out);
+        }
     }
     let Some(projector) = projector else { return out };
     let mut rep_ids: Vec<String> = vec![];
@@ -143,7 +163,7 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                 }
                 let ctx = pr.ctx(view.as_deref());
                 for r in rs {
-                    if let Err(d) = compile_rep(cm, &ctx, r) {
+                    if let Err(d) = compile_rep(cm, &ctx, r, &p.instruments) {
                         out.extend(d);
                     }
                     with_members(r, reps);
@@ -185,7 +205,7 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                 }
                 let ctx = pr.ctx(view.as_deref());
                 for r in rs {
-                    if let Err(d) = compile_rep(cm, &ctx, r) {
+                    if let Err(d) = compile_rep(cm, &ctx, r, &p.instruments) {
                         out.extend(d);
                     }
                     with_members(r, reps);
@@ -242,7 +262,7 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                     }
                 }
                 for r in controls {
-                    if let Err(d) = compile_rep(cm, &ViewCtx::Panel, r) {
+                    if let Err(d) = compile_rep(cm, &ViewCtx::Panel, r, &p.instruments) {
                         out.extend(d);
                     }
                     with_members(r, reps);

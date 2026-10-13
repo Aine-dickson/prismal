@@ -1641,3 +1641,26 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** MK-15.15, MK-15.16; RC-13.8a; `prismal_kernel::check::random_rate_varies`; runtime `integrate_rates`, `locate_clocks`, `fire_clock`; guide chapter 15 (Rates that change between events) and the reference (MK-E27 retired); tests: a count under the rate `k t / tau` against its Poisson law (mean and variance), its waiting time (first two moments), a rate read from cooling continuous state, resumed runs, a rate that turns negative.
 - **History:**
   - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-087: Instruments: readings with resolution, range and noise
+
+- **Status:** Accepted
+- **Original position:** PK-3.7 let an observation declare an instrument (resolution, range, a stated uncertainty) and deferred instrument noise to the stochastic slice (D-013). Nothing of it was implemented: no syntax, no IR, no runtime.
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: instrument noise in observations, PK-3.7); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-061, D-081, D-083, D-084, D-085; PK-3.1, PK-3.2, PK-3.7, PK-3.8, PK-6.3a, PK-6.3e; RC-13.5, RC-13.6.
+- **Question:** How does a lesson show that a measurement differs from the quantity measured (rounding, a limited range, random error), how does a learner see readings scatter, and how does a test check them?
+- **Content it serves:** measurement and uncertainty in school physics and chemistry: readings against the true curve, repeated measurements and their spread, the standard uncertainty of an instrument, the mean of many readings.
+- **Options considered:**
+  1. **Noise in the model**, `derived { reading = y + normal(0 m, s) }`. A distribution outside an event (MK-E28, D-083) for a good reason: a value read twice would differ, and the model would change with how it is shown.
+  2. **Options on each observation and representation** (`series_plot(y every 0.05 s, noise: 2 cm)`). Every place that reads would repeat the instrument, and an observation has no place for options.
+  3. **A named instrument in the presentation, applied like a function to a source** (taken): `instrument ruler(resolution: 1 cm, range: [0 m, 2 m], noise: 2 cm)`, then `ruler(y) every 0.05 s` in a series plot, a trace, a table, a histogram's ensemble or an observation. The declaration is a head word with named options, the existing form (D-081); the use is a call, the existing form; the only new word is the contextual `instrument`.
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13 (reuse existing forms; one new word).
+  - PK-3.7: options optional, constants with the dimension of the values; `range` for numbers and quantities only; readings outside the range are not available; noise is normal with the given deviation per component; the resolution rounds last. Text alternatives state the standard uncertainty `sqrt(noise^2 + resolution^2 / 12)`.
+  - RC-13.5a: a reading's noise is a pure function of the seed, the instrument, the source and the instant, so the series a learner sees and the observation a test checks are the same readings, and `button(reseed)` measures again.
+  - Readings never change the run (PK-3.2): the model stays exact.
+  - **Found while checking a still of the guide's lab:** a series of readings joined into a dotted line looked like a second curve; readings are drawn as separate points (a group of markers, which every renderer draws). A histogram of readings rounded to 1 cm in 1 cm bins showed a comb: values on the bins' edges were split by rounding; grid bars (D-085) now apply when the grid step equals the bin width, not only when it is wider.
+- **Reason:** an instrument belongs to how a model is observed, not to the model; naming it once lets every reading of a lesson share it, and writing it as a call reads as what it is, the ruler applied to the height.
+- **Version 1 (D-081):** an addition. `instrument` was not a valid presentation item before, and a call that names an instrument exists only in presentations that declare one.
+- **Consequences:** IR `Instrument`, `Presentation.instruments`, `Observation.instrument`, `instrument` of sampled and ensemble arguments; `prismal_present::measure` (`Meter`); `data::observe` and `compile_rep` take the presentation's instruments; series plots of readings as points; tables write `out of range`; parser, lowering, formatter, word lists; PK-3.7, PK-6.3a, PK-6.3e, RC-13.5a, 04-ir, working syntax, reference; guide chapter 15 (Measuring with an instrument); `prismal-present/tests/instruments.rs`.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.

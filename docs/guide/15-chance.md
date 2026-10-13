@@ -320,6 +320,64 @@ run thins_out of Counter with CounterLab {
 - A rate that reads `t` works the same way: `random(k * elapsed / tau)` is an ageing part that fails more often the older it is.
 - A rate that turns negative stops the run at the instant it does: write rates that stay at or above 0.
 
+## Measuring with an instrument
+
+**Goal.** A ball dropped from 2 m and measured with a ruler that reads to the centimetre and errs by about 2 cm: the learner sees the readings scatter about the true height, and repeated measurements spread by the ruler's uncertainty.
+**How it is built.** The model is exact; the instrument belongs to the presentation. `instrument ruler(...)` declares how its readings differ from the truth: `resolution` rounds them, `range` leaves out values the instrument cannot read, `noise` adds a random error with that deviation. Writing `ruler(y)` instead of `y` in a sampled source, an ensemble or an observation reads `y` through the ruler.
+
+```text
+model Drop {
+  param { g: Acceleration = 9.81 m/s^2 }
+  state {
+    y: Length   = 2 m
+    v: Velocity = 0 m/s
+  }
+  flow {
+    der(y) = v
+    der(v) = -g
+  }
+}
+
+presentation DropLab for Drop {
+  instrument ruler(resolution: 1 cm, range: [0 m, 2 m], noise: 2 cm)
+
+  view height: plot(x: [0 s, 0.6 s], y: [0 m, 2.2 m]) {
+    series_plot(y every 0.01 s)
+    series_plot(ruler(y) every 0.05 s, color: orange)
+  }
+  view repeats: plot(x: [1.48 m, 1.64 m], y: [0, 80]) {
+    histogram(ruler(y) at t0 + 0.3 s over 300 runs, bins: 16)
+  }
+  panel controls {
+    button(reseed, label: "Measure again")
+  }
+  observe {
+    reading  = ruler(y) at t0 + 0.3 s
+    readings = ruler(y) at t0 + 0.3 s over 300 runs
+  }
+}
+```
+
+```cases
+run measured of Drop with DropLab {
+  config { seed = 5 }
+  until t0 + 0.6 s
+  expect {
+    reading in [1.48 m, 1.68 m]
+    mean(readings) == 1.5586 m within 0.006 m
+    deviation(readings) in [0.017 m, 0.023 m]
+  }
+}
+```
+
+- The true height at 0.3 s is `2 m - g (0.3 s)^2 / 2`, about 1.5586 m. A single reading may be several centimetres off; the mean of 300 is within a few millimetres.
+- Each option has the dimension of what the instrument reads: a ruler's options are lengths. An instrument without options reads exactly.
+- A series plot draws readings as separate points, not joined into a line: each is one measurement.
+- A reading outside the `range` is not available: a series plot shows no point, a table writes "out of range", an ensemble leaves the run out.
+- The noise of a reading depends on the seed, the instrument, the source and the instant: the orange points and the observation `reading` agree, the same seed gives the same readings, and "Measure again" gives others.
+- Text alternatives add the instrument's **standard uncertainty**, `sqrt(noise^2 + resolution^2 / 12)`: the noise together with the rounding.
+- An instrument reads at instants, so a `label` or a `live` observation cannot use one.
+
 ## Exercises
 
 1. Change the population's rate so that the half-life is 20 s. What is `lambda`?

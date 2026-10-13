@@ -46,6 +46,10 @@ struct Cx<'a, 'b> {
 }
 
 impl Cx<'_, '_> {
+    fn instruments(&self) -> &[prismal_ir::present::Instrument] {
+        self.pres.map(|p| &p.instruments[..]).unwrap_or(&[])
+    }
+
     /// The type of a subject that is an expression, so that an expected enumeration case
     /// takes its enumeration from it (D-049).
     fn subject_type(&self, s: &Subject) -> Option<prismal_ir::Type> {
@@ -67,7 +71,7 @@ impl Cx<'_, '_> {
         match s {
             Subject::Observation { observation, index } => {
                 let o = self.pres.and_then(|p| p.observations.iter().find(|o| &o.id == observation)).ok_or(format!("unknown observation `{observation}`"))?;
-                let data = observe(self.cm, self.run, o, &self.run.config.log)?;
+                let data = observe(self.cm, self.run, o, &self.run.config.log, self.instruments())?;
                 match (data, index) {
                     (Data::Value(v), None) => Ok(Got::Values(flat(&v))),
                     (Data::Series(s), Some(k)) => s.get(k - 1).map(|x| Got::Values(flat(&x.1))).ok_or(format!("`{}` has {} values, not {k}", o.name, s.len())),
@@ -86,7 +90,7 @@ impl Cx<'_, '_> {
             // D-084: the mean or the sample deviation of an observation's values.
             Subject::Statistic { statistic, observation } => {
                 let o = self.pres.and_then(|p| p.observations.iter().find(|o| &o.id == observation)).ok_or(format!("unknown observation `{observation}`"))?;
-                let xs: Vec<f64> = match observe(self.cm, self.run, o, &self.run.config.log)? {
+                let xs: Vec<f64> = match observe(self.cm, self.run, o, &self.run.config.log, self.instruments())? {
                     Data::Series(s) => s.iter().map(|(_, v)| match v {
                         prismal_kernel::Value::Num(x) => Ok(*x),
                         prismal_kernel::Value::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
@@ -133,7 +137,7 @@ impl Cx<'_, '_> {
                 // A series compared with a list is compared as a whole: `drops == []`.
                 if let (Subject::Observation { observation, index: None }, Operand::List { items }) = (subject, expected) {
                     let o = self.pres.and_then(|p| p.observations.iter().find(|o| &o.id == observation)).ok_or(format!("unknown observation `{observation}`"))?;
-                    if let Data::Series(series) = observe(self.cm, self.run, o, &self.run.config.log)? {
+                    if let Data::Series(series) = observe(self.cm, self.run, o, &self.run.config.log, self.instruments())? {
                         return series_list(self.cm, &series, items, tolerance);
                     }
                 }

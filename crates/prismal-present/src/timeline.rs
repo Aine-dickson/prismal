@@ -561,7 +561,7 @@ impl Player {
             TAction::Show { view, reps } => {
                 let ctx = self.pb.projector.ctx(view.as_deref());
                 for r in reps {
-                    match compile_rep(&self.pb.cm, &ctx, r) {
+                    match compile_rep(&self.pb.cm, &ctx, r, &self.pb.pres.instruments) {
                         Ok(c) => self.pb.shown.push(Shown { from: p, until: f64::INFINITY, view: view.clone(), rep: c, reveal: None }),
                         Err(d) => self.pb.diagnostics.extend(d.into_iter().map(|x| x.to_string())),
                     }
@@ -581,7 +581,7 @@ impl Player {
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(1.0);
                 let ctx = self.pb.projector.ctx(view.as_deref());
                 for r in reps {
-                    match compile_rep(&self.pb.cm, &ctx, r) {
+                    match compile_rep(&self.pb.cm, &ctx, r, &self.pb.pres.instruments) {
                         Ok(c) => self.pb.shown.push(Shown { from: p, until: f64::INFINITY, view: view.clone(), rep: c, reveal: Some((*style, d)) }),
                         Err(e) => self.pb.diagnostics.extend(e.into_iter().map(|x| x.to_string())),
                     }
@@ -820,7 +820,7 @@ impl Player {
         };
         self.pb.waits.push(WaitPoint { beat: beat.to_string(), at: p, end, pending: end_input.is_none() && limit.is_none(), explore: true });
         for c in controls {
-            match compile_rep(&self.pb.cm, &ViewCtx::Panel, c) {
+            match compile_rep(&self.pb.cm, &ViewCtx::Panel, c, &self.pb.pres.instruments) {
                 Ok(cr) => self.pb.shown.push(Shown { from: p, until: end, view: None, rep: cr, reveal: None }),
                 Err(d) => self.pb.diagnostics.extend(d.into_iter().map(|x| x.to_string())),
             }

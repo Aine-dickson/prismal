@@ -835,8 +835,8 @@ impl<'a> Printer<'a> {
             Arg::Range { lo, hi } => format!("[{}, {}]", self.expr(lo), self.expr(hi)),
             Arg::Scale { scale } => format!("{} -> {} px", self.expr(&scale.quantity), number(scale.px)),
             Arg::Word { word } => word.clone(),
-            Arg::Sampled { expr, every } => format!("{} every {}", self.expr(expr), self.expr(every)),
-            Arg::Ensemble { expr, at, runs } => format!("{} at {} over {} runs", self.expr(expr), self.expr(at), self.expr(runs)),
+            Arg::Sampled { expr, every, instrument } => format!("{} every {}", self.read_by(expr, instrument), self.expr(every)),
+            Arg::Ensemble { expr, at, runs, instrument } => format!("{} at {} over {} runs", self.read_by(expr, instrument), self.expr(at), self.expr(runs)),
             Arg::Element { element } => self.element_name(element),
             Arg::Texts { texts } => format!("({})", texts.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ")),
         }
@@ -954,6 +954,19 @@ impl<'a> Printer<'a> {
         if let Some(t) = &p.title {
             sections.push(format!("{INDENT}title \"{t}\""));
         }
+        for i in &p.instruments {
+            let mut opts = vec![];
+            if let Some(e) = &i.resolution {
+                opts.push(format!("resolution: {}", self.expr(e)));
+            }
+            if let Some((a, b)) = &i.range {
+                opts.push(format!("range: [{}, {}]", self.expr(a), self.expr(b)));
+            }
+            if let Some(e) = &i.noise {
+                opts.push(format!("noise: {}", self.expr(e)));
+            }
+            sections.push(format!("{INDENT}instrument {}({})", i.name, opts.join(", ")));
+        }
         for v in &p.views {
             let head = match &v.kind {
                 ViewKind::Spatial { space, scale, y_up } => format!(
@@ -1070,9 +1083,17 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// A source as written: `ruler(x)` when an instrument reads it (D-087).
+    fn read_by(&self, e: &Expr, instrument: &Option<Id>) -> String {
+        match instrument {
+            Some(id) => format!("{}({})", id.rsplit('.').next().unwrap_or(id), self.expr(e)),
+            None => self.expr(e),
+        }
+    }
+
     fn observation(&self, o: &Observation) -> String {
         let source = match &o.source {
-            Source::Expr { expr } => self.expr(expr),
+            Source::Expr { expr } => self.read_by(expr, &o.instrument),
             Source::EventLog { event, zeno_only } => {
                 let mut s = "event_log".to_string();
                 if let Some(e) = event {

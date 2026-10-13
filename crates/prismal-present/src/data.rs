@@ -1,7 +1,8 @@
 //! Observations of a run (PK section 3). Observing never changes the run (PK-3.2).
 
 use crate::number;
-use prismal_ir::present::{Observation, Schedule, Source};
+use crate::measure::meter;
+use prismal_ir::present::{Instrument, Observation, Schedule, Source};
 use prismal_ir::Id;
 use prismal_kernel::{CModel, Value};
 use prismal_runtime::{Run, RunDiag, Scheduled};
@@ -101,8 +102,31 @@ pub fn ensemble(run: &Run, expr: &prismal_ir::Expr, t: f64, n: usize) -> Result<
     Ok(out)
 }
 
-/// Observes a run. `interventions` is the committed intervention log of the run's session.
-pub fn observe(cm: &CModel, run: &Run, obs: &Observation, interventions: &[Scheduled]) -> Result<Data, String> {
+/// Observes a run. `interventions` is the committed intervention log of the run's session;
+/// `instruments` the presentation's, through which an observation may read (PK-3.7).
+pub fn observe(cm: &CModel, run: &Run, obs: &Observation, interventions: &[Scheduled], instruments: &[Instrument]) -> Result<Data, String> {
+    let data = observe_exact(cm, run, obs, interventions)?;
+    let Source::Expr { expr } = &obs.source else { return Ok(data) };
+    let ty = prismal_kernel::compile_expr(cm, expr, None).map_err(|d| format!("{d:?}"))?.1;
+    let Some(m) = meter(cm, instruments, obs.instrument.as_ref(), expr, &ty)? else { return Ok(data) };
+    let seed = run.config.seed;
+    Ok(match (data, &obs.schedule) {
+        (_, Schedule::Live) => return Err(format!("instrument `{}` reads at instants: observe `every`, `at`, `on` or `over`, not `live`", m.name)),
+        // An ensemble's k-th value comes from the run with the k-th seed (PK-3.8).
+        (Data::Series(s), Schedule::At { runs: Some(_), .. }) => {
+            Data::Series(s.into_iter().enumerate().filter_map(|(k, (t, v))| m.read(&v, seed.wrapping_add(k as u64), t).map(|r| (t, r))).collect())
+        }
+        // A reading outside the range is not available: a series leaves it out.
+        (Data::Series(s), _) => Data::Series(s.into_iter().filter_map(|(t, v)| m.read(&v, seed, t).map(|r| (t, r))).collect()),
+        (Data::Value(v), Schedule::At { time, .. }) => {
+            let t = crate::number(cm, time)?;
+            Data::Value(m.read(&v, seed, t).ok_or(format!("{v} at {} s is outside the range of instrument `{}`", t - run.config.t0, m.name))?)
+        }
+        (d, _) => d,
+    })
+}
+
+fn observe_exact(cm: &CModel, run: &Run, obs: &Observation, interventions: &[Scheduled]) -> Result<Data, String> {
     let w = window(cm, run, &obs.schedule)?;
     Ok(match &obs.source {
         Source::EventLog { event, zeno_only } => Data::Events(
