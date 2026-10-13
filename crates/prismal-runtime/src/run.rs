@@ -352,7 +352,7 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
         };
         let v = compile_expr(cm, e, Some(&cm.bindings[i].ty))
             .map_err(|d| format!("{d:?}"))
-            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] }).map_err(|s| s.cause));
+            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None }).map_err(|s| s.cause));
         match v {
             Ok(v) => overrides.push((i, v)),
             Err(m) => {
@@ -593,7 +593,7 @@ impl<'a> Engine<'a> {
     fn rates_in_step(&self, step: &Step, scratch: &[Value], t: f64, which: &[usize], out: &mut [f64]) -> Result<(), RunDiag> {
         let rates = |t: f64, out: &mut [f64]| -> Result<Option<usize>, RunDiag> {
             let vals = self.state_in_step(step, scratch, t).map_err(|s| self.diag(Category::Model, s.cause, None))?;
-            let c = Ctx { vals: &vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: None, noise: &[] };
+            let c = Ctx { vals: &vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: None, noise: &[], point: None };
             for (k, (o, &ei)) in out.iter_mut().zip(which).enumerate() {
                 let Some(CTrigger::Random { rate, .. }) = &self.cm.events[ei].trigger else { unreachable!() };
                 *o = rate.eval(&c).map_err(|s| self.diag(Category::Model, s.cause, Some(&self.cm.events[ei].id)))?.num();
@@ -707,7 +707,7 @@ impl<'a> Engine<'a> {
     }
 
     fn ctx<'v>(&'v self, vals: &'v [Value]) -> Ctx<'v> {
-        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: Some(Draws { seed: self.cfg.seed, due: &self.due_k }), noise: &[] }
+        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: Some(Draws { seed: self.cfg.seed, due: &self.due_k }), noise: &[], point: None }
     }
 
     fn snapshot(&mut self) {
@@ -833,7 +833,7 @@ impl<'a> Engine<'a> {
         let der = self.cm.der_values(&self.vals, self.t, self.cfg.t0).ok();
         for q in &self.cm.equations {
             let Some(tol) = q.check_tol else { continue };
-            let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] };
+            let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
             let res = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
                 (Ok(a), Ok(b)) => distance(&a, &b),
                 _ => None,
@@ -1139,7 +1139,7 @@ impl<'a> Engine<'a> {
 
     /// The guard of crossing event `ei` in a state at `t`.
     fn guard_in(&self, vals: &[Value], t: f64, ei: usize) -> Result<f64, Status> {
-        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] };
+        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
         match &self.cm.events[ei].trigger {
             Some(CTrigger::Crossing { guard, .. }) => Ok(guard.eval(&c)?.num()),
             _ => unreachable!(),
@@ -1489,7 +1489,7 @@ impl<'a> Engine<'a> {
                 }
                 // The environment's value reads nothing of the model but its constants.
                 let value = match compile_expr(self.cm, e, Some(&self.cm.bindings[i].ty)) {
-                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] }),
+                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None }),
                     Err(d) => return reject(self, format!("the value of `{}`: {}", self.cm.bindings[i].name, d.iter().map(|x| x.message.clone()).collect::<Vec<_>>().join("; "))),
                 };
                 let v = match value {
@@ -1516,7 +1516,7 @@ impl<'a> Engine<'a> {
                 let payload = match (action, declared) {
                     (Action::Request(_), None) => None,
                     (Action::RequestWith(_, e), Some(p)) => match compile_expr(self.cm, e, Some(&p.ty)) {
-                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[] }) {
+                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None }) {
                             Ok(v) => Some(v),
                             Err(s) => {
                                 let rd = self.diag(Category::Intervention, format!("the payload of `{}`: {}", self.cm.events[ei].name, s.cause), Some(id));
@@ -1549,7 +1549,7 @@ impl<'a> Engine<'a> {
                 if let Some(c) = &self.cm.events[ei].enable {
                     let mut payloads = vec![None; self.cm.events.len()];
                     payloads[ei] = payload.clone();
-                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads, draws: None, noise: &[] };
+                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads, draws: None, noise: &[], point: None };
                     let why = match c.eval(&ctx) {
                         Ok(Value::Bool(true)) => None,
                         Ok(_) => Some(self.not_enabled(ei, payload.as_ref())),
@@ -1591,7 +1591,7 @@ impl Run {
 
     fn eval_on(&self, c: &CExpr, vals: &[Value], t: f64) -> Result<Value, Status> {
         let der = self.model.der_values(vals, t, self.config.t0).ok();
-        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[], draws: None, noise: &[] })
+        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None })
     }
 
     /// The state at time `t`: the final microstep at an event time (RC-4.3), otherwise the

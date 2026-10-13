@@ -147,7 +147,7 @@ pub fn constant_as(cm: &CModel, e: &Expr, expected: Option<&prismal_ir::Type>) -
         return Err("the expression reads bindings of the model; it is not a constant".into());
     }
     let (c, _) = compile_expr(cm, e, expected).map_err(|d| d.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("; "))?;
-    c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None, noise: &[] }).map_err(|s| s.cause)
+    c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None, noise: &[], point: None }).map_err(|s| s.cause)
 }
 
 /// A constant number (a quantity in coherent SI units, or an instant in seconds).
@@ -167,6 +167,7 @@ pub fn flat(v: &Value) -> Vec<f64> {
         Value::Tuple(items) => items.iter().flat_map(flat).collect(),
         Value::Case(c) => vec![*c as f64],
         Value::Func(_) => vec![],
+        Value::Field(d) => d.to_vec(),
     }
 }
 

@@ -55,6 +55,8 @@ pub enum Value {
     Case(u32),
     /// A function value: its body is evaluated on the bindings current at application (MK-10.7).
     Func(Rc<CExpr>),
+    /// A field's value in each cell of its grid (MK-9.4, D-091).
+    Field(Rc<Vec<f64>>),
 }
 
 impl PartialEq for Value {
@@ -70,6 +72,7 @@ impl PartialEq for Value {
             (Tuple(a), Tuple(b)) => a == b,
             (Case(a), Case(b)) => a == b,
             (Func(a), Func(b)) => Rc::ptr_eq(a, b),
+            (Field(a), Field(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.to_bits() == y.to_bits()),
             _ => false,
         }
     }
@@ -93,6 +96,7 @@ impl fmt::Display for Value {
             }
             Value::Case(c) => write!(f, "case {c}"),
             Value::Func(_) => write!(f, "<function>"),
+            Value::Field(d) => write!(f, "<field of {} cells>", d.len()),
         }
     }
 }
@@ -121,6 +125,7 @@ impl Value {
         match self {
             Value::Num(_) => 1,
             Value::Vec(a) | Value::Point(a) => a.n as usize,
+            Value::Field(d) => d.len(),
             _ => 0,
         }
     }
@@ -129,6 +134,7 @@ impl Value {
         match self {
             Value::Num(x) => out[0] = *x,
             Value::Vec(a) | Value::Point(a) => out.copy_from_slice(a.as_slice()),
+            Value::Field(d) => out.copy_from_slice(d),
             _ => panic!("not a real-valued state"),
         }
     }
@@ -194,6 +200,151 @@ pub enum CExpr {
     Pick(Box<CExpr>, Vec<CExpr>),
     /// A draw (MK-10.4, D-083).
     Draw(Box<CDraw>),
+    /// The value of field `i` in the cell of a pointwise evaluation (MK-9.7, D-091).
+    FieldAt(usize),
+    /// An operation on a field (MK-9.7, MK-9.8, D-091).
+    Field(Box<CFieldOp>),
+}
+
+/// A one-dimensional grid compiled (MK-9.5, D-091): `n` equal cells of width `h` from `lo`,
+/// cell `k` centred at `lo + (k + 1/2) h`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CGrid {
+    pub lo: f64,
+    pub h: f64,
+    pub n: usize,
+    pub dim: prismal_ir::Dim,
+}
+
+impl CGrid {
+    pub fn hi(&self) -> f64 {
+        self.lo + self.h * self.n as f64
+    }
+    pub fn center(&self, k: usize) -> f64 {
+        self.lo + (k as f64 + 0.5) * self.h
+    }
+}
+
+/// A field's condition on one edge (MK-9.6, D-091).
+#[derive(Clone, Debug)]
+pub enum CEdge {
+    /// Held at a value.
+    Fixed(CExpr),
+    /// No flux across the edge: the cell beyond mirrors the cell inside.
+    Insulated,
+    /// The grid wraps around.
+    Periodic,
+}
+
+#[derive(Clone, Debug)]
+pub enum FieldOp {
+    Laplacian,
+    Gradient,
+    /// The field read at a coordinate, linear between cell centres and edge values.
+    Sample(CExpr),
+    Integral,
+    Mean,
+    Min,
+    Max,
+}
+
+/// An operation on field `binding` over `grid`, with its edges (left, right).
+#[derive(Clone, Debug)]
+pub struct CFieldOp {
+    pub op: FieldOp,
+    pub binding: usize,
+    pub grid: CGrid,
+    pub edges: [CEdge; 2],
+}
+
+impl CFieldOp {
+    /// The value beyond edge `side` (0 left, 1 right) by which differences are taken: a ghost
+    /// cell, `2 g - u` for an edge held at `g` (second order at the edge), the edge cell for
+    /// an insulated edge, the far cell for a periodic grid.
+    fn ghost(&self, side: usize, u: &[f64], c: &Ctx) -> Result<f64, Status> {
+        let (inside, far) = if side == 0 { (u[0], u[u.len() - 1]) } else { (u[u.len() - 1], u[0]) };
+        Ok(match &self.edges[side] {
+            CEdge::Fixed(g) => 2.0 * g.eval(c)?.num() - inside,
+            CEdge::Insulated => inside,
+            CEdge::Periodic => far,
+        })
+    }
+
+    /// The value on edge `side`.
+    pub fn edge_value(&self, side: usize, u: &[f64], c: &Ctx) -> Result<f64, Status> {
+        let (inside, far) = if side == 0 { (u[0], u[u.len() - 1]) } else { (u[u.len() - 1], u[0]) };
+        Ok(match &self.edges[side] {
+            CEdge::Fixed(g) => g.eval(c)?.num(),
+            CEdge::Insulated => inside,
+            CEdge::Periodic => 0.5 * (inside + far),
+        })
+    }
+
+    fn eval(&self, c: &Ctx) -> EvalResult {
+        let u = match &c.vals[self.binding] {
+            Value::Field(d) => d.clone(),
+            v => return Err(Status::invalid(format!("{v} is not a field"))),
+        };
+        let g = &self.grid;
+        let at = || c.point.ok_or_else(|| Status::invalid("a field's neighbours are read only where the field is: in its flow or its definition"));
+        let num = |x: f64, what: &str| finite(x, what);
+        match &self.op {
+            FieldOp::Laplacian => {
+                let k = at()?;
+                let l = if k > 0 { u[k - 1] } else { self.ghost(0, &u, c)? };
+                let r = if k + 1 < u.len() { u[k + 1] } else { self.ghost(1, &u, c)? };
+                num((l - 2.0 * u[k] + r) / (g.h * g.h), "laplacian")
+            }
+            FieldOp::Gradient => {
+                let k = at()?;
+                let l = if k > 0 { u[k - 1] } else { self.ghost(0, &u, c)? };
+                let r = if k + 1 < u.len() { u[k + 1] } else { self.ghost(1, &u, c)? };
+                num((r - l) / (2.0 * g.h), "gradient")
+            }
+            FieldOp::Sample(x) => {
+                let x = x.eval(c)?.num();
+                let tol = 1e-9 * g.h;
+                if !(x >= g.lo - tol && x <= g.hi() + tol) {
+                    return Err(Status { kind: StatusKind::Unavailable, cause: format!("{x} is outside the grid [{}, {}]", g.lo, g.hi()) });
+                }
+                let s = (x - g.lo) / g.h - 0.5;
+                let n = u.len();
+                let v = if s <= 0.0 {
+                    let e = self.edge_value(0, &u, c)?;
+                    e + (s + 0.5) / 0.5 * (u[0] - e)
+                } else if s >= (n - 1) as f64 {
+                    let e = self.edge_value(1, &u, c)?;
+                    u[n - 1] + (s - (n - 1) as f64) / 0.5 * (e - u[n - 1])
+                } else {
+                    let i = s.floor() as usize;
+                    let w = s - i as f64;
+                    u[i] + w * (u[i + 1] - u[i])
+                };
+                num(v, "field value")
+            }
+            FieldOp::Integral => num(g.h * u.iter().sum::<f64>(), "integral"),
+            FieldOp::Mean => num(u.iter().sum::<f64>() / u.len() as f64, "mean"),
+            FieldOp::Min => num(u.iter().copied().fold(f64::INFINITY, f64::min), "min"),
+            FieldOp::Max => num(u.iter().copied().fold(f64::NEG_INFINITY, f64::max), "max"),
+        }
+    }
+}
+
+impl CExpr {
+    /// The points through which a 1D field is drawn: its edge values and cell centres, in
+    /// order (D-091). `self` is a `Field` operation on the field.
+    pub fn field_profile(&self, c: &Ctx) -> Result<Vec<[f64; 2]>, Status> {
+        let CExpr::Field(op) = self else { return Err(Status::invalid("not a field")) };
+        let u = match &c.vals[op.binding] {
+            Value::Field(d) => d.clone(),
+            v => return Err(Status::invalid(format!("{v} is not a field"))),
+        };
+        let g = &op.grid;
+        let mut out = vec![[g.lo, op.edge_value(0, &u, c)?]];
+        out.extend(u.iter().enumerate().map(|(k, v)| [g.center(k), *v]));
+        out.push([g.hi(), op.edge_value(1, &u, c)?]);
+        Ok(out)
+    }
 }
 
 /// A compiled draw: its distribution and arguments, and its stream (RC-13.5): the event that
@@ -230,6 +381,8 @@ pub struct Ctx<'a> {
     pub payloads: &'a [Option<Value>],
     /// The random streams, during event handling only (D-083).
     pub draws: Option<Draws<'a>>,
+    /// The cell of a pointwise evaluation of a field's flow or definition (D-091).
+    pub point: Option<usize>,
     /// The values of the white noises during a stochastic step, by noise site (D-090); empty
     /// elsewhere, where every noise reads 0 and a flow gives its drift.
     pub noise: &'a [f64],
@@ -262,6 +415,11 @@ impl CExpr {
             CExpr::Time0 => Ok(Num(c.t0)),
             CExpr::Elapsed => Ok(Num(c.t - c.t0)),
             CExpr::Noise(k) => Ok(Num(c.noise.get(*k).copied().unwrap_or(0.0))),
+            CExpr::FieldAt(i) => match (&c.vals[*i], c.point) {
+                (Value::Field(d), Some(k)) => Ok(Num(d[k])),
+                (v, _) => Err(Status::invalid(format!("{v} read outside a pointwise evaluation"))),
+            },
+            CExpr::Field(op) => op.eval(c),
             CExpr::Der(i) => match c.der {
                 Some(d) => Ok(d[*i].clone()),
                 None => Err(Status { kind: StatusKind::Unavailable, cause: "derivative not available here".into() }),
@@ -317,6 +475,7 @@ impl CExpr {
                     F::Min => x.min(y),
                     F::Max => x.max(y),
                     F::Atan2 => x.atan2(y),
+                    F::Laplacian | F::Gradient | F::Integral | F::Mean => return Err(Status::invalid("a field operation compiled as a call")),
                 };
                 finite(r, "function")
             }
@@ -324,7 +483,7 @@ impl CExpr {
                 Func(body) => {
                     let vals: Result<std::vec::Vec<Value>, Status> = args.iter().map(|a| a.eval(c)).collect();
                     let vals = vals?;
-                    let inner = Ctx { vals: c.vals, der: c.der, t: c.t, t0: c.t0, args: &vals, payloads: c.payloads, draws: c.draws, noise: c.noise };
+                    let inner = Ctx { vals: c.vals, der: c.der, t: c.t, t0: c.t0, args: &vals, payloads: c.payloads, draws: c.draws, noise: c.noise, point: c.point };
                     body.eval(&inner)
                 }
                 v => Err(Status::invalid(format!("{v} is not a function"))),

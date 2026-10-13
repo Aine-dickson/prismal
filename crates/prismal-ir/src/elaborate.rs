@@ -1023,6 +1023,7 @@ impl<'a> Cx<'a> {
                 notes: vec![],
                 when: None,
             combine: None,
+            boundary: None,
             });
         }
         for f in &ty.functions {
@@ -1137,6 +1138,7 @@ impl<'a> Cx<'a> {
             notes: vec![],
             when: None,
             combine: None,
+            boundary: None,
         };
         let counter = created(&p.id, &s.path);
         out.bindings.push(hidden(counter.clone(), join(&s.path, &format!("{}.created", p.name)), Type::real(), num(start as f64)));

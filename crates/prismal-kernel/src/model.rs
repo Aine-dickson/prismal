@@ -15,6 +15,20 @@ pub struct CBinding {
     pub intervenable: bool,
     /// A derived binding evaluated only while the condition holds, else the value (D-058).
     pub when: Option<(CExpr, Value)>,
+    /// The grid of a field (D-091): its initial value or definition is evaluated in each
+    /// cell, with the cell's centre as the argument.
+    pub field: Option<crate::eval::CGrid>,
+}
+
+/// Evaluates a pointwise expression in every cell of `grid`: a field's value (D-091).
+pub fn per_cell(e: &CExpr, grid: &crate::eval::CGrid, c: &Ctx) -> Result<Value, Status> {
+    let mut out = Vec::with_capacity(grid.n);
+    for k in 0..grid.n {
+        let args = [Value::Num(grid.center(k))];
+        let inner = Ctx { vals: c.vals, der: c.der, t: c.t, t0: c.t0, args: &args, payloads: c.payloads, draws: c.draws, noise: c.noise, point: Some(k) };
+        out.push(e.eval(&inner)?.num());
+    }
+    Ok(Value::Field(std::rc::Rc::new(out)))
 }
 
 /// How a continuous state's rate is formed (MK-14.7 to MK-14.11).
@@ -132,6 +146,8 @@ pub struct CModel {
     /// The stream key of each white noise in the flows, by noise number (D-090); a model
     /// with noise is integrated by Euler-Maruyama (RC-13.9).
     pub noise: Vec<u64>,
+    /// The model's grids by identity (MK-9.5, D-091).
+    pub grids: HashMap<Id, crate::eval::CGrid>,
 }
 
 impl CModel {
@@ -153,7 +169,7 @@ impl CModel {
                 continue;
             }
             if let Some(e) = &b.init {
-                if let Ok(v) = e.eval(&Ctx { vals: &vals, der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None, noise: &[] }) {
+                if let Ok(v) = e.eval(&Ctx { vals: &vals, der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None, noise: &[], point: None }) {
                     vals[i] = v;
                 }
             }
@@ -176,7 +192,7 @@ impl CModel {
                 continue;
             }
             if let Some((w, none)) = &b.when {
-                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None, noise: &[] };
+                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
                 if !w.eval(&c)?.boolean() {
                     vals[i] = none.clone();
                     continue;
@@ -192,8 +208,13 @@ impl CModel {
                 _ => b.init.as_ref(),
             };
             let v = {
-                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None, noise: &[] };
-                e.expect("checked").eval(&c).map_err(|s| Status { kind: s.kind, cause: format!("initializing `{}`: {}", b.name, s.cause) })?
+                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                let e = e.expect("checked");
+                match &b.field {
+                    Some(g) => per_cell(e, g, &c),
+                    None => e.eval(&c),
+                }
+                .map_err(|s| Status { kind: s.kind, cause: format!("initializing `{}`: {}", b.name, s.cause) })?
             };
             vals[i] = v;
         }
@@ -204,10 +225,12 @@ impl CModel {
     pub fn update_derived(&self, vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
         for &i in &self.derived_order {
             let v = {
-                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[] };
-                match &self.bindings[i].when {
-                    Some((w, none)) if !w.eval(&c)?.boolean() => none.clone(),
-                    _ => self.bindings[i].def.as_ref().expect("checked").eval(&c)?,
+                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                let b = &self.bindings[i];
+                match (&b.when, &b.field) {
+                    (Some((w, none)), _) if !w.eval(&c)?.boolean() => none.clone(),
+                    (_, Some(g)) => per_cell(b.def.as_ref().expect("checked"), g, &c)?,
+                    _ => b.def.as_ref().expect("checked").eval(&c)?,
                 }
             };
             vals[i] = v;
@@ -221,6 +244,7 @@ impl CModel {
             let s = &y[c.offset..c.offset + c.len];
             vals[c.binding] = match &self.bindings[c.binding].ty {
                 Type::Quantity { .. } => Value::Num(s[0]),
+                Type::Field { .. } => Value::Field(std::rc::Rc::new(s.to_vec())),
                 Type::Point { .. } => Value::Point(Arr::from_slice(s)),
                 _ => Value::Vec(Arr::from_slice(s)),
             };
@@ -243,9 +267,26 @@ impl CModel {
     /// The flows with the white noises at the values `noise` (D-090): during an
     /// Euler-Maruyama step `ΔW / h` per noise, elsewhere none (each noise 0, the drift).
     pub fn rhs_noisy(&self, vals: &[Value], t: f64, t0: f64, noise: &[f64], dy: &mut [f64]) -> Result<(), Status> {
-        let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise };
+        let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise, point: None };
         for s in &self.cont {
             let out = &mut dy[s.offset..s.offset + s.len];
+            // A field's flows are evaluated in each cell (D-091).
+            if let Some(g) = &self.bindings[s.binding].field {
+                out.iter_mut().for_each(|x| *x = 0.0);
+                let es: Vec<&CExpr> = match &s.flows {
+                    FlowSet::None => vec![],
+                    FlowSet::Define(e) => vec![e],
+                    FlowSet::Sum(es) => es.iter().collect(),
+                };
+                for e in es {
+                    for (k, o) in out.iter_mut().enumerate() {
+                        let args = [Value::Num(g.center(k))];
+                        let inner = Ctx { vals, der: None, t, t0, args: &args, payloads: &[], draws: None, noise, point: Some(k) };
+                        *o += e.eval(&inner)?.num();
+                    }
+                }
+                continue;
+            }
             match &s.flows {
                 crate::model::FlowSet::None => out.iter_mut().for_each(|x| *x = 0.0),
                 FlowSet::Define(e) => e.eval(&c)?.write_to(out),
@@ -272,7 +313,9 @@ impl CModel {
         let mut out = vec![Value::Num(0.0); self.bindings.len()];
         for c in &self.cont {
             let s = &dy[c.offset..c.offset + c.len];
-            out[c.binding] = if c.len == 1 && matches!(self.bindings[c.binding].ty, Type::Quantity { .. }) {
+            out[c.binding] = if self.bindings[c.binding].field.is_some() {
+                Value::Field(std::rc::Rc::new(s.to_vec()))
+            } else if c.len == 1 && matches!(self.bindings[c.binding].ty, Type::Quantity { .. }) {
                 Value::Num(s[0])
             } else {
                 Value::Vec(Arr::from_slice(s))

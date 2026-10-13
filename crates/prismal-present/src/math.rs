@@ -219,6 +219,10 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
         Expr::Call { call: Func::Sqrt, args } => MathBox::Sqrt { body: Box::new(row(args.iter().map(p).collect())) },
         Expr::Call { call: Func::Abs, args } => MathBox::Fenced { open: "|".into(), close: "|".into(), body: Box::new(list(args.iter().map(p).collect())) },
         Expr::Draw { draw, args } => row(vec![upright(draw.name()), parens(list(args.iter().map(p).collect()))]),
+        // Field operators as physics texts write them (D-091): ∇²T, ∇T, ∫T dx.
+        Expr::Call { call: Func::Laplacian, args } => row(vec![upright("∇²"), wrap(&args[0], 8)]),
+        Expr::Call { call: Func::Gradient, args } => row(vec![upright("∇"), wrap(&args[0], 8)]),
+        Expr::Call { call: Func::Integral, args } => row(vec![upright("∫"), MathBox::Space { em: 0.15 }, wrap(&args[0], 8), MathBox::Space { em: 0.15 }, upright("dx")]),
         Expr::Call { call, args } => {
             let name = match call {
                 Func::Sin => "sin",
@@ -229,7 +233,8 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
                 Func::Min => "min",
                 Func::Max => "max",
                 Func::Atan2 => "atan2",
-                Func::Sqrt | Func::Abs => unreachable!(),
+                Func::Mean => "mean",
+                Func::Sqrt | Func::Abs | Func::Laplacian | Func::Gradient | Func::Integral => unreachable!(),
             };
             row(vec![upright(name), parens(list(args.iter().map(p).collect()))])
         }

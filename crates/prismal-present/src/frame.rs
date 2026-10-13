@@ -454,6 +454,9 @@ pub enum CKind {
     Arrow { vec: CExpr, ty: Type, from: Option<CExpr>, px_per_unit: f64, label: String },
     Segment { a: CExpr, b: CExpr },
     Graph { f: CExpr, lo: f64, hi: f64, label: String },
+    /// A field drawn over its grid (D-091): an operation on the field, through which its
+    /// edge values and cell values are read.
+    FieldGraph { field: CExpr, label: String },
     /// The path of a point, sampled every `every` seconds from the run's start (PK-6.3).
     Trace { pos: CExpr, every: f64, label: String, meter: Option<Meter> },
     /// A scalar against elapsed time, sampled every `every` seconds (PK-6.3). `steps`: the
@@ -688,10 +691,22 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             let ViewCtx::Plot { x, .. } = ctx else { return Err(d("PK-E05", "a function graph belongs in a plot view".into())) };
             let e = source(rep, 0).ok_or_else(|| needs("a function"))?;
             let (c, t) = ce(e, None)?;
-            if t != Type::func(vec![Type::real()], Type::real()) {
-                return Err(needs("a function from Real to Real"));
+            // A field is a function over its grid (D-091): drawn through its cells.
+            if let (Type::Field { grid, of }, Expr::Ref { .. }, ViewCtx::Plot { dims, .. }) = (&t, e, ctx) {
+                let gdim = cm.grids.get(grid).map(|g| g.dim).unwrap_or_default();
+                let Type::Quantity { dim } = **of else { return Err(needs("a field of numbers or quantities")) };
+                if gdim != dims.0 || dim != dims.1 {
+                    return Err(d("PK-E04", format!("the field runs over {gdim} with values of dimension {dim}; the plot's axes are {} and {} (PK-7.3)", dims.0, dims.1)));
+                }
+                let probe = Expr::Call { call: prismal_ir::Func::Mean, args: vec![e.clone()] };
+                let (field, _) = ce(&probe, None)?;
+                CKind::FieldGraph { field, label: label(e) }
+            } else {
+                if t != Type::func(vec![Type::real()], Type::real()) {
+                    return Err(needs("a function from Real to Real, or a field"));
+                }
+                CKind::Graph { f: c, lo: x.0, hi: x.1, label: label(e) }
             }
-            CKind::Graph { f: c, lo: x.0, hi: x.1, label: label(e) }
         }
         "histogram" => {
             let ViewCtx::Plot { dims, x, .. } = ctx else { return Err(d("PK-E05", "a histogram belongs in a plot view: x for the values, y for how many of them fall in each bin".into())) };
@@ -1159,7 +1174,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 for i in 0..=n {
                     let x = lo + (hi - lo) * i as f64 / n as f64;
                     let args = [Value::Num(x)];
-                    let y = body.eval(&Ctx { vals, der: None, t, t0: run.config.t0, args: &args, payloads: &[], draws: None, noise: &[] });
+                    let y = body.eval(&Ctx { vals, der: None, t, t0: run.config.t0, args: &args, payloads: &[], draws: None, noise: &[], point: None });
                     if let Ok(Value::Num(y)) = y {
                         pts.push([x, y]);
                     }
@@ -1169,6 +1184,18 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             Ok(_) => (Shape::Status { status: "not a function".into() }, "graph: not available".into()),
             Err(s) => status(s),
         },
+        CKind::FieldGraph { field, label } => {
+            let c = Ctx { vals, der: None, t, t0: run.config.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            match field.field_profile(&c) {
+                Ok(pts) => {
+                    let (lo, hi) = (pts[0][0], pts[pts.len() - 1][0]);
+                    let (mn, mx) = pts.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| (a.min(p[1]), b.max(p[1])));
+                    let text = format!("field {label} over x from {} to {}, {} cells: values from {} to {}", fmt_num(lo), fmt_num(hi), pts.len() - 2, fmt_num(mn), fmt_num(mx));
+                    (Shape::Polyline { points: pts }, text)
+                }
+                Err(s) => status(s),
+            }
+        }
         CKind::Trace { pos, every, label, meter } => {
             // A member's trace starts when it is made and ends when it is destroyed (D-057).
             let mut prev: Option<f64> = None;

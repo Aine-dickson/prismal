@@ -75,6 +75,8 @@ pub enum Type {
     /// its cases in declaration order.
     Enum { r#enum: Id, cases: Vec<String> },
     Function { params: Vec<Type>, result: Box<Type> },
+    /// A field over a grid of the model (MK-9.4, D-091): a value of type `of` in every cell.
+    Field { grid: Id, of: Box<Type> },
 }
 
 impl Type {
@@ -160,6 +162,42 @@ pub struct Binding {
     /// `min`, `max`, `any` or `all` (MK-14.9, D-073).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub combine: Option<String>,
+    /// The boundary conditions of a field state (MK-9.6, D-091); edges not named are
+    /// insulated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary: Option<Boundary>,
+}
+
+/// Boundary conditions of a field (MK-9.6, D-091): `periodic`, or edges held at values.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct Boundary {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub periodic: bool,
+    /// `left = e`: the field is held at `e` on that edge (`left`, `right`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fixed: Vec<FixedEdge>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FixedEdge {
+    pub edge: String,
+    pub value: Expr,
+}
+
+/// A grid (MK-9.5, D-091): the cells over which field state is stored, one axis per
+/// dimension, each an interval of a quantity cut into equal cells.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Grid {
+    pub id: Id,
+    pub name: String,
+    pub axes: Vec<GridAxis>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GridAxis {
+    pub lo: Expr,
+    pub hi: Expr,
+    pub cells: Expr,
 }
 
 impl Binding {
@@ -494,6 +532,9 @@ pub struct Model {
     /// Declared enumerations (MK-2.2, D-049).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enums: Vec<EnumDecl>,
+    /// Grids of field state (MK-9.5, D-091).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grids: Vec<Grid>,
     /// Declared functions (MK-10.3, D-048).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub functions: Vec<FunctionDecl>,

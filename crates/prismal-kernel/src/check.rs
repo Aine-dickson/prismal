@@ -3,7 +3,7 @@
 //! The checker types every expression with expected-type propagation (D-030, D-032),
 //! reports the static diagnostics of MK section 18, and produces a compiled model.
 
-use crate::eval::{Arr, CDraw, CExpr, Value};
+use crate::eval::{Arr, CDraw, CEdge, CExpr, CFieldOp, CGrid, FieldOp, Value};
 use crate::random::fnv1a;
 use crate::model::*;
 use prismal_ir::*;
@@ -32,6 +32,8 @@ pub(crate) struct Scope<'a> {
     pub index: &'a HashMap<Id, usize>,
     /// Declared functions compiled so far, with their types (D-048).
     pub funcs: &'a HashMap<Id, (Rc<CExpr>, Type)>,
+    /// The model's grids, compiled (D-091).
+    pub grids: &'a HashMap<Id, CGrid>,
 }
 
 pub(crate) struct Tc<'a, 'b> {
@@ -50,6 +52,9 @@ pub(crate) struct Tc<'a, 'b> {
     /// While checking a flow: the number of its first noise in the model and how many it
     /// has so far (D-090).
     pub noise: Option<(usize, usize)>,
+    /// While checking a field's initial value, definition or flow: its grid. A field of that
+    /// grid is read in the cell evaluated (D-091).
+    pub pointwise: Option<Id>,
 }
 
 type Typed = Option<(CExpr, Type)>;
@@ -69,7 +74,7 @@ fn is_dimensioned(t: &Type) -> bool {
 
 impl<'a, 'b> Tc<'a, 'b> {
     pub fn new(scope: &'b Scope<'a>, diags: &'b mut Vec<Diagnostic>, element: &str) -> Self {
-        Tc { scope, diags, element: element.to_string(), lambda: vec![], closed: None, payload: None, draws: None, noise: None }
+        Tc { scope, diags, element: element.to_string(), lambda: vec![], closed: None, payload: None, draws: None, noise: None, pointwise: None }
     }
 
     /// MK-E18: a declared function's body reads something other than its parameters,
@@ -159,7 +164,12 @@ impl<'a, 'b> Tc<'a, 'b> {
                     let what = format!("the {} `{}`", role_word(b.role), b.name);
                     self.open_read(&what)
                 }
-                Some((i, b)) => Some((CExpr::Load(i), b.ty.clone())),
+                // D-091: in a pointwise expression a field of its grid is read in the cell.
+                Some((i, b)) => match (&b.ty, &self.pointwise) {
+                    (Type::Field { grid, of }, Some(p)) if grid == p => Some((CExpr::FieldAt(i), (**of).clone())),
+                    (Type::Field { .. }, Some(_)) => self.err("MK-E31", format!("`{}` lies on another grid; a pointwise expression reads fields of its own grid", b.name)),
+                    _ => Some((CExpr::Load(i), b.ty.clone())),
+                },
                 None => self.err("MK-E00", format!("unknown binding `{ref}`", ref = r#ref)),
             },
             Expr::Fn { r#fn } => match self.scope.funcs.get(r#fn) {
@@ -282,6 +292,15 @@ impl<'a, 'b> Tc<'a, 'b> {
             Expr::Bin { bin, l, r } => self.binary(*bin, l, r, exp),
             Expr::Call { call, args } => self.call(*call, args),
             Expr::Draw { draw, args } => self.draw(*draw, args, exp),
+            // `T(0.5 m)`: a field read at a coordinate (D-091).
+            Expr::Apply { apply, args } if self.field_ref(apply).is_some() => {
+                let (i, grid, of) = self.field_ref(apply)?;
+                if args.len() != 1 {
+                    return self.err("MK-E01", "a field is read at one coordinate: `T(0.5 m)`".into());
+                }
+                let x = self.expect(&args[0], &Type::Quantity { dim: grid.dim })?;
+                Some((CExpr::Field(Box::new(self.field_op(i, grid, FieldOp::Sample(x))?)), of))
+            }
             Expr::Apply { apply, args } => {
                 let (fc, ft) = self.expr(apply, None)?;
                 let (params, result) = match ft {
@@ -567,6 +586,28 @@ impl<'a, 'b> Tc<'a, 'b> {
     }
 
     fn call(&mut self, f: Func, args: &[Expr]) -> Typed {
+        // D-091: operations on a field take its name.
+        let on_field = matches!(f, Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean) || (matches!(f, Func::Min | Func::Max) && args.len() == 1);
+        if on_field {
+            let Some((i, grid, of)) = args.first().filter(|_| args.len() == 1).and_then(|a| self.field_ref(a)) else {
+                return self.err("MK-E01", format!("{} takes the name of a field: `{}(T)`", func_word(f), func_word(f)));
+            };
+            let Type::Quantity { dim } = of else { return self.err("MK-E01", "fields hold numbers and quantities".into()) };
+            let (op, ty) = match f {
+                Func::Laplacian => (FieldOp::Laplacian, dim.div(&grid.dim.pow(Ratio::int(2)))),
+                Func::Gradient => (FieldOp::Gradient, dim.div(&grid.dim)),
+                Func::Integral => (FieldOp::Integral, dim.mul(&grid.dim)),
+                Func::Mean => (FieldOp::Mean, dim),
+                Func::Min => (FieldOp::Min, dim),
+                _ => (FieldOp::Max, dim),
+            };
+            let local = matches!(op, FieldOp::Laplacian | FieldOp::Gradient);
+            let here = self.scope.model.bindings[i].ty.clone();
+            if local && !matches!((&here, &self.pointwise), (Type::Field { grid: g, .. }, Some(p)) if g == p) {
+                return self.err("MK-E32", format!("`{}` reads a field's neighbours, so it is written where the field is: in a flow or definition of a field of its grid (MK-9.7)", func_word(f)));
+            }
+            return Some((CExpr::Field(Box::new(self.field_op(i, grid, op)?)), Type::Quantity { dim: ty }));
+        }
         let n = if matches!(f, Func::Min | Func::Max | Func::Atan2) { 2 } else { 1 };
         if args.len() != n {
             return self.err("MK-E01", format!("{f:?} takes {n} arguments"));
@@ -590,7 +631,74 @@ impl<'a, 'b> Tc<'a, 'b> {
                 let rt = if f == Func::Atan2 { Type::real() } else { Type::Quantity { dim } };
                 Some((CExpr::Call(f, vec![a, bc]), rt))
             }
+            Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean => unreachable!(),
         }
+    }
+
+    /// The field an expression names, with its grid and the type of its values (D-091).
+    fn field_ref(&self, e: &Expr) -> Option<(usize, CGrid, Type)> {
+        let Expr::Ref { r#ref } = e else { return None };
+        let (i, b) = self.binding(r#ref)?;
+        match &b.ty {
+            Type::Field { grid, of } => Some((i, *self.scope.grids.get(grid)?, (**of).clone())),
+            _ => None,
+        }
+    }
+
+    /// An operation on field `i`, with the conditions on its edges (MK-9.6): held at a value,
+    /// periodic, or insulated where nothing is said. Edge values read no field.
+    fn field_op(&mut self, i: usize, grid: CGrid, op: FieldOp) -> Option<CFieldOp> {
+        let b = &self.scope.model.bindings[i];
+        let of = match &b.ty {
+            Type::Field { of, .. } => (**of).clone(),
+            _ => return None,
+        };
+        let saved = self.pointwise.take();
+        let mut edges = [CEdge::Insulated, CEdge::Insulated];
+        if let Some(bd) = &b.boundary {
+            if bd.periodic {
+                edges = [CEdge::Periodic, CEdge::Periodic];
+            }
+            for f in &bd.fixed {
+                let side = if f.edge == "left" { 0 } else { 1 };
+                if let Some(v) = self.expect(&f.value, &of) {
+                    edges[side] = CEdge::Fixed(v);
+                }
+            }
+        }
+        self.pointwise = saved;
+        Some(CFieldOp { op, binding: i, grid, edges })
+    }
+
+    /// A field's initial value, definition or flow, of type `want` in each cell: a function of
+    /// the cell's coordinate (`T(x in rod) = ...`, `der(T(x)) = ...`) or an expression of the
+    /// fields of its grid (D-091).
+    fn pointwise_expr(&mut self, e: &Expr, grid: &Id, want: &Type) -> Option<CExpr> {
+        let g = *self.scope.grids.get(grid)?;
+        let saved = self.pointwise.replace(grid.clone());
+        let c = match e {
+            Expr::Lambda { lambda } if lambda.params.len() == 1 => {
+                self.lambda.push(vec![Type::Quantity { dim: g.dim }]);
+                let c = self.expect(&lambda.body, want);
+                self.lambda.pop();
+                c
+            }
+            _ => self.expect(e, want),
+        };
+        self.pointwise = saved;
+        c
+    }
+}
+
+fn func_word(f: Func) -> &'static str {
+    match f {
+        Func::Laplacian => "laplacian",
+        Func::Gradient => "gradient",
+        Func::Integral => "integral",
+        Func::Mean => "mean",
+        Func::Min => "min",
+        Func::Max => "max",
+        _ => "function",
     }
 }
 
@@ -668,6 +776,7 @@ fn derivative_type(t: &Type) -> Option<Type> {
         Type::Quantity { dim } => Type::Quantity { dim: dim.mul(&inv_t) },
         Type::Vector { space, dim } => Type::Vector { space: space.clone(), dim: dim.mul(&inv_t) },
         Type::Point { space } => Type::Vector { space: space.clone(), dim: Dim::length().mul(&inv_t) },
+        Type::Field { grid, of } => Type::Field { grid: grid.clone(), of: Box::new(derivative_type(of)?) },
         _ => return None,
     })
 }
@@ -704,6 +813,7 @@ pub fn show(t: &Type) -> String {
         Type::Tuple { items } => format!("Tuple<{}>", items.iter().map(show).collect::<Vec<_>>().join(", ")),
         Type::Enum { r#enum, .. } => r#enum.rsplit('.').next().unwrap_or(r#enum).to_string(),
         Type::Function { params, result } => format!("({}) -> {}", params.iter().map(show).collect::<Vec<_>>().join(", "), show(result)),
+        Type::Field { grid, of } => format!("Field<{}, {}>", grid.rsplit('.').next().unwrap_or(grid), show(of)),
     }
 }
 
@@ -781,7 +891,8 @@ fn check_functions(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, 
             continue;
         }
         let snapshot = funcs.clone();
-        let scope = Scope { spaces, model, index, funcs: &snapshot };
+        let no_grids = HashMap::new();
+        let scope = Scope { spaces, model, index, funcs: &snapshot, grids: &no_grids };
         let mut tc = Tc::new(&scope, diags, &f.id);
         tc.closed = Some(f.name.clone());
         tc.lambda.push(f.params.iter().map(|p| p.ty.clone()).collect());
@@ -804,22 +915,44 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         }
     }
     let funcs = check_functions(spaces, model, &index, &mut diags);
-    let scope = Scope { spaces, model, index: &index, funcs: &funcs };
+    let grids = check_grids(spaces, model, &index, &funcs, &mut diags);
+    let scope = Scope { spaces, model, index: &index, funcs: &funcs, grids: &grids };
+    check_boundaries(model, &mut diags);
 
     // Bindings: initial definitions and definitions.
     let mut cbindings = vec![];
     for b in &model.bindings {
         let mut tc = Tc::new(&scope, &mut diags, &b.id);
-        let init = match (&b.init, b.role) {
-            (Some(e), r) if r.is_stored() => tc.expect(e, &b.ty),
-            (None, Role::Input) => None,
-            (None, r) if r.is_stored() => {
+        // D-091: a field's initial value and definition are evaluated in each cell.
+        let field = match &b.ty {
+            Type::Field { grid, of } => match grids.get(grid) {
+                Some(g) if matches!(**of, Type::Quantity { .. }) && matches!(b.role, Role::Continuous | Role::Derived) => Some((*g, grid.clone(), (**of).clone())),
+                Some(_) => {
+                    tc.err("MK-E01", format!("`{}` is a field: state or derived, holding numbers or quantities (MK-9.4)", b.name));
+                    None
+                }
+                None => {
+                    tc.err("MK-E00", format!("unknown grid `{grid}`"));
+                    None
+                }
+            },
+            _ => None,
+        };
+        let init = match (&b.init, b.role, &field) {
+            (Some(e), Role::Continuous, Some((_, grid, of))) => tc.pointwise_expr(e, grid, of),
+            (Some(e), r, _) if r.is_stored() => tc.expect(e, &b.ty),
+            (None, Role::Input, _) => None,
+            (None, r, _) if r.is_stored() => {
                 tc.err("MK-E00", format!("stored binding `{}` has no initial definition (MK-6.7)", b.name));
                 None
             }
             _ => None,
         };
         let def = match (&b.def, b.role) {
+            (Some(e), Role::Derived) if field.is_some() => {
+                let (_, grid, of) = field.as_ref().unwrap();
+                tc.pointwise_expr(e, grid, of)
+            }
             (Some(e), Role::Derived) => tc.expect(e, &b.ty),
             (None, Role::Derived) => {
                 tc.err("MK-E00", format!("derived binding `{}` has no definition", b.name));
@@ -847,6 +980,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             def,
             intervenable: b.is_intervenable(),
             when,
+            field: field.map(|f| f.0),
         });
     }
 
@@ -859,6 +993,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         }
         let len = match &b.ty {
             Type::Quantity { .. } => 1,
+            Type::Field { grid, .. } => grids.get(grid).map(|g| g.n).unwrap_or(0),
             Type::Vector { space, .. } | Type::Point { space } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(0),
             _ => {
                 diags.push(Diagnostic { code: "MK-E01", message: format!("continuous state `{}` must be a quantity, vector or point", b.name), element: b.id.clone() });
@@ -890,7 +1025,17 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             None => continue,
         };
         tc.noise = Some((noise_keys.len(), 0));
-        let compiled = tc.expect(&f.expr, &want);
+        let compiled = match &want {
+            // D-091: a field's flow is evaluated in each cell.
+            Type::Field { grid, of } => {
+                let c = tc.pointwise_expr(&f.expr, grid, of);
+                if tc.noise.is_some_and(|n| n.1 > 0) {
+                    tc.err("MK-E29", "`noise` in the flow of a field (independent noise in every cell) is a later extension (MK-14.16)".into());
+                }
+                c
+            }
+            _ => tc.expect(&f.expr, &want),
+        };
         let n_noise = tc.noise.map(|n| n.1).unwrap_or(0);
         noise_keys.extend((0..n_noise).map(|k| fnv1a(&format!("{}|noise|{k}", f.id))));
         if n_noise > 0 {
@@ -1084,7 +1229,76 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         functions: funcs,
         is_static,
         noise: noise_keys,
+        grids,
     })
+}
+
+/// MK-9.5 (D-091): grids, each one axis (an interval of a quantity, cut into equal cells)
+/// whose bounds and number of cells are constant numbers.
+fn check_grids(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, funcs: &HashMap<Id, (Rc<CExpr>, Type)>, diags: &mut Vec<Diagnostic>) -> HashMap<Id, CGrid> {
+    let mut out = HashMap::new();
+    let no_grids = HashMap::new();
+    let scope = Scope { spaces, model, index, funcs, grids: &no_grids };
+    for g in &model.grids {
+        let mut tc = Tc::new(&scope, diags, &g.id);
+        if g.axes.len() != 1 {
+            tc.err("MK-E01", format!("grid `{}` has {} axes; grids have one axis in this version (MK-9.5)", g.name, g.axes.len()));
+            continue;
+        }
+        let a = &g.axes[0];
+        let constant = |tc: &mut Tc, e: &Expr, want: Option<&Type>| -> Option<(f64, Type)> {
+            let (c, t) = match want {
+                Some(w) => (tc.expect(e, w)?, w.clone()),
+                None => tc.expr(e, None)?,
+            };
+            let vals = vec![Value::Num(f64::NAN); model.bindings.len()];
+            let ctx = crate::eval::Ctx { vals: &vals, der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            match c.eval(&ctx) {
+                Ok(Value::Num(x)) if x.is_finite() => Some((x, t)),
+                _ => {
+                    tc.err("MK-E01", format!("the bounds and cells of grid `{}` are numbers, not values of the model", g.name));
+                    None
+                }
+            }
+        };
+        let Some((lo, lt)) = constant(&mut tc, &a.lo, None) else { continue };
+        let Type::Quantity { dim } = lt else {
+            tc.err("MK-E01", format!("grid `{}` spans an interval of a quantity", g.name));
+            continue;
+        };
+        let Some((hi, _)) = constant(&mut tc, &a.hi, Some(&Type::Quantity { dim })) else { continue };
+        let Some((n, _)) = constant(&mut tc, &a.cells, Some(&Type::real())) else { continue };
+        if !(hi > lo) || n.fract() != 0.0 || !(1.0..=1_000_000.0).contains(&n) {
+            tc.err("MK-E01", format!("grid `{}` goes from low to high in a whole number of cells, from 1 to 1000000", g.name));
+            continue;
+        }
+        let n = n as usize;
+        out.insert(g.id.clone(), CGrid { lo, h: (hi - lo) / n as f64, n, dim });
+    }
+    out
+}
+
+/// MK-9.6 (D-091): boundary conditions name the edges `left` and `right` of a field, once
+/// each, or make it periodic, not both.
+fn check_boundaries(model: &Model, diags: &mut Vec<Diagnostic>) {
+    for b in &model.bindings {
+        let Some(bd) = &b.boundary else { continue };
+        let mut err = |m: String| diags.push(Diagnostic { code: "MK-E33", message: m, element: b.id.clone() });
+        if !matches!(b.ty, Type::Field { .. }) {
+            err(format!("`{}` is not a field; boundary conditions belong to fields (MK-9.6)", b.name));
+            continue;
+        }
+        if bd.periodic && !bd.fixed.is_empty() {
+            err(format!("the boundary of `{}` is periodic or holds edges at values, not both", b.name));
+        }
+        for (k, f) in bd.fixed.iter().enumerate() {
+            if !["left", "right"].contains(&f.edge.as_str()) {
+                err(format!("a field on a grid of one axis has the edges `left` and `right`, not `{}`", f.edge));
+            } else if bd.fixed[..k].iter().any(|g| g.edge == f.edge) {
+                err(format!("the edge `{}` of `{}` is held twice", f.edge, b.name));
+            }
+        }
+    }
 }
 
 fn const_value(c: &CExpr) -> Option<f64> {
@@ -1262,7 +1476,7 @@ pub fn check_intervention(cm: &CModel, ops: &[Op]) -> Result<Vec<COp>, Vec<Diagn
     if !diags.is_empty() {
         return Err(diags);
     }
-    let scope = Scope { spaces: &cm.spaces, model: &cm.ir, index: &cm.index, funcs: &cm.functions };
+    let scope = Scope { spaces: &cm.spaces, model: &cm.ir, index: &cm.index, funcs: &cm.functions, grids: &cm.grids };
     let mut tc = Tc::new(&scope, &mut diags, "intervention");
     let out = check_ops(&mut tc, &cm.ir, &cm.index, ops, true);
     if diags.is_empty() {
@@ -1275,7 +1489,7 @@ pub fn check_intervention(cm: &CModel, ops: &[Op]) -> Result<Vec<COp>, Vec<Diagn
 /// Compiles an expression over a checked model (used by observations and expectations).
 pub fn compile_expr(cm: &CModel, e: &Expr, expected: Option<&Type>) -> Result<(CExpr, Type), Vec<Diagnostic>> {
     let mut diags = vec![];
-    let scope = Scope { spaces: &cm.spaces, model: &cm.ir, index: &cm.index, funcs: &cm.functions };
+    let scope = Scope { spaces: &cm.spaces, model: &cm.ir, index: &cm.index, funcs: &cm.functions, grids: &cm.grids };
     let mut tc = Tc::new(&scope, &mut diags, "expression");
     let r = match expected {
         Some(t) => tc.expect(e, t).map(|c| (c, t.clone())),

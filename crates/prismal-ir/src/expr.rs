@@ -90,6 +90,12 @@ pub enum Func {
     Min,
     Max,
     Atan2,
+    /// Of a field, at the cell of a pointwise expression (MK-9.7, D-091).
+    Laplacian,
+    Gradient,
+    /// Of a whole field: `h` times the sum of its cells, and their mean (MK-9.8, D-091).
+    Integral,
+    Mean,
 }
 
 /// Distributions a `draw` samples (D-083, MK-10.4).

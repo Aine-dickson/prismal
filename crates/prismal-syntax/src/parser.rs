@@ -399,6 +399,27 @@ impl<'a> Parser<'a> {
         if self.is_word("event") {
             return Ok(vec![Member::Event(self.event_decl()?)]);
         }
+        // `grid rod(x: [0 m, 1 m], cells: 100)` (D-091); contextual, before a name.
+        if self.is_word("grid") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            self.bump();
+            let name = self.name("a grid name")?;
+            let args = self.args()?;
+            return Ok(vec![Member::Grid { name, args, span: self.since(start) }]);
+        }
+        // `boundary T { left = e; right = e }`, `boundary T periodic` (D-091).
+        if self.is_word("boundary") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            self.bump();
+            let field = self.name("a field name")?;
+            if self.eat_word("periodic") {
+                return Ok(vec![Member::Boundary { field, periodic: true, fixed: vec![], span: self.since(start) }]);
+            }
+            let fixed = self.block(|p| {
+                let edge = p.name("an edge (`left`, `right`)")?;
+                p.expect_punct("=")?;
+                Ok(vec![(edge, p.expr()?)])
+            })?;
+            return Ok(vec![Member::Boundary { field, periodic: false, fixed, span: self.since(start) }]);
+        }
         // `for b in drops { event ... }`: events repeated per member (D-057).
         if self.eat_word("for") {
             let var = self.name("a member name")?;
@@ -561,7 +582,18 @@ impl<'a> Parser<'a> {
         let start = self.span();
         let notes = self.notes_before(start.line);
         let name = self.name("a binding name")?;
-        let params = if self.is_punct("(") { Some(self.typed_params()?) } else { None };
+        // `T(x in rod)`: a field over a grid (D-091).
+        let over = if self.is_punct("(") && matches!(self.peek_at(1), Tok::Ident(_)) && matches!(self.peek_at(2), Tok::Ident(w) if w == "in") {
+            self.bump();
+            let x = self.name("a coordinate name")?;
+            self.expect_word("in")?;
+            let g = self.name("a grid name")?;
+            self.expect_punct(")")?;
+            Some((x, g))
+        } else {
+            None
+        };
+        let params = if over.is_none() && self.is_punct("(") { Some(self.typed_params()?) } else { None };
         self.expect_punct(":")?;
         let ty = self.type_expr()?;
         let value = if self.eat_punct("=") { Some(self.expr_no_in()?) } else { None };
@@ -592,7 +624,7 @@ impl<'a> Parser<'a> {
                 },
             }
         }
-        Ok(Decl { role, name, params, ty, value, range, modifiers, notes, span: self.since(start) })
+        Ok(Decl { role, name, params, over, ty, value, range, modifiers, notes, span: self.since(start) })
     }
 
     /// A flow, or `for b in row { flows }` (D-055).
@@ -667,6 +699,14 @@ impl<'a> Parser<'a> {
             member = Some(Expr { kind: ExprKind::Name(first.text.clone()), span: first.span });
             target = self.name("a state name")?;
         }
+        // `der(T(x))`: a field's flow with its coordinate (D-091).
+        let coord = if member.is_none() && self.eat_punct("(") {
+            let x = self.name("a coordinate name")?;
+            self.expect_punct(")")?;
+            Some(x)
+        } else {
+            None
+        };
         self.expect_punct(")")?;
         let contribute = if self.eat_punct("+=") {
             true
@@ -676,7 +716,7 @@ impl<'a> Parser<'a> {
             return Err(self.unexpected("`=` or `+=`"));
         };
         let expr = self.expr()?;
-        Ok(FlowStmt { target, member, each: None, contribute, expr, span: self.since(start) })
+        Ok(FlowStmt { target, member, each: None, coord, contribute, expr, span: self.since(start) })
     }
 
     fn event_decl(&mut self) -> P<EventDecl> {

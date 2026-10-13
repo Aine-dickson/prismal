@@ -304,6 +304,7 @@ impl<'a> Printer<'a> {
             Type::Quantity { dim: d } if d.is_none() => "Real".into(),
             Type::Quantity { dim: d } => named(d).map(str::to_string).unwrap_or_else(|| format!("Quantity<{}>", dim(d))),
             Type::Instant { dim: d } => format!("Instant<{}>", dim(d)),
+            Type::Field { grid, of } => format!("Field<{}, {}>", grid.rsplit('.').next().unwrap_or(grid), self.ty(of)),
             Type::Point { space } if Some(space) == self.model.default_space.as_ref() => "Point".into(),
             Type::Point { space } => format!("Point<{}>", self.space_name(space)),
             Type::Vector { space, dim: d } => {
@@ -430,6 +431,10 @@ impl<'a> Printer<'a> {
                     Func::Min => "min",
                     Func::Max => "max",
                     Func::Atan2 => "atan2",
+                    Func::Laplacian => "laplacian",
+                    Func::Gradient => "gradient",
+                    Func::Integral => "integral",
+                    Func::Mean => "mean",
                 };
                 format!("{name}({})", args.iter().map(p).collect::<Vec<_>>().join(", "))
             }
@@ -494,6 +499,18 @@ impl<'a> Printer<'a> {
         if !enums.is_empty() {
             sections.push(enums.join("
 "));
+        }
+        // Grids (D-091).
+        let grids: Vec<String> = m
+            .grids
+            .iter()
+            .map(|g| {
+                let a = &g.axes[0];
+                format!("{INDENT}grid {}(x: [{}, {}], cells: {})", g.name, self.expr(&a.lo), self.expr(&a.hi), self.expr(&a.cells))
+            })
+            .collect();
+        if !grids.is_empty() {
+            sections.push(grids.join("\n"));
         }
         for o in &m.objects {
             sections.push(self.object(o));
@@ -569,6 +586,23 @@ impl<'a> Printer<'a> {
                 let _ = write!(s, "{INDENT}}}");
             }
             sections.push(s);
+        }
+        // Boundary conditions of fields (D-091).
+        let bounds: Vec<String> = m
+            .bindings
+            .iter()
+            .filter_map(|b| {
+                let bd = b.boundary.as_ref()?;
+                Some(if bd.periodic {
+                    format!("{INDENT}boundary {} periodic", b.name)
+                } else {
+                    let edges: Vec<String> = bd.fixed.iter().map(|f| format!("{INDENT}{INDENT}{} = {}", f.edge, self.expr(&f.value))).collect();
+                    format!("{INDENT}boundary {} {{\n{}\n{INDENT}}}", b.name, edges.join("\n"))
+                })
+            })
+            .collect();
+        if !bounds.is_empty() {
+            sections.push(bounds.join("\n"));
         }
         // Consecutive events of one loop print as one `for` block (D-057).
         let top: Vec<&Event> = m.events.iter().filter(|e| e.process.is_none()).collect();
@@ -683,6 +717,14 @@ impl<'a> Printer<'a> {
             return (b.name.clone(), "Angle".into());
         }
         match (&b.ty, &b.def) {
+            // A field: `T(x in rod): Real` (D-091).
+            (Type::Field { grid, of }, _) => {
+                let x = match b.def.as_ref().or(b.init.as_ref()) {
+                    Some(Expr::Lambda { lambda }) => lambda.names.first().cloned().unwrap_or_else(|| "x".into()),
+                    _ => "x".into(),
+                };
+                (format!("{}({x} in {})", b.name, grid.rsplit('.').next().unwrap_or(grid)), self.ty(of))
+            }
             (Type::Function { params, result }, Some(Expr::Lambda { lambda })) => {
                 let names: Vec<String> = (0..params.len()).map(|i| lambda.names.get(i).cloned().unwrap_or_else(|| format!("x{}", i + 1))).collect();
                 let ps: Vec<String> = names.iter().zip(params).map(|(n, t)| format!("{n}: {}", self.ty(t))).collect();
@@ -698,6 +740,11 @@ impl<'a> Printer<'a> {
             Some(m) => format!("{}.{}", self.member(m, &[]), self.field_name(&f.target)),
             None => self.binding_name(&f.target),
         };
+        // A field's flow with its coordinate: `der(T(x)) = ...` (D-091).
+        if let Expr::Lambda { lambda } = &f.expr {
+            let x = lambda.names.first().cloned().unwrap_or_else(|| "x".into());
+            return format!("der({target}({x})) {op} {}", self.expr(&f.expr));
+        }
         format!("der({target}) {op} {}", self.expr(&f.expr))
     }
 
