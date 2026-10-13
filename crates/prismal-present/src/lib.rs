@@ -172,6 +172,31 @@ pub fn flat(v: &Value) -> Vec<f64> {
 /// Default simulated span of a lesson run whose case gives no end (PK-9.5).
 pub const LESSON_HORIZON: f64 = 60.0;
 
+/// The configuration of a run started again from `t0` with the parameter values `run` has
+/// at `t` (D-085): every parameter becomes an override of its current value, and the action
+/// log is emptied. What else the learner or the lesson did to the run is not kept.
+pub fn restarted(run: &prismal_runtime::Run, t: f64) -> Config {
+    let cm = &run.model;
+    let vals = run.state_at(t.min(run.end_time()));
+    let mut cfg = run.config.clone();
+    cfg.log.clear();
+    for (i, b) in cm.bindings.iter().enumerate() {
+        if b.role != prismal_ir::Role::Parameter {
+            continue;
+        }
+        let e = match (&vals[i], &b.ty) {
+            (Value::Num(x), prismal_ir::Type::Quantity { dim }) if dim.is_none() => prismal_ir::build::lit(*x),
+            (Value::Num(x), prismal_ir::Type::Quantity { dim }) => Expr::Num { num: *x, unit: Some(prismal_ir::Unit { text: text::unit_text(dim), scale: 1.0, offset: 0.0, dim: *dim }) },
+            (Value::Bool(v), _) => Expr::Bool { bool: *v },
+            (Value::Case(c), prismal_ir::Type::Enum { cases, .. }) => Expr::Case { case: cases[*c as usize].clone() },
+            _ => continue,
+        };
+        cfg.params.retain(|(id, _)| id != &b.id);
+        cfg.params.push((b.id.clone(), e));
+    }
+    cfg
+}
+
 /// The run configuration of a case (RC section 16 defaults, overridden by the case).
 pub fn config(cm: &CModel, case: &RunCase, default_end: f64) -> Result<Config, String> {
     let end = match &case.end {

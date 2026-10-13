@@ -257,3 +257,83 @@ fn population_decay_is_binomial() {
     }
     assert!(chi < 26.1, "chi-square {chi}");
 }
+
+const POOL: &str = r#"model Pool {
+  param { n0: Real = 1000 in [1, 5000]; lambda: Frequency = 0.5 /s }
+  discrete { n: Real = n0 }
+  event decay on random(lambda * n) { set n = n - 1 }
+}
+
+presentation PoolLab for Pool {
+  panel controls {
+    slider(n0, range: [1, 5000])
+    button(reset)
+    button(restart)
+    button(reseed)
+  }
+  view spread: plot(x: [0, 20], y: [0, 100]) {
+    histogram(n at t0 + 1 s over 100 runs, bins: 100)
+  }
+}
+
+presentation PoolLesson for Pool {
+  observe { left = n at t0 }
+  timeline {
+    scene s {
+      beat a { run rate 1; wait 1 s }
+      beat b { intervene { set n0 = 10 }; restart; hold; wait 1 s }
+    }
+  }
+}
+
+run lesson of Pool with PoolLesson {
+  expect { left == 10 exactly }
+}
+"#;
+
+/// `restart` runs again from `t0` with the parameters as they are; `reset` goes back to the
+/// starting values; `reseed` restarts with the next seed (D-085).
+#[test]
+fn restart_keeps_the_settings() {
+    use prismal_present::interact::Interactive;
+    let prog = program(POOL);
+    let mut lab = Interactive::new(&prog, "PoolLab", Config::until(5.0)).unwrap_or_else(|d| panic!("{d:?}"));
+    let cm = prog.model("Pool");
+    let n_at = |lab: &Interactive, t: f64| lab.session.current.state_at(t)[cm.idx("Pool.n")].num();
+    let id = |lab: &Interactive, name: &str| lab.frame().rep(name).unwrap().id.clone();
+    lab.seek(2.0);
+    lab.set_control(&id(&lab, "slider.1"), prismal_ir::build::lit(10.0)).unwrap();
+    assert!(n_at(&lab, 2.0) > 100.0, "a setting does not change the molecules of a run under way");
+    lab.press(&id(&lab, "button.2")).unwrap();
+    assert_eq!(n_at(&lab, 0.0), 10.0, "restart: from t0 with n0 = 10");
+    assert_eq!(lab.t, 0.0);
+    lab.press(&id(&lab, "button.3")).unwrap();
+    assert_eq!((n_at(&lab, 0.0), lab.seed()), (10.0, 1), "reseed keeps the setting");
+    lab.press(&id(&lab, "button.1")).unwrap();
+    assert_eq!(n_at(&lab, 0.0), 1000.0, "reset: the presentation's own starting values");
+    // In a lesson (the case above): after `restart` the run holds at t0 with ten nuclei.
+    for case in &prog.doc.runs {
+        let r = run_case(&prog, case).unwrap();
+        assert!(r.failures().is_empty(), "{}: {:?}", case.name, r.failures());
+    }
+}
+
+/// Counts lie on a grid of step 1, coarser than bins of 0.2: one bar per count, as wide as
+/// the step, and no empty bins between them (PK-6.3e, D-085).
+#[test]
+fn histogram_bars_follow_the_grid_of_the_values() {
+    use prismal_present::frame::Shape;
+    use prismal_present::interact::Interactive;
+    let prog = program(POOL);
+    let mut lab = Interactive::new(&prog, "PoolLab", Config::until(5.0).param("Pool.n0", prismal_ir::build::lit(12.0))).unwrap();
+    lab.seek(0.0);
+    let f = lab.frame();
+    let r = f.reps().find(|r| r.kind == "histogram").unwrap();
+    let Shape::Polygon { points } = &r.shape else { panic!() };
+    // Every bar edge is at a half-integer.
+    for p in &points[1..points.len() - 1] {
+        assert!(((p[0] - 0.5).fract()).abs() < 1e-9 || p[0] == 0.0 || p[0] == 20.0, "{p:?}");
+    }
+    let tops: f64 = points.windows(2).filter(|w| w[0][1] == w[1][1] && w[0][1] > 0.0).map(|w| w[0][1]).sum();
+    assert_eq!(tops, 100.0, "every run in one bar");
+}

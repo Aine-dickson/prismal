@@ -505,6 +505,8 @@ pub enum Action {
     /// `request E` or `request E(value)` (D-050).
     Request(Name, Option<Expr>),
     Reset,
+    /// `restart`: the run again from `t0` with the parameters as they are (D-085).
+    Restart,
     Branch,
     /// `wait learner [limit d] [fallback { ... }]` (D-067)
     WaitLearner { limit: Option<Expr>, fallback: Vec<Action> },

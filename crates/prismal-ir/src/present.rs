@@ -331,6 +331,8 @@ pub enum Action {
     Hold,
     Seek { time: Expr },
     Reset,
+    /// The run again from `t0`, with the parameter values of the instant shown (D-085).
+    Restart,
     Branch,
     Intervene { ops: Vec<Op> },
     Request {
@@ -453,7 +455,7 @@ pub enum RevealStyle {
 impl Action {
     /// Run-directing actions apply in written order at a beat's start (PK-9.2a, D-033).
     pub fn is_run_directing(&self) -> bool {
-        matches!(self, Action::Seek { .. } | Action::Reset | Action::Branch | Action::Intervene { .. } | Action::Request { .. } | Action::Run { .. } | Action::Hold)
+        matches!(self, Action::Seek { .. } | Action::Reset | Action::Restart | Action::Branch | Action::Intervene { .. } | Action::Request { .. } | Action::Run { .. } | Action::Hold)
     }
 }
 

@@ -905,13 +905,13 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
             CKind::Equation { name: q.name.clone(), lhs: q.lhs.clone(), rhs: q.rhs.clone(), refs, live }
         }
         "button" => {
-            let msg = "the name of an event declared `on request` (D-027), or `reset`, `undo`, `redo` (D-069) or `reseed` (D-084)";
+            let msg = "the name of an event declared `on request` (D-027), or `reset`, `undo`, `redo` (D-069) or `reseed` (D-084) or `restart` (D-085)";
             let label_or = |w: &str| match rep.prop("label") {
                 Some(Arg::Text { text }) => text.clone(),
                 _ => w.to_string(),
             };
             match rep.sources.first() {
-                Some(Arg::Word { word }) if ["reset", "undo", "redo", "reseed"].contains(&word.as_str()) => CKind::RunButton { control: word.clone(), label: label_or(word) },
+                Some(Arg::Word { word }) if ["reset", "undo", "redo", "reseed", "restart"].contains(&word.as_str()) => CKind::RunButton { control: word.clone(), label: label_or(word) },
                 Some(Arg::Element { element }) => {
                     let Some(ev) = cm.ir.events.iter().find(|e| &e.id == element) else { return Err(needs(msg)) };
                     if !matches!(ev.trigger, prismal_ir::Trigger::Request) {
@@ -1161,22 +1161,45 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             match values {
                 Ok(xs) => {
                     let w = (hi - lo) / *bins as f64;
-                    let mut counts = vec![0usize; *bins];
-                    let mut outside = 0;
-                    for &v in &xs {
-                        if v >= *lo && v <= *hi {
-                            counts[(((v - lo) / w) as usize).min(bins - 1)] += 1;
-                        } else {
-                            outside += 1;
+                    let outside = xs.iter().filter(|&&v| !(v >= *lo && v <= *hi)).count();
+                    // Values on a grid coarser than the bins (counts, shares of a few
+                    // molecules) get one bar per grid value, centred on it and as wide as the
+                    // grid's step, so that no empty bins fall between them (PK-6.3e).
+                    let bars: Vec<(f64, f64, usize)> = match grid_step(&xs) {
+                        Some((start, d)) if d > w * (1.0 + 1e-9) => {
+                            let mut bars: Vec<(f64, f64, usize)> = vec![];
+                            for &v in xs.iter().filter(|&&v| v >= *lo && v <= *hi) {
+                                let k = ((v - start) / d).round();
+                                let c = start + k * d;
+                                match bars.iter_mut().find(|b| (b.0 + d / 2.0 - c).abs() < d / 4.0) {
+                                    Some(b) => b.2 += 1,
+                                    None => bars.push((c - d / 2.0, c + d / 2.0, 1)),
+                                }
+                            }
+                            bars.sort_by(|a, b| a.0.total_cmp(&b.0));
+                            bars
                         }
-                    }
-                    // The outline of the bars, from the axis up and along each bar.
+                        _ => {
+                            let mut counts = vec![0usize; *bins];
+                            for &v in xs.iter().filter(|&&v| v >= *lo && v <= *hi) {
+                                counts[(((v - lo) / w) as usize).min(bins - 1)] += 1;
+                            }
+                            counts.iter().enumerate().map(|(k, c)| (lo + k as f64 * w, lo + (k + 1) as f64 * w, *c)).collect()
+                        }
+                    };
+                    // The outline of the bars, from the axis up and along each bar, back to
+                    // the axis between bars that do not touch.
                     let mut pts = vec![[*lo, 0.0]];
-                    for (k, c) in counts.iter().enumerate() {
-                        let (a, b) = (lo + k as f64 * w, lo + (k + 1) as f64 * w);
+                    for (a, b, c) in &bars {
+                        let (a, b) = (a.max(*lo), b.min(*hi));
+                        if pts.last().is_some_and(|p| p[0] < a - 1e-12 * (hi - lo)) {
+                            pts.push([pts.last().unwrap()[0], 0.0]);
+                            pts.push([a, 0.0]);
+                        }
                         pts.push([a, *c as f64]);
                         pts.push([b, *c as f64]);
                     }
+                    pts.push([pts.last().unwrap()[0], 0.0]);
                     pts.push([*hi, 0.0]);
                     let n = xs.len() as f64;
                     let mean = xs.iter().sum::<f64>() / n;
@@ -1413,6 +1436,23 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
     };
     let (color, line) = (style_word(&r.rep, "color"), style_word(&r.rep, "line"));
     RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape, text, highlighted: false, valid: None, opacity: None, drawn: None, label, drag, click, color, line, color_to: None, color_mix: None, scale: None, breaks }
+}
+
+/// The grid the finite values lie on, `start + k d`, when there are at least two distinct
+/// values and every one is within a millionth of `d` of a grid point (D-085).
+fn grid_step(xs: &[f64]) -> Option<(f64, f64)> {
+    let mut v: Vec<f64> = xs.iter().copied().filter(|x| x.is_finite()).collect();
+    v.sort_by(f64::total_cmp);
+    v.dedup_by(|a, b| (*a - *b).abs() <= 1e-12 * b.abs().max(1.0));
+    if v.len() < 2 {
+        return None;
+    }
+    let d = v.windows(2).map(|p| p[1] - p[0]).fold(f64::INFINITY, f64::min);
+    let on = v.iter().all(|x| {
+        let k = (x - v[0]) / d;
+        (k - k.round()).abs() < 1e-6
+    });
+    on.then_some((v[0], d))
 }
 
 /// The most steps a staircase draws; a value that changed more often is drawn from samples.
