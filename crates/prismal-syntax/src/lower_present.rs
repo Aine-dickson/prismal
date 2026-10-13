@@ -13,12 +13,12 @@ use prismal_ir::{Expr, Id, Model, Space};
 use std::collections::HashMap;
 
 /// Runtime controls a `button` can offer instead of an event (PK-6.3, D-069).
-pub const RUN_CONTROLS: &[&str] = &["reset", "undo", "redo"];
+pub const RUN_CONTROLS: &[&str] = &["reset", "undo", "redo", "reseed"];
 
 /// Representation kinds of the first slice (PK-6.3).
 const KINDS: &[&str] = &[
     "marker", "arrow", "segment", "polyline", "polygon", "circle", "ellipse", "arc", "trace", "function_graph", "series_plot", "axes", "grid", "label",
-    "equation", "formula", "table", "slider", "number_input", "toggle", "button", "group", "text", "title",
+    "equation", "formula", "table", "slider", "number_input", "toggle", "button", "group", "text", "title", "histogram",
 ];
 
 /// The named options each representation kind takes, besides `when` (D-081). A name not in
@@ -36,6 +36,7 @@ fn options(kind: &str) -> &'static [&'static str] {
         "slider" => &["range", "step", "ends"],
         "number_input" => &["range", "step"],
         "button" => &["label"],
+        "histogram" => &["bins", "color", "line"],
         "group" => &["at", "rotate", "scale"],
         _ => &[],
     }
@@ -262,9 +263,10 @@ impl PresCx<'_, '_> {
                     let element = self.cx.events.get(n).or_else(|| self.equations.get(n)).cloned().unwrap();
                     Arg::Element { element }
                 }
-                _ => match &a.every {
-                    Some(dt) => Arg::Sampled { expr: self.expr(&a.value), every: self.expr(dt) },
-                    None => Arg::Expr { expr: self.expr(&a.value) },
+                _ => match (&a.every, &a.ensemble) {
+                    (Some(dt), _) => Arg::Sampled { expr: self.expr(&a.value), every: self.expr(dt) },
+                    (None, Some((at, n))) => Arg::Ensemble { expr: self.expr(&a.value), at: self.expr(at), runs: self.expr(n) },
+                    (None, None) => Arg::Expr { expr: self.expr(&a.value) },
                 },
             };
             match &a.name {
@@ -360,7 +362,7 @@ impl PresCx<'_, '_> {
         let kind = match v.kind.text.as_str() {
             "spatial" => {
                 let space = match v.args.first() {
-                    Some(ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Name(s), span }, every: None }) => match self.cx.space_by_name(s) {
+                    Some(ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Name(s), span }, every: None, ensemble: None }) => match self.cx.space_by_name(s) {
                         Some(id) => id,
                         None => {
                             self.err("SX-E03", format!("unknown space `{s}`"), *span);
@@ -505,7 +507,7 @@ impl PresCx<'_, '_> {
             None => Schedule::Run,
             Some(ast::Schedule::Live) => Schedule::Live,
             Some(ast::Schedule::Every(e)) => Schedule::Every { period: self.expr(e) },
-            Some(ast::Schedule::At(e)) => Schedule::At { time: self.expr(e) },
+            Some(ast::Schedule::At(e, runs)) => Schedule::At { time: self.expr(e), runs: runs.as_ref().map(|n| self.expr(n)) },
             Some(ast::Schedule::On(ev, micro)) => Schedule::On { event: self.cx.event_id(ev), microstep: *micro },
             Some(ast::Schedule::Over(i)) => {
                 let from = match &i.lo {
@@ -880,6 +882,24 @@ pub(crate) fn run(
                 }
             },
             ExprKind::On(x, ev, micro) => Some(Subject::On { expr: cx.expr(x, &[]), event: cx.event_id(ev), microstep: *micro }),
+            // `mean(ends)`, `deviation(ends)` (D-084).
+            ExprKind::Call(f, args) if matches!(&f.kind, ExprKind::Name(n) if n == "mean" || n == "deviation") => {
+                let ExprKind::Name(stat) = &f.kind else { unreachable!() };
+                let statistic = if stat == "mean" { prismal_ir::present::Statistic::Mean } else { prismal_ir::present::Statistic::Deviation };
+                match args.as_slice() {
+                    [ast::Arg { value: ast::Expr { kind: ExprKind::Name(n), span }, .. }] => match observation(n) {
+                        Some(o) => Some(Subject::Statistic { statistic, observation: o }),
+                        None => {
+                            cx.err("SX-E03", format!("no observation `{n}` in the run's presentation"), *span);
+                            None
+                        }
+                    },
+                    _ => {
+                        cx.err("SX-E08", format!("`{stat}` takes the name of an observation: `{stat}(ends)`"), e.span);
+                        None
+                    }
+                }
+            }
             ExprKind::BeatTime { start, beat: b } => match beat(&b.text) {
                 Some(id) if *start => Some(Subject::BeatStart { beat: id }),
                 Some(id) => Some(Subject::BeatEnd { beat: id }),
@@ -889,7 +909,7 @@ pub(crate) fn run(
                 }
             },
             _ => {
-                cx.err("SX-E08", "an expectation is about an observation, `(e on E)`, or `start of` / `end of` a beat", e.span);
+                cx.err("SX-E08", "an expectation is about an observation, `mean(obs)` or `deviation(obs)`, `(e on E)`, or `start of` / `end of` a beat", e.span);
                 None
             }
         }

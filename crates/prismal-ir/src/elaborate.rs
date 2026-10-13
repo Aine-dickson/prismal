@@ -1207,6 +1207,7 @@ impl<'a> PCx<'a, '_> {
             Arg::Expr { expr } => Arg::Expr { expr: self.e(s, expr) },
             Arg::Range { lo, hi } => Arg::Range { lo: self.e(s, lo), hi: self.e(s, hi) },
             Arg::Sampled { expr, every } => Arg::Sampled { expr: self.e(s, expr), every: self.e(s, every) },
+            Arg::Ensemble { expr, at, runs } => Arg::Ensemble { expr: self.e(s, expr), at: self.e(s, at), runs: self.e(s, runs) },
             Arg::Scale { scale } => Arg::Scale { scale: crate::present::Scale { quantity: self.e(s, &scale.quantity), px: scale.px } },
             Arg::Text { .. } | Arg::Word { .. } | Arg::Element { .. } | Arg::Texts { .. } => a.clone(),
         }
@@ -1351,7 +1352,7 @@ fn presentation<'a>(cx: &mut Cx<'a>, root: &'a Model, p: &Presentation) -> Prese
                 },
                 schedule: match &o.schedule {
                     Schedule::Every { period } => Schedule::Every { period: pc.e(&s, period) },
-                    Schedule::At { time } => Schedule::At { time: pc.e(&s, time) },
+                    Schedule::At { time, runs } => Schedule::At { time: pc.e(&s, time), runs: runs.as_ref().map(|r| pc.e(&s, r)) },
                     Schedule::Over { from, to, lo_closed, hi_closed } => Schedule::Over { from: pc.e(&s, from), to: to.as_ref().map(|t| pc.e(&s, t)), lo_closed: *lo_closed, hi_closed: *hi_closed },
                     other => other.clone(),
                 },

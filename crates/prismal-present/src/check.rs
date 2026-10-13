@@ -101,7 +101,7 @@ pub fn check_presentation(cm: &CModel, p: &Presentation) -> Vec<PDiag> {
         }
         match &o.schedule {
             Schedule::Every { period } => expr(cm, period, Some(&duration), &o.id, &mut out),
-            Schedule::At { time: t } => expr(cm, t, Some(&time), &o.id, &mut out),
+            Schedule::At { time: t, .. } => expr(cm, t, Some(&time), &o.id, &mut out),
             Schedule::On { event, .. } => {
                 event_exists(cm, event, &o.id, &mut out);
             }

@@ -7,7 +7,7 @@ use prismal_present::expect::run_case;
 use prismal_runtime::{run, Config, RunStatus};
 use prismal_syntax::{compile, format};
 
-const SRC: &str = "model Decay {
+const SRC: &str = r#"model Decay {
   param { lambda: Frequency = 0.5 /s }
   discrete { n: Real = 1000 }
   event decay on random(lambda * n) { set n = n - 1 }
@@ -39,8 +39,22 @@ model Flip {
   event back on random(k2 * b) { set a = a + 1; set b = b - 1 }
 }
 
+presentation DecayLab for Decay {
+  panel controls {
+    button(reset, label: "Replay")
+    button(reseed, label: "Another run")
+    label(n)
+  }
+  view spread: plot(x: [300, 440], y: [0, 30]) {
+    histogram(n at t0 + 2 s over 100 runs, bins: 14)
+  }
+}
+
 presentation DecayChecks for Decay {
-  observe { n_end = n at t0 + 2 s }
+  observe {
+    n_end = n at t0 + 2 s
+    ends  = n at t0 + 2 s over 100 runs
+  }
 }
 
 run same of Decay with DecayChecks {
@@ -48,7 +62,17 @@ run same of Decay with DecayChecks {
   until t0 + 2 s
   expect { n_end == 378 exactly }
 }
-";
+
+run many of Decay with DecayChecks {
+  config { seed = 42 }
+  until t0 + 2 s
+  expect {
+    mean(ends) == 367.88 within 8
+    deviation(ends) in [11, 20]
+    ends[1] == 378 exactly
+  }
+}
+"#;
 
 fn final_of(model: &str, binding: &str, t_end: f64, seeds: u64) -> Vec<f64> {
     let prog = program(SRC);
@@ -139,6 +163,9 @@ fn canonical_text_prints_random_triggers_draws_and_seeds() {
     assert!(text.contains("event decay on random(lambda * n) {"), "{text}");
     assert!(text.contains("set x = x + normal(0 m, s)"), "{text}");
     assert!(text.contains("config { seed = 42 }"), "{text}");
+    assert!(text.contains("histogram(n at t0 + 2 s over 100 runs, bins: 14)"), "{text}");
+    assert!(text.contains("= n at t0 + 2 s over 100 runs"), "{text}");
+    assert!(text.contains("mean(ends) == 367.88 within 8"), "{text}");
 }
 
 fn codes(src: &str) -> Vec<String> {
@@ -165,4 +192,68 @@ fn draws_only_in_events_and_rates_without_continuous_state() {
 fn declared_names_shadow_distributions() {
     let d = codes("model M { fn normal(x: Real): Real = 2 * x\n derived { y: Real = normal(3) } }");
     assert!(d.is_empty(), "{d:?}");
+}
+
+/// `reset` replays the run shown; `reseed` starts again with the next seed (D-084).
+#[test]
+fn a_lab_replays_or_draws_another_run() {
+    use prismal_present::interact::Interactive;
+    let prog = program(SRC);
+    let mut lab = Interactive::new(&prog, "DecayLab", Config::until(5.0)).unwrap_or_else(|d| panic!("{d:?}"));
+    let times = |i: &Interactive| i.session.current.log.iter().map(|e| e.t.to_bits()).collect::<Vec<_>>();
+    let first = times(&lab);
+    let id = |lab: &Interactive, k: usize| lab.frame().rep(&format!("button.{k}")).unwrap().id.clone();
+    let (reset, reseed) = (id(&lab, 1), id(&lab, 2));
+    lab.press(&reset).unwrap();
+    assert_eq!(times(&lab), first, "reset replays the same run");
+    assert_eq!(lab.seed(), 0);
+    lab.press(&reseed).unwrap();
+    assert_eq!(lab.seed(), 1);
+    assert_ne!(times(&lab), first, "another seed, another run");
+    assert_eq!(lab.t, 0.0, "a new run shows t0");
+    let r = lab.frame().rep(&reseed).unwrap().text.clone();
+    assert_eq!(r, "button Another run: reseed");
+}
+
+/// A histogram counts the runs of an ensemble in bins over the plot's x range (D-084); its
+/// first run is the lab's own, and it is computed again only when the run changes.
+#[test]
+fn a_histogram_of_many_runs() {
+    use prismal_present::frame::Shape;
+    use prismal_present::interact::Interactive;
+    let prog = program(SRC);
+    let mut lab = Interactive::new(&prog, "DecayLab", Config::until(5.0)).unwrap_or_else(|d| panic!("{d:?}"));
+    let hist = |lab: &Interactive| {
+        let f = lab.frame();
+        let r = f.reps().find(|r| r.kind == "histogram").unwrap().clone();
+        let Shape::Polygon { points } = &r.shape else { panic!("{:?}", r.shape) };
+        let total: f64 = points[1..points.len() - 1].chunks(2).map(|c| c[0][1]).sum();
+        (total, r.text.clone())
+    };
+    let (total, text) = hist(&lab);
+    assert!(text.starts_with("histogram of n at 2 s over 100 runs: mean "), "{text}");
+    assert!(total > 95.0 && total <= 100.0, "nearly every run falls inside the axis: {total}");
+    let before = text;
+    lab.press(&lab.frame().rep("button.2").unwrap().id.clone()).unwrap();
+    assert_ne!(hist(&lab).1, before, "another seed, another ensemble");
+}
+
+
+/// The whole distribution, not only its mean: the count at the half-life against the
+/// binomial law in eight bins, by a chi-square test at the 0.1 % level (26.1 for 8 degrees of
+/// freedom).
+#[test]
+fn population_decay_is_binomial() {
+    let half = 2f64.ln() / 0.5;
+    let xs = final_of("Decay", "Decay.n", half, 1000);
+    let lnf = prismal_kernel::random::ln_factorial;
+    let pmf = |k: f64| (lnf(1000.0) - lnf(k) - lnf(1000.0 - k) - 1000.0 * 2f64.ln()).exp();
+    let mut chi = 0.0;
+    for b in 0..8 {
+        let (lo, hi) = (460 + 10 * b, 470 + 10 * b);
+        let e = (lo..hi).map(|k| pmf(k as f64)).sum::<f64>() * xs.len() as f64;
+        let o = xs.iter().filter(|&&x| x >= lo as f64 && x < hi as f64).count() as f64;
+        chi += (o - e) * (o - e) / e;
+    }
+    assert!(chi < 26.1, "chi-square {chi}");
 }

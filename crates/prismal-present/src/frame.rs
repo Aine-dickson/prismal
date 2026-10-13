@@ -145,7 +145,7 @@ pub const LINES: &[&str] = &["solid", "dashed", "dotted"];
 fn styled(kind: &str) -> (bool, bool) {
     match kind {
         "marker" => (true, false),
-        "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" => (true, true),
+        "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" => (true, true),
         _ => (false, false),
     }
 }
@@ -453,8 +453,10 @@ pub enum CKind {
     Graph { f: CExpr, lo: f64, hi: f64, label: String },
     /// The path of a point, sampled every `every` seconds from the run's start (PK-6.3).
     Trace { pos: CExpr, every: f64, label: String },
-    /// A scalar against elapsed time, sampled every `every` seconds (PK-6.3).
-    Series { value: CExpr, every: f64, label: String },
+    /// A scalar against elapsed time, sampled every `every` seconds (PK-6.3). `steps`: the
+    /// value changes only at transitions (it reads no continuous state and no time), so it
+    /// is drawn as a staircase (D-084).
+    Series { value: CExpr, every: f64, label: String, steps: bool },
     /// `idx`: the binding shown, whose display unit the text uses (MK-3.12).
     Label { value: CExpr, ty: Type, label: String, idx: Option<usize> },
     /// An author's text: the pieces between values, the values with their types and, for a
@@ -476,10 +478,17 @@ pub enum CKind {
     Table { value: CExpr, tys: Vec<Type>, every: f64, columns: Vec<String> },
     Axes,
     Grid,
+    /// How many of `runs` runs give `expr` at `at` in each of `bins` equal bins over the
+    /// plot's x range (D-084). The values are kept for the run configuration they came from.
+    Histogram { expr: Expr, at: f64, runs: usize, bins: usize, label: String, cache: EnsembleCache },
     /// Members drawn with a shared transform: placed at `at`, turned by `rotate`, scaled by
     /// `scale` (D-043).
     Group { at: Option<CExpr>, rotate: Option<CExpr>, scale: Option<CExpr>, members: Vec<CRep> },
 }
+
+/// The values of an ensemble and the configuration of the run they were computed for: a
+/// histogram recomputes its runs only when the learner changes the run (D-084).
+pub type EnsembleCache = std::rc::Rc<std::cell::RefCell<Option<(prismal_runtime::Config, Vec<f64>)>>>;
 
 /// A group's transform in model coordinates (D-043): `p -> at + k R(angle) p` for points,
 /// `v -> k R(angle) v` for vectors.
@@ -669,6 +678,37 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
             }
             CKind::Graph { f: c, lo: x.0, hi: x.1, label: label(e) }
         }
+        "histogram" => {
+            let ViewCtx::Plot { dims, x, .. } = ctx else { return Err(d("PK-E05", "a histogram belongs in a plot view: x for the values, y for how many runs give them".into())) };
+            let what = "an ensemble source: `n at t0 + 7 s over 200 runs`";
+            let Some(Arg::Ensemble { expr: e, at, runs }) = rep.sources.first() else { return Err(needs(what)) };
+            let (_, ty) = ce(e, None)?;
+            let Type::Quantity { dim } = ty else { return Err(needs("a number or a quantity")) };
+            if dim != dims.0 {
+                return Err(d("PK-E04", format!("the values have dimension {dim}, the plot's x axis {} (PK-7.3)", dims.0)));
+            }
+            if !dims.1.is_none() {
+                return Err(d("PK-E04", "a histogram's y axis counts runs: a range of plain numbers, `y: [0, 50]` (PK-7.3)".into()));
+            }
+            ce(at, Some(&Type::Instant { dim: Dim::time() }))?;
+            let at = number(cm, at).map_err(|m| d("PK-E02", m))?;
+            let whole = |e: &Expr, lo: f64, hi: f64, what: &str| -> Result<usize, Vec<PDiag>> {
+                match number(cm, e) {
+                    Ok(n) if n.fract() == 0.0 && n >= lo && n <= hi => Ok(n as usize),
+                    Ok(n) => Err(d("PK-E05", format!("{what} is a whole number from {lo} to {hi}, not {n}"))),
+                    Err(m) => Err(d("PK-E02", m)),
+                }
+            };
+            let runs = whole(runs, 1.0, crate::data::MAX_RUNS as f64, "a number of runs")?;
+            let bins = match prop_expr(rep, "bins") {
+                Some(b) => whole(b, 1.0, 1000.0, "a number of bins")?,
+                None => 20,
+            };
+            if !(x.1 > x.0) {
+                return Err(d("PK-E05", "a histogram needs an x range from low to high".into()));
+            }
+            CKind::Histogram { expr: e.clone(), at, runs, bins, label: label(e), cache: Default::default() }
+        }
         "trace" | "series_plot" => {
             let Some(Arg::Sampled { expr: e, every }) = rep.sources.first() else {
                 return Err(needs("a sampled source: `pos every 0.02 s`"));
@@ -694,7 +734,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
                 if dim != dims.1 {
                     return Err(d("PK-E04", format!("the series has dimension {dim}, the plot's y axis {} (PK-7.3)", dims.1)));
                 }
-                CKind::Series { value: c, every: dt, label: label(e) }
+                CKind::Series { value: c, every: dt, label: label(e), steps: piecewise_constant(cm, e) }
             }
         }
         "label" => {
@@ -865,13 +905,13 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
             CKind::Equation { name: q.name.clone(), lhs: q.lhs.clone(), rhs: q.rhs.clone(), refs, live }
         }
         "button" => {
-            let msg = "the name of an event declared `on request` (D-027), or `reset`, `undo` or `redo` (D-069)";
+            let msg = "the name of an event declared `on request` (D-027), or `reset`, `undo`, `redo` (D-069) or `reseed` (D-084)";
             let label_or = |w: &str| match rep.prop("label") {
                 Some(Arg::Text { text }) => text.clone(),
                 _ => w.to_string(),
             };
             match rep.sources.first() {
-                Some(Arg::Word { word }) if ["reset", "undo", "redo"].contains(&word.as_str()) => CKind::RunButton { control: word.clone(), label: label_or(word) },
+                Some(Arg::Word { word }) if ["reset", "undo", "redo", "reseed"].contains(&word.as_str()) => CKind::RunButton { control: word.clone(), label: label_or(word) },
                 Some(Arg::Element { element }) => {
                     let Some(ev) = cm.ir.events.iter().find(|e| &e.id == element) else { return Err(needs(msg)) };
                     if !matches!(ev.trigger, prismal_ir::Trigger::Request) {
@@ -1107,18 +1147,66 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             };
             (Shape::Polyline { points: pts }, text)
         }
-        CKind::Series { value, every, label } => {
+        CKind::Histogram { expr, at, runs, bins, label, cache } => {
+            let ViewCtx::Plot { x: (lo, hi), .. } = ctx else { unreachable!() };
+            let cached = cache.borrow().as_ref().filter(|c| c.0 == run.config).map(|c| c.1.clone());
+            let values = match cached {
+                Some(v) => Ok(v),
+                None => crate::data::ensemble(run, expr, *at, *runs).map(|vs| {
+                    let xs: Vec<f64> = vs.iter().map(|v| if let Value::Num(x) = v { *x } else { f64::NAN }).collect();
+                    *cache.borrow_mut() = Some((run.config.clone(), xs.clone()));
+                    xs
+                }),
+            };
+            match values {
+                Ok(xs) => {
+                    let w = (hi - lo) / *bins as f64;
+                    let mut counts = vec![0usize; *bins];
+                    let mut outside = 0;
+                    for &v in &xs {
+                        if v >= *lo && v <= *hi {
+                            counts[(((v - lo) / w) as usize).min(bins - 1)] += 1;
+                        } else {
+                            outside += 1;
+                        }
+                    }
+                    // The outline of the bars, from the axis up and along each bar.
+                    let mut pts = vec![[*lo, 0.0]];
+                    for (k, c) in counts.iter().enumerate() {
+                        let (a, b) = (lo + k as f64 * w, lo + (k + 1) as f64 * w);
+                        pts.push([a, *c as f64]);
+                        pts.push([b, *c as f64]);
+                    }
+                    pts.push([*hi, 0.0]);
+                    let n = xs.len() as f64;
+                    let mean = xs.iter().sum::<f64>() / n;
+                    let dev = if n > 1.0 { (xs.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0)).sqrt() } else { 0.0 };
+                    let more = if outside > 0 { format!("; {outside} outside the axis") } else { String::new() };
+                    let text = format!("histogram of {label} at {} s over {runs} runs: mean {}, deviation {}{more}", fmt_num(at - run.config.t0), fmt_num(mean), fmt_num(dev));
+                    (Shape::Polygon { points: pts }, text)
+                }
+                Err(m) => (Shape::Status { status: m.clone() }, format!("histogram of {label}: not available ({m})")),
+            }
+        }
+        CKind::Series { value, every, label, steps } => {
             let t0 = run.config.t0;
             let mut prev: Option<f64> = None;
             let mut pts: Vec<[f64; 2]> = vec![];
-            for s in samples(run, t, *every) {
+            // A value that changes only at transitions holds until it changes: a staircase
+            // with a step at each instant it changed, up to `STEPS` steps (D-084).
+            let staircase = if *steps { stairs(run, value, t) } else { None };
+            for s in samples(run, t, *every).filter(|_| staircase.is_none()) {
                 if let Ok(Value::Num(y)) = run.eval_state(value, &run.state_at(s), s) {
+                    // A flowing value that jumped breaks the path (D-078).
                     if prev.is_some_and(|a| jumped(run, value, a, s)) && !pts.is_empty() {
                         breaks.push(pts.len());
                     }
                     prev = Some(s);
                     pts.push([s - t0, y]);
                 }
+            }
+            if let Some(st) = staircase {
+                pts = st;
             }
             let text = match pts.last() {
                 Some(p) => format!("series of {label} against elapsed time: {} samples, last {} at {} s", pts.len(), fmt_num(p[1]), fmt_num(p[0])),
@@ -1325,6 +1413,74 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
     };
     let (color, line) = (style_word(&r.rep, "color"), style_word(&r.rep, "line"));
     RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape, text, highlighted: false, valid: None, opacity: None, drawn: None, label, drag, click, color, line, color_to: None, color_mix: None, scale: None, breaks }
+}
+
+/// The most steps a staircase draws; a value that changed more often is drawn from samples.
+const STEPS: usize = 4000;
+
+/// The staircase of a value that changes only at transitions, from `t0` to `t` (D-084): one
+/// step at each instant where its value changed, in elapsed time. `None` past `STEPS` steps.
+fn stairs(run: &Run, e: &CExpr, t: f64) -> Option<Vec<[f64; 2]>> {
+    let t0 = run.config.t0;
+    let mut pts: Vec<[f64; 2]> = vec![];
+    let mut k = 0;
+    while k < run.committed.len() && run.committed[k].t <= t {
+        let tau = run.committed[k].t;
+        // The last state committed at this instant.
+        while k + 1 < run.committed.len() && run.committed[k + 1].t == tau {
+            k += 1;
+        }
+        if let Ok(Value::Num(y)) = run.eval_state(e, &run.committed[k].vals, tau) {
+            match pts.last() {
+                None => pts.push([tau - t0, y]),
+                Some(&[_, py]) if py != y => {
+                    if pts.len() > 2 * STEPS {
+                        return None;
+                    }
+                    pts.push([tau - t0, py]);
+                    pts.push([tau - t0, y]);
+                }
+                _ => {}
+            }
+        }
+        k += 1;
+    }
+    let last = pts.last().copied()?;
+    pts.push([t - t0, last[1]]);
+    Some(pts)
+}
+
+/// Whether `e` changes only at transitions: it reads, directly or through derived values,
+/// no continuous state, no time and no derivative (D-084).
+fn piecewise_constant(cm: &CModel, e: &Expr) -> bool {
+    let mut seen: Vec<Id> = vec![];
+    let mut stack: Vec<&Expr> = vec![e];
+    while let Some(x) = stack.pop() {
+        let mut ok = true;
+        x.walk(&mut |y| match y {
+            Expr::Builtin { builtin: prismal_ir::Builtin::T | prismal_ir::Builtin::Elapsed } | Expr::Der { .. } => ok = false,
+            _ => {}
+        });
+        if !ok {
+            return false;
+        }
+        for r in x.refs() {
+            if seen.contains(&r) {
+                continue;
+            }
+            let Some(b) = cm.ir.bindings.iter().find(|b| b.id == r) else { return false };
+            match b.role {
+                Role::Continuous => return false,
+                Role::Derived => match &b.def {
+                    Some(d) => stack.push(d),
+                    None => return false,
+                },
+                _ => {}
+            }
+            seen.push(r);
+        }
+    }
+    true
 }
 
 /// Whether the value of `e` jumped at an instant in `(a, b]`: changed by a transition (an

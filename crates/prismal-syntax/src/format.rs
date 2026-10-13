@@ -836,6 +836,7 @@ impl<'a> Printer<'a> {
             Arg::Scale { scale } => format!("{} -> {} px", self.expr(&scale.quantity), number(scale.px)),
             Arg::Word { word } => word.clone(),
             Arg::Sampled { expr, every } => format!("{} every {}", self.expr(expr), self.expr(every)),
+            Arg::Ensemble { expr, at, runs } => format!("{} at {} over {} runs", self.expr(expr), self.expr(at), self.expr(runs)),
             Arg::Element { element } => self.element_name(element),
             Arg::Texts { texts } => format!("({})", texts.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ")),
         }
@@ -1091,7 +1092,8 @@ impl<'a> Printer<'a> {
         let schedule = match &o.schedule {
             Schedule::Live => " live".to_string(),
             Schedule::Every { period } => format!(" every {}", self.expr(period)),
-            Schedule::At { time } => format!(" at {}", self.expr(time)),
+            Schedule::At { time, runs: None } => format!(" at {}", self.expr(time)),
+            Schedule::At { time, runs: Some(n) } => format!(" at {} over {} runs", self.expr(time), self.expr(n)),
             Schedule::On { event, microstep } => match microstep {
                 Some(n) => format!(" on {} microstep {n}", self.event_name(event)),
                 None => format!(" on {}", self.event_name(event)),
@@ -1354,6 +1356,17 @@ impl<'a> Printer<'a> {
                     Some(k) => format!("{name}[{k}]"),
                     None => name,
                 }
+            }
+            Subject::Statistic { statistic, observation } => {
+                let name = pres
+                    .and_then(|p| p.observations.iter().find(|o| &o.id == observation))
+                    .map(|o| o.name.clone())
+                    .unwrap_or_else(|| observation.rsplit('.').next().unwrap_or(observation).to_string());
+                let f = match statistic {
+                    prismal_ir::present::Statistic::Mean => "mean",
+                    prismal_ir::present::Statistic::Deviation => "deviation",
+                };
+                format!("{f}({name})")
             }
             Subject::On { expr, event, microstep } => match microstep {
                 Some(n) => format!("({} on {} microstep {n})", self.expr(expr), self.event_name(event)),

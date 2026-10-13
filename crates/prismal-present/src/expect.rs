@@ -83,6 +83,26 @@ impl Cx<'_, '_> {
                 let vals = self.run.on(&name, expr, *microstep);
                 vals.first().map(|v| Got::Values(flat(v))).ok_or(format!("`{name}` did not occur"))
             }
+            // D-084: the mean or the sample deviation of an observation's values.
+            Subject::Statistic { statistic, observation } => {
+                let o = self.pres.and_then(|p| p.observations.iter().find(|o| &o.id == observation)).ok_or(format!("unknown observation `{observation}`"))?;
+                let xs: Vec<f64> = match observe(self.cm, self.run, o, &self.run.config.log)? {
+                    Data::Series(s) => s.iter().map(|(_, v)| match v {
+                        prismal_kernel::Value::Num(x) => Ok(*x),
+                        prismal_kernel::Value::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
+                        other => Err(format!("`{}` has a value {other} that is not a number", o.name)),
+                    }).collect::<Result<_, _>>()?,
+                    Data::Value(prismal_kernel::Value::Num(x)) => vec![x],
+                    _ => return Err(format!("`{}` has no numbers to average", o.name)),
+                };
+                let n = xs.len() as f64;
+                let mean = xs.iter().sum::<f64>() / n;
+                Ok(Got::Values(vec![match statistic {
+                    prismal_ir::present::Statistic::Mean if n >= 1.0 => mean,
+                    prismal_ir::present::Statistic::Deviation if n >= 2.0 => (xs.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0)).sqrt(),
+                    _ => return Err(format!("`{}` has too few values ({n})", o.name)),
+                }]))
+            }
             Subject::BeatStart { beat } | Subject::BeatEnd { beat } => {
                 let pb = self.playback.ok_or("beat times need a timeline")?;
                 let b = pb.beats.iter().find(|b| &b.id == beat).ok_or(format!("beat `{beat}` was not played"))?;

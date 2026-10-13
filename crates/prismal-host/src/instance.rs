@@ -284,6 +284,8 @@ impl Instance {
             "t0": run.config.t0,
             "end": i.end_time(),
             "interventions": i.session.log().len(),
+            // The seed of the run shown (RC-13.1, D-084).
+            "seed": i.seed(),
             "diagnostics": run.diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
         })
     }

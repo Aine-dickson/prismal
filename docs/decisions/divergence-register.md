@@ -103,6 +103,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-081 | Syntax stability review: options and clauses, and version 1 | Accepted |
 | D-082 | Release numbering: 0.x releases, branch per minor version | Accepted |
 | D-083 | The stochastic slice: random events, draws and seeds | Accepted |
+| D-084 | Many runs: another seed in labs, ensembles, histograms, statistics, staircases | Accepted |
 
 ---
 
@@ -1569,3 +1570,27 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** MK-10.4, MK-15.3 (trigger table), MK-15.15 to MK-15.17, MK-E27, MK-E28; RC-13.5 to RC-13.8; 04-ir `random` trigger and `draw` expression; working syntax sections 1.1, 1.3, 1.5; `prismal_kernel::random` (Philox4x32-10 checked against the Random123 known answers, samplers checked by their moments); `CExpr::Draw`, `Ctx::draws`; the runtime's clocks and due counts, kept in snapshots; `Config::seed`, `RunConfig::seed`; parser, lowering and formatter; guide chapter 15 (Chance) and the reference; `prismal-present/tests/random.rs` (population and per-member decay against the exponential law, a random walk, a reversible reaction at equilibrium, seeds, resumed runs, diagnostics, shadowing).
 - **History:**
   - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30.
+
+## D-084: Many runs: another seed in labs, ensembles, histograms, statistics, staircases
+
+- **Status:** Accepted
+- **Original position:** D-083 gave runs a seed and left two needs of probability lessons open (PROJECT-STATE, 2026-10-13): a lab replays one seed, so a learner never sees that runs differ; and a lesson or a test could not show or check how results spread over many runs.
+- **Raised by:** the plan of D-083; the owner's guidance of 2026-10-13: reuse existing forms where they serve, and where they limit, choose what serves both old and new needs.
+- **Builds on:** D-069 (runtime-control buttons), D-070, D-078 (breaks of sampled paths), D-083; PK-3, PK-4, PK-6.3a.
+- **Question:** How does a learner draw another run, how are many runs shown and checked, and how is a value that changes only at events plotted?
+- **Options considered:**
+  1. **A seed control** (`slider(seed)`): the seed is configuration, not a model binding, so a control would need a new kind of target; a learner gains nothing from choosing seed 17 over 18.
+  2. **A runtime-control word** in the existing `button(...)` form, beside `reset`, `undo` and `redo` (taken): `button(reseed)`.
+  3. For ensembles, **a reference from a representation to an observation by name** (`histogram(ends)`): one declaration for views and tests, but representations have never referred to observations, and every place that compiles representations would need the presentation's observations.
+  4. **An ensemble source** (taken), the same kind of argument as the sampled source `pos every Δ` of PK-6.3a: `n at τ over 200 runs`. The same phrase is an observation's schedule, so tests and views write ensembles alike. Reuses the words `at` and `over`; adds the contextual word `runs`.
+  5. For statistics, **new expectation forms** (`ends has mean 500 within 6`) or **function calls on an observation** (taken): `mean(ends) == 500 within 6`, `deviation(ends) in [11, 21]`, in the existing expectation forms.
+- **Accepted position:** options 2, 4 and 5, under the owner's standing delegation of 2026-09-30.
+  - `button(reseed)` starts a new run from `t0` with the next seed; `reset` keeps replaying the run shown. Hosts receive the seed in the session's clock (`seed`).
+  - PK-3.8: `x at τ over n runs`, run `k` with the observed run's seed plus `k - 1` (the first run is the one observed), each ending at `τ`; at most 10 000 runs.
+  - PK-6.3e: `histogram(e at τ over n runs, bins: k)` in a plot view whose `x` axis has the values' dimension and whose `y` axis counts runs; drawn as one closed outline, so every renderer already draws it; computed again only when the run's configuration changes.
+  - PK-4.1a: `mean(obs)`, `deviation(obs)` (sample standard deviation).
+  - PK-6.3d: **found while checking a still of the guide's lab**: a `series_plot` of a count was drawn as separate points, because the breaks of D-078 cut the path at every event. A value that changes only at transitions is now drawn as an exact staircase from the committed states (up to 4000 steps); a flowing value that jumps keeps its breaks. Sampling a staircase every `Δ` was tried first and rejected: with 0.5 s samples a decay of single nuclei looked like jumps of 40.
+- **Reason:** each need is met by a form authors already know (a runtime-control button, an argument like a sampled source, a function in an expectation), with one new contextual word. The ensemble keeps the model free of presentation concerns: the runs are the run configuration's, varied only in seed.
+- **Consequences:** `Interactive::reseed`, `seed`; host `session_info.seed`; IR `Arg::Ensemble`, `Schedule::At.runs`, `Subject::Statistic`; `data::ensemble`, `MAX_RUNS`; `CKind::Histogram` with its cache, `piecewise_constant`, `stairs`; parser (`at τ over n runs` in arguments and schedules), lowering, formatter; word lists (`runs`, `reseed`); PK-3.8, PK-4.1a, PK-6.3d, PK-6.3e; 04-ir; working syntax; guide chapter 15 (Many runs) and the reference; tests: a lab that replays or draws another run, a histogram of many runs, statistics in a case, and the count at the half-life against the binomial law by a chi-square test (the earlier tests checked means only).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.

@@ -73,6 +73,34 @@ fn inside(t: f64, w: Option<(f64, f64, bool, bool)>) -> bool {
     }
 }
 
+/// The largest number of runs an ensemble takes (D-084).
+pub const MAX_RUNS: usize = 10_000;
+
+/// The value of `expr` at instant `t` in each of `n` runs of `run`'s model and
+/// configuration, with the seeds `seed`, `seed + 1`, ... from `run`'s own (D-084): the first
+/// is `run` itself. Each run ends at `t`, so the actions logged after it do not matter.
+pub fn ensemble(run: &Run, expr: &prismal_ir::Expr, t: f64, n: usize) -> Result<Vec<Value>, String> {
+    if n == 0 || n > MAX_RUNS {
+        return Err(format!("an ensemble takes from 1 to {MAX_RUNS} runs, not {n}"));
+    }
+    if t < run.config.t0 {
+        return Err(format!("instant {t} s is before the start of the run"));
+    }
+    let c = run.compile(expr);
+    let mut out = Vec::with_capacity(n);
+    for k in 0..n {
+        let mut cfg = run.config.clone();
+        cfg.seed = run.config.seed.wrapping_add(k as u64);
+        cfg.t_end = t;
+        let r = prismal_runtime::run(&run.model, cfg);
+        if let prismal_runtime::RunStatus::NotStarted(d) | prismal_runtime::RunStatus::Stopped(d) = &r.status {
+            return Err(format!("run with seed {}: {}", r.config.seed, d.message));
+        }
+        out.push(r.eval_state(&c, &r.state_at(t), t).map_err(|s| s.cause)?);
+    }
+    Ok(out)
+}
+
 /// Observes a run. `interventions` is the committed intervention log of the run's session.
 pub fn observe(cm: &CModel, run: &Run, obs: &Observation, interventions: &[Scheduled]) -> Result<Data, String> {
     let w = window(cm, run, &obs.schedule)?;
@@ -99,7 +127,15 @@ pub fn observe(cm: &CModel, run: &Run, obs: &Observation, interventions: &[Sched
                     let t = run.end_time();
                     Data::Value(eval(&run.state_at(t), t)?)
                 }
-                Schedule::At { time } => {
+                Schedule::At { time, runs: Some(n) } => {
+                    let t = number(cm, time)?;
+                    let n = number(cm, n)?;
+                    if n.fract() != 0.0 || n < 1.0 {
+                        return Err(format!("a number of runs is a whole number from 1, not {n}"));
+                    }
+                    Data::Series(ensemble(run, expr, t, n as usize)?.into_iter().map(|v| (t, v)).collect())
+                }
+                Schedule::At { time, runs: None } => {
                     let t = number(cm, time)?;
                     if t > run.end_time() {
                         // RC-12.4: a model without flows or timed events has one instant.

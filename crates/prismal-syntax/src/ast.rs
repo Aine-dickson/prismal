@@ -334,6 +334,8 @@ pub struct Arg {
     pub value: Expr,
     /// `pos every 0.02 s`: a representation source sampled over the run (PK-6.3).
     pub every: Option<Expr>,
+    /// `n at t0 + 7 s over 200 runs`: an ensemble source (D-084), the instant and the count.
+    pub ensemble: Option<(Expr, Expr)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -420,7 +422,8 @@ pub struct Observation {
 pub enum Schedule {
     Live,
     Every(Expr),
-    At(Expr),
+    /// `at τ`, or `at τ over n runs` (D-084).
+    At(Expr, Option<Expr>),
     On(Name, Option<u32>),
     Over(Interval),
 }
