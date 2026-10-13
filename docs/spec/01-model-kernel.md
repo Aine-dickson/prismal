@@ -773,7 +773,7 @@ Positions that elaborate accepted decisions without changing them are specified 
 | Item | Where it will be specified |
 |---|---|
 | Event location, microstep ordering, cascade and Zeno defaults, solver accuracy | `02-runtime-contract.md` |
-| Random streams and stochastic processes (D-013) | Done: MK-10.4, MK-15.15 to MK-15.17, RC-13.5 to RC-13.8 (D-083) |
+| Random streams and stochastic processes (D-013) | Done: MK-10.4, MK-15.15 to MK-15.17, RC-13.5 to RC-13.8 (D-083); rates that vary between events, MK-15.16, RC-13.8a (D-086); white noise in flows, MK-14.16, RC-13.9 (D-090) |
 | Random rates that depend on continuous state or time | Later extension of D-083 |
 | Algorithmic process mode (RUN-04) | Slice that needs it |
 | Field state evolution (D-010) | Slice that needs it |
