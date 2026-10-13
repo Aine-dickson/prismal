@@ -505,8 +505,10 @@ impl<'a> Printer<'a> {
             .grids
             .iter()
             .map(|g| {
-                let a = &g.axes[0];
-                format!("{INDENT}grid {}(x: [{}, {}], cells: {})", g.name, self.expr(&a.lo), self.expr(&a.hi), self.expr(&a.cells))
+                let axes: Vec<String> = g.axes.iter().zip(["x", "y"]).map(|(a, w)| format!("{w}: [{}, {}]", self.expr(&a.lo), self.expr(&a.hi))).collect();
+                let cells: Vec<String> = g.axes.iter().map(|a| self.expr(&a.cells)).collect();
+                let cells = if cells.len() == 1 { cells[0].clone() } else { format!("({})", cells.join(", ")) };
+                format!("{INDENT}grid {}({}, cells: {cells})", g.name, axes.join(", "))
             })
             .collect();
         if !grids.is_empty() {
@@ -1002,6 +1004,9 @@ impl<'a> Printer<'a> {
         let mut sections = vec![];
         if let Some(t) = &p.title {
             sections.push(format!("{INDENT}title \"{t}\""));
+        }
+        if let Some(e) = &p.until {
+            sections.push(format!("{INDENT}until {}", self.expr(e)));
         }
         for i in &p.instruments {
             let mut opts = vec![];

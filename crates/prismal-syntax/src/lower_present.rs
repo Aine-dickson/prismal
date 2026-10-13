@@ -22,7 +22,7 @@ pub const EXPLORE_CONTROLS: &[&str] = &["restart", "reseed"];
 /// Representation kinds of the first slice (PK-6.3).
 const KINDS: &[&str] = &[
     "marker", "arrow", "segment", "polyline", "polygon", "circle", "ellipse", "arc", "trace", "function_graph", "series_plot", "axes", "grid", "label",
-    "equation", "formula", "table", "slider", "number_input", "toggle", "button", "group", "text", "title", "histogram",
+    "equation", "formula", "table", "slider", "number_input", "toggle", "button", "group", "text", "title", "histogram", "heatmap",
 ];
 
 /// The named options each representation kind takes, besides `when` (D-081). A name not in
@@ -41,6 +41,7 @@ fn options(kind: &str) -> &'static [&'static str] {
         "number_input" => &["range", "step"],
         "button" => &["label"],
         "histogram" => &["bins", "color", "line"],
+        "heatmap" => &["range"],
         "group" => &["at", "rotate", "scale"],
         _ => &[],
     }
@@ -815,8 +816,15 @@ pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: 
     let mut timeline = None;
     let mut layout = None;
     let mut title = None;
+    let mut until = None;
     for it in &p.items {
         match it {
+            ast::PresItem::Until(e) => {
+                if until.is_some() {
+                    px.err("SX-E09", "one `until` per presentation", e.span);
+                }
+                until = Some(px.cx.expr(e, &[]));
+            }
             ast::PresItem::Title(t) => {
                 if title.is_some() {
                     px.err("SX-E09", "one title per presentation", p.name.span);
@@ -868,7 +876,7 @@ pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: 
             ast::PresItem::View(_) | ast::PresItem::Instrument { .. } => {}
         }
     }
-    Some(Presentation { id: id.clone(), name: id.clone(), model: model.id.clone(), observations, instruments, views, permissions, timeline, layout, notes: vec![], title })
+    Some(Presentation { id: id.clone(), name: id.clone(), model: model.id.clone(), observations, instruments, views, permissions, timeline, layout, notes: vec![], title, until })
 }
 
 pub(crate) fn run(

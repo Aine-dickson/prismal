@@ -3,7 +3,7 @@
 //! The checker types every expression with expected-type propagation (D-030, D-032),
 //! reports the static diagnostics of MK section 18, and produces a compiled model.
 
-use crate::eval::{Arr, CDraw, CEdge, CExpr, CFieldOp, CGrid, FieldOp, Value};
+use crate::eval::{Arr, CDraw, CEdge, CExpr, CFieldOp, CGrid, FieldOp, GridAxis, Value};
 use crate::random::fnv1a;
 use crate::model::*;
 use prismal_ir::*;
@@ -303,7 +303,7 @@ impl<'a, 'b> Tc<'a, 'b> {
                 if args.len() != 1 {
                     return self.err("MK-E01", "a field is read at one coordinate: `T(0.5 m)`".into());
                 }
-                let x = self.expect(&args[0], &Type::Quantity { dim: grid.dim })?;
+                let x = self.expect(&args[0], &self.coord_type(&grid))?;
                 Some((CExpr::Field(Box::new(self.field_op(i, grid, FieldOp::Sample(x))?)), of))
             }
             Expr::Apply { apply, args } => {
@@ -598,20 +598,26 @@ impl<'a, 'b> Tc<'a, 'b> {
                 return self.err("MK-E01", format!("{} takes the name of a field: `{}(T)`", func_word(f), func_word(f)));
             };
             let Type::Quantity { dim } = of else { return self.err("MK-E01", "fields hold numbers and quantities".into()) };
+            let axes = if grid.y.is_some() { 2 } else { 1 };
+            let q = |d: Dim| Type::Quantity { dim: d };
             let (op, ty) = match f {
-                Func::Laplacian => (FieldOp::Laplacian, dim.div(&grid.dim.pow(Ratio::int(2)))),
-                Func::Gradient => (FieldOp::Gradient, dim.div(&grid.dim)),
-                Func::Integral => (FieldOp::Integral, dim.mul(&grid.dim)),
-                Func::Mean => (FieldOp::Mean, dim),
-                Func::Min => (FieldOp::Min, dim),
-                _ => (FieldOp::Max, dim),
+                Func::Laplacian => (FieldOp::Laplacian, q(dim.div(&grid.dim.pow(Ratio::int(2))))),
+                // In the plane the gradient is a vector of the model's space.
+                Func::Gradient => match (grid.y, &self.scope.model.default_space) {
+                    (Some(_), Some(space)) => (FieldOp::Gradient, Type::Vector { space: space.clone(), dim: dim.div(&grid.dim) }),
+                    _ => (FieldOp::Gradient, q(dim.div(&grid.dim))),
+                },
+                Func::Integral => (FieldOp::Integral, q(dim.mul(&grid.dim.pow(Ratio::int(axes))))),
+                Func::Mean => (FieldOp::Mean, q(dim)),
+                Func::Min => (FieldOp::Min, q(dim)),
+                _ => (FieldOp::Max, q(dim)),
             };
             let local = matches!(op, FieldOp::Laplacian | FieldOp::Gradient);
             let here = self.scope.model.bindings[i].ty.clone();
             if local && !matches!((&here, &self.pointwise), (Type::Field { grid: g, .. }, Some(p)) if g == p) {
                 return self.err("MK-E32", format!("`{}` reads a field's neighbours, so it is written where the field is: in a flow or definition of a field of its grid (MK-9.7)", func_word(f)));
             }
-            return Some((CExpr::Field(Box::new(self.field_op(i, grid, op)?)), Type::Quantity { dim: ty }));
+            return Some((CExpr::Field(Box::new(self.field_op(i, grid, op)?)), ty));
         }
         let n = if matches!(f, Func::Min | Func::Max | Func::Atan2) { 2 } else { 1 };
         if args.len() != n {
@@ -640,6 +646,14 @@ impl<'a, 'b> Tc<'a, 'b> {
         }
     }
 
+    /// The coordinate of a grid's cells: a quantity on a line, a point of the model's plane.
+    fn coord_type(&self, g: &CGrid) -> Type {
+        match (g.y, &self.scope.model.default_space) {
+            (Some(_), Some(space)) => Type::Point { space: space.clone() },
+            _ => Type::Quantity { dim: g.dim },
+        }
+    }
+
     /// The field an expression names, with its grid and the type of its values (D-091).
     fn field_ref(&self, e: &Expr) -> Option<(usize, CGrid, Type)> {
         let Expr::Ref { r#ref } = e else { return None };
@@ -659,13 +673,13 @@ impl<'a, 'b> Tc<'a, 'b> {
             _ => return None,
         };
         let saved = self.pointwise.take();
-        let mut edges = [CEdge::Insulated, CEdge::Insulated];
+        let mut edges = [CEdge::Insulated, CEdge::Insulated, CEdge::Insulated, CEdge::Insulated];
         if let Some(bd) = &b.boundary {
             if bd.periodic {
-                edges = [CEdge::Periodic, CEdge::Periodic];
+                edges = [CEdge::Periodic, CEdge::Periodic, CEdge::Periodic, CEdge::Periodic];
             }
             for f in &bd.fixed {
-                let side = if f.edge == "left" { 0 } else { 1 };
+                let Some(side) = EDGES.iter().position(|e| *e == f.edge) else { continue };
                 if let Some(v) = self.expect(&f.value, &of) {
                     edges[side] = CEdge::Fixed(v);
                 }
@@ -683,7 +697,7 @@ impl<'a, 'b> Tc<'a, 'b> {
         let saved = self.pointwise.replace(grid.clone());
         let c = match e {
             Expr::Lambda { lambda } if lambda.params.len() == 1 => {
-                self.lambda.push(vec![Type::Quantity { dim: g.dim }]);
+                self.lambda.push(vec![self.coord_type(&g)]);
                 let c = self.expect(&lambda.body, want);
                 self.lambda.pop();
                 c
@@ -694,6 +708,9 @@ impl<'a, 'b> Tc<'a, 'b> {
         c
     }
 }
+
+/// The edges of a grid, in the order of `CFieldOp::edges` (D-091).
+const EDGES: [&str; 4] = ["left", "right", "bottom", "top"];
 
 fn func_word(f: Func) -> &'static str {
     match f {
@@ -922,7 +939,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     let funcs = check_functions(spaces, model, &index, &mut diags);
     let grids = check_grids(spaces, model, &index, &funcs, &mut diags);
     let scope = Scope { spaces, model, index: &index, funcs: &funcs, grids: &grids };
-    check_boundaries(model, &mut diags);
+    check_boundaries(model, &grids, &mut diags);
 
     // Bindings: initial definitions and definitions.
     let mut cbindings = vec![];
@@ -998,7 +1015,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         }
         let len = match &b.ty {
             Type::Quantity { .. } => 1,
-            Type::Field { grid, .. } => grids.get(grid).map(|g| g.n).unwrap_or(0),
+            Type::Field { grid, .. } => grids.get(grid).map(|g| g.cells()).unwrap_or(0),
             Type::Vector { space, .. } | Type::Point { space } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(0),
             _ => {
                 diags.push(Diagnostic { code: "MK-E01", message: format!("continuous state `{}` must be a quantity, vector or point", b.name), element: b.id.clone() });
@@ -1262,11 +1279,10 @@ fn check_grids(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, func
     let scope = Scope { spaces, model, index, funcs, grids: &no_grids };
     for g in &model.grids {
         let mut tc = Tc::new(&scope, diags, &g.id);
-        if g.axes.len() != 1 {
-            tc.err("MK-E01", format!("grid `{}` has {} axes; grids have one axis in this version (MK-9.5)", g.name, g.axes.len()));
+        if g.axes.is_empty() || g.axes.len() > 2 {
+            tc.err("MK-E01", format!("grid `{}` has {} axes; a grid has one or two (MK-9.5)", g.name, g.axes.len()));
             continue;
         }
-        let a = &g.axes[0];
         let constant = |tc: &mut Tc, e: &Expr, want: Option<&Type>| -> Option<(f64, Type)> {
             let (c, t) = match want {
                 Some(w) => (tc.expect(e, w)?, w.clone()),
@@ -1282,26 +1298,45 @@ fn check_grids(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, func
                 }
             }
         };
-        let Some((lo, lt)) = constant(&mut tc, &a.lo, None) else { continue };
-        let Type::Quantity { dim } = lt else {
-            tc.err("MK-E01", format!("grid `{}` spans an interval of a quantity", g.name));
-            continue;
-        };
-        let Some((hi, _)) = constant(&mut tc, &a.hi, Some(&Type::Quantity { dim })) else { continue };
-        let Some((n, _)) = constant(&mut tc, &a.cells, Some(&Type::real())) else { continue };
-        if !(hi > lo) || n.fract() != 0.0 || !(1.0..=1_000_000.0).contains(&n) {
-            tc.err("MK-E01", format!("grid `{}` goes from low to high in a whole number of cells, from 1 to 1000000", g.name));
+        // A grid in the plane lies in the model's space of two dimensions, in lengths.
+        let plane = g.axes.len() == 2;
+        if plane && !model.default_space.as_ref().and_then(|s| spaces.iter().find(|x| &x.id == s)).is_some_and(|s| s.dimension == 2) {
+            tc.err("MK-E01", format!("grid `{}` has two axes, so it lies in the model's plane: `model M in Plane` with `space Plane = euclidean(2)` (MK-9.5)", g.name));
             continue;
         }
-        let n = n as usize;
-        out.insert(g.id.clone(), CGrid { lo, h: (hi - lo) / n as f64, n, dim });
+        let mut axes = vec![];
+        let mut dim0 = None;
+        for a in &g.axes {
+            let want = if plane { Some(Type::Quantity { dim: Dim::length() }) } else { dim0.map(|d| Type::Quantity { dim: d }) };
+            let Some((lo, lt)) = constant(&mut tc, &a.lo, want.as_ref()) else { break };
+            let Type::Quantity { dim } = lt else {
+                tc.err("MK-E01", format!("grid `{}` spans an interval of a quantity", g.name));
+                break;
+            };
+            dim0 = Some(dim);
+            let Some((hi, _)) = constant(&mut tc, &a.hi, Some(&Type::Quantity { dim })) else { break };
+            let Some((n, _)) = constant(&mut tc, &a.cells, Some(&Type::real())) else { break };
+            if !(hi > lo) || n.fract() != 0.0 || !(1.0..=1_000_000.0).contains(&n) {
+                tc.err("MK-E01", format!("grid `{}` goes from low to high in a whole number of cells, from 1 to 1000000", g.name));
+                break;
+            }
+            axes.push(GridAxis { lo, h: (hi - lo) / n, n: n as usize });
+        }
+        if axes.len() != g.axes.len() {
+            continue;
+        }
+        if axes.iter().map(|a| a.n).product::<usize>() > 1_000_000 {
+            tc.err("MK-E01", format!("grid `{}` has more than a million cells", g.name));
+            continue;
+        }
+        out.insert(g.id.clone(), CGrid { x: axes[0], y: axes.get(1).copied(), dim: dim0.unwrap() });
     }
     out
 }
 
 /// MK-9.6 (D-091): boundary conditions name the edges `left` and `right` of a field, once
 /// each, or make it periodic, not both.
-fn check_boundaries(model: &Model, diags: &mut Vec<Diagnostic>) {
+fn check_boundaries(model: &Model, grids: &HashMap<Id, CGrid>, diags: &mut Vec<Diagnostic>) {
     for b in &model.bindings {
         let Some(bd) = &b.boundary else { continue };
         let mut err = |m: String| diags.push(Diagnostic { code: "MK-E33", message: m, element: b.id.clone() });
@@ -1312,9 +1347,12 @@ fn check_boundaries(model: &Model, diags: &mut Vec<Diagnostic>) {
         if bd.periodic && !bd.fixed.is_empty() {
             err(format!("the boundary of `{}` is periodic or holds edges at values, not both", b.name));
         }
+        let plane = matches!(&b.ty, Type::Field { grid, .. } if grids.get(grid).is_some_and(|g| g.y.is_some()));
+        let edges = if plane { &EDGES[..] } else { &EDGES[..2] };
         for (k, f) in bd.fixed.iter().enumerate() {
-            if !["left", "right"].contains(&f.edge.as_str()) {
-                err(format!("a field on a grid of one axis has the edges `left` and `right`, not `{}`", f.edge));
+            if !edges.contains(&f.edge.as_str()) {
+                let names = edges.iter().map(|e| format!("`{e}`")).collect::<Vec<_>>().join(", ");
+                err(format!("a field on this grid has the edges {names}, not `{}`", f.edge));
             } else if bd.fixed[..k].iter().any(|g| g.edge == f.edge) {
                 err(format!("the edge `{}` of `{}` is held twice", f.edge, b.name));
             }

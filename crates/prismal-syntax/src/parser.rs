@@ -1504,6 +1504,10 @@ impl<'a> Parser<'a> {
             let args = self.args()?;
             return Ok(vec![PresItem::Instrument { name, args, span: self.since(start) }]);
         }
+        // `until t0 + 20 s`: the run's length (D-091), as in a case.
+        if self.eat_word("until") {
+            return Ok(vec![PresItem::Until(self.expr()?)]);
+        }
         // `title "Projectile motion"` (D-076).
         if self.eat_word("title") {
             return match self.peek().clone() {
@@ -1967,7 +1971,7 @@ fn belongs(word: &str) -> Option<&'static str> {
         "slider" | "number_input" | "toggle" | "button" | "label" => {
             "A control belongs in a presentation, inside `panel name { ... }` (or inside a view's braces)"
         }
-        "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" | "axes" | "grid"
+        "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" | "heatmap" | "axes" | "grid"
         | "formula" | "equation" | "table" | "group" => "A representation is drawn in a view: it belongs inside `view name: plot(...) { ... }` or `view name: spatial(...) { ... }` of a presentation",
         "view" | "panel" | "observe" | "instrument" | "permit" | "timeline" | "layout" => "This belongs directly inside a `presentation Name for Model { ... }`",
         "scene" | "beat" | "narrate" | "explore" | "hold" => "This belongs in a presentation's `timeline { ... }` (a lesson)",

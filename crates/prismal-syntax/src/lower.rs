@@ -866,25 +866,39 @@ impl<'a> ModelCx<'a> {
     fn grid(&mut self, name: &ast::Name, args: &[ast::Arg], span: Span) {
         let id = format!("{}.grid.{}", self.name, name.text);
         self.map.insert(id.clone(), span);
-        let (mut range, mut cells) = (None, None);
+        let (mut xr, mut yr, mut cells) = (None, None, vec![]);
         for a in args {
             match a.name.as_ref().map(|n| n.text.as_str()) {
-                Some("x") => match &a.value.kind {
-                    ExprKind::List(items) if items.len() == 2 => range = Some((self.expr(&items[0], &[]), self.expr(&items[1], &[]))),
-                    _ => self.err("SX-E02", "a grid's axis is an interval: `x: [0 m, 1 m]`", a.value.span),
+                Some(w @ ("x" | "y")) => match &a.value.kind {
+                    ExprKind::List(items) if items.len() == 2 => {
+                        let r = Some((self.expr(&items[0], &[]), self.expr(&items[1], &[])));
+                        if w == "x" {
+                            xr = r;
+                        } else {
+                            yr = r;
+                        }
+                    }
+                    _ => self.err("SX-E02", format!("a grid's axis is an interval: `{w}: [0 m, 1 m]`"), a.value.span),
                 },
-                Some("cells") => cells = Some(self.expr(&a.value, &[])),
-                Some(other) => {
-                    let msg = if other == "y" { "grids have one axis in this version (MK-9.5)".to_string() } else { format!("`grid` takes no option `{other}`; its options are `x`, `cells`") };
-                    self.err("SX-E08", msg, a.name.as_ref().unwrap().span)
-                }
+                // `cells: 100`, or one count per axis in the plane, `cells: (50, 25)`.
+                Some("cells") => match &a.value.kind {
+                    ExprKind::Tuple(items) => cells = items.iter().map(|e| self.expr(e, &[])).collect(),
+                    _ => cells = vec![self.expr(&a.value, &[])],
+                },
+                Some(other) => self.err("SX-E08", format!("`grid` takes no option `{other}`; its options are `x`, `y`, `cells`"), a.name.as_ref().unwrap().span),
                 None => self.err("SX-E08", "a grid takes named options: `grid rod(x: [0 m, 1 m], cells: 100)`", a.value.span),
             }
         }
-        match (range, cells) {
-            (Some((lo, hi)), Some(cells)) => self.model.grids.push(Grid { id, name: name.text.clone(), axes: vec![GridAxis { lo, hi, cells }] }),
-            _ => self.err("SX-E08", "a grid has an axis and a number of cells: `grid rod(x: [0 m, 1 m], cells: 100)`", span),
+        let ranges: Vec<(Expr, Expr)> = xr.into_iter().chain(yr).collect();
+        if cells.len() == 1 && ranges.len() == 2 {
+            cells.push(cells[0].clone());
         }
+        if ranges.is_empty() || cells.len() != ranges.len() {
+            self.err("SX-E08", "a grid has an axis and a number of cells, `grid rod(x: [0 m, 1 m], cells: 100)`, or two axes and a number per axis, `grid plate(x: [0 m, 1 m], y: [0 m, 1 m], cells: (50, 50))`", span);
+            return;
+        }
+        let axes = ranges.into_iter().zip(cells).map(|((lo, hi), cells)| GridAxis { lo, hi, cells }).collect();
+        self.model.grids.push(Grid { id, name: name.text.clone(), axes });
     }
 
     /// `boundary T { left = e }`, `boundary T periodic` (MK-9.6, D-091).

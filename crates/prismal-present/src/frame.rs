@@ -218,6 +218,12 @@ pub enum Shape {
     Status { status: String },
     /// A closed path through points.
     Polygon { points: Vec<[f64; 2]> },
+    /// Cells coloured by value (D-091): `cols` by `rows` cells filling the rectangle with
+    /// opposite corners `from` (the grid's first cell's corner) and `to`, in view
+    /// coordinates; `values` row by row from `from`, each from 0 (`lo`) to 1 (`hi`), on the
+    /// named palette (`sequential`, or `diverging` about 0), which each medium maps to its
+    /// colours.
+    Raster { from: [f64; 2], to: [f64; 2], cols: usize, rows: usize, values: Vec<f64>, lo: f64, hi: f64, palette: String },
     /// An elliptical arc in view coordinates: the points `center + radii[0] cos(a) u +
     /// radii[1] sin(a) v` for `a` from `start` to `start + sweep`, where `u` is the unit
     /// vector at `rotation` and `v` is `u` turned by +90 degrees (from +x towards +y of the
@@ -457,6 +463,8 @@ pub enum CKind {
     /// A field drawn over its grid (D-091): an operation on the field, through which its
     /// edge values and cell values are read.
     FieldGraph { field: CExpr, label: String },
+    /// A field in the plane drawn as coloured cells (D-091), over `range` or its own extent.
+    Heatmap { field: CExpr, range: Option<(f64, f64)>, label: String },
     /// The path of a point, sampled every `every` seconds from the run's start (PK-6.3).
     Trace { pos: CExpr, every: f64, label: String, meter: Option<Meter> },
     /// A scalar against elapsed time, sampled every `every` seconds (PK-6.3). `steps`: the
@@ -693,6 +701,9 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             let (c, t) = ce(e, None)?;
             // A field is a function over its grid (D-091): drawn through its cells.
             if let (Type::Field { grid, of }, Expr::Ref { .. }, ViewCtx::Plot { dims, .. }) = (&t, e, ctx) {
+                if cm.grids.get(grid).is_some_and(|g| g.y.is_some()) {
+                    return Err(d("PK-E05", "a field in the plane is drawn by `heatmap(T)` in a spatial view".into()));
+                }
                 let gdim = cm.grids.get(grid).map(|g| g.dim).unwrap_or_default();
                 let Type::Quantity { dim } = **of else { return Err(needs("a field of numbers or quantities")) };
                 if gdim != dims.0 || dim != dims.1 {
@@ -707,6 +718,31 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
                 }
                 CKind::Graph { f: c, lo: x.0, hi: x.1, label: label(e) }
             }
+        }
+        // A field in the plane as coloured cells (D-091).
+        "heatmap" => {
+            let ViewCtx::Spatial { .. } = ctx else { return Err(d("PK-E05", "a heatmap belongs in a spatial view, where its grid lies".into())) };
+            let e = source(rep, 0).ok_or_else(|| needs("a field in the plane: `heatmap(T)`"))?;
+            let (_, t) = ce(e, None)?;
+            let (Type::Field { grid, of }, Expr::Ref { .. }) = (&t, e) else { return Err(needs("a field in the plane: `heatmap(T)`")) };
+            if !cm.grids.get(grid).is_some_and(|g| g.y.is_some()) {
+                return Err(d("PK-E05", "a heatmap draws a field in the plane; a field on a line is drawn by `function_graph(T)` in a plot".into()));
+            }
+            let range = match rep.prop("range") {
+                Some(Arg::Range { lo, hi }) => {
+                    ce(lo, Some(of))?;
+                    ce(hi, Some(of))?;
+                    let (a, b) = (number(cm, lo).map_err(|m| d("PK-E02", m))?, number(cm, hi).map_err(|m| d("PK-E02", m))?);
+                    if !(b > a) {
+                        return Err(d("PK-E05", "a heatmap's range goes from low to high".into()));
+                    }
+                    Some((a, b))
+                }
+                _ => None,
+            };
+            let probe = Expr::Call { call: prismal_ir::Func::Mean, args: vec![e.clone()] };
+            let (field, _) = ce(&probe, None)?;
+            CKind::Heatmap { field, range, label: label(e) }
         }
         "histogram" => {
             let ViewCtx::Plot { dims, x, .. } = ctx else { return Err(d("PK-E05", "a histogram belongs in a plot view: x for the values, y for how many of them fall in each bin".into())) };
@@ -1184,6 +1220,38 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             Ok(_) => (Shape::Status { status: "not a function".into() }, "graph: not available".into()),
             Err(s) => status(s),
         },
+        CKind::Heatmap { field, range, label } => {
+            let c = Ctx { vals, der: None, t, t0: run.config.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            match field.field_cells(&c) {
+                Ok((op, u)) => {
+                    let g = op.grid;
+                    let y = g.y.expect("a grid in the plane");
+                    let (mn, mx) = u.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), v| (a.min(*v), b.max(*v)));
+                    let (mut lo, mut hi) = range.unwrap_or((mn, mx));
+                    // Values on both sides of 0 are shown on a diverging palette, even about 0.
+                    let diverging = lo < 0.0 && hi > 0.0;
+                    if diverging && range.is_none() {
+                        let m = lo.abs().max(hi);
+                        (lo, hi) = (-m, m);
+                    }
+                    if !(hi > lo) {
+                        hi = lo + 1.0;
+                    }
+                    let values: Vec<f64> = u.iter().map(|v| ((v - lo) / (hi - lo)).clamp(0.0, 1.0)).collect();
+                    let from = ctx.to_view(&[g.x.lo, y.lo]);
+                    let to = ctx.to_view(&[g.x.hi(), y.hi()]);
+                    let k = u.iter().enumerate().fold(0, |b, (k, v)| if *v > u[b] { k } else { b });
+                    let at = coords(&g.coord(k));
+                    let text = format!(
+                        "heatmap of {label}: {} by {} cells, values from {} to {}, highest near ({}, {})",
+                        g.x.n, y.n, fmt_num(mn), fmt_num(mx), fmt_num(at[0]), fmt_num(at[1])
+                    );
+                    let palette = if diverging { "diverging" } else { "sequential" }.to_string();
+                    (Shape::Raster { from, to, cols: g.x.n, rows: y.n, values, lo, hi, palette }, text)
+                }
+                Err(s) => status(s),
+            }
+        }
         CKind::FieldGraph { field, label } => {
             let c = Ctx { vals, der: None, t, t0: run.config.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
             match field.field_profile(&c) {

@@ -459,6 +459,21 @@ function ownColor(r, colorIndex) {
   }
 }
 
+// The palettes of frames (D-091), the same stops as prismal-svg: sequential (dark blue,
+// green, yellow) and diverging about 0 (blue, near white, red).
+const PALETTES = {
+  sequential: [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]],
+  diverging: [[59, 76, 192], [242, 242, 242], [180, 4, 38]],
+};
+function paletteColor(name, v) {
+  const stops = PALETTES[name] || PALETTES.sequential;
+  const x = Math.min(Math.max(v, 0), 1) * (stops.length - 1);
+  const i = Math.min(Math.floor(x), stops.length - 2);
+  const w = x - i;
+  const c = [0, 1, 2].map((k) => Math.round(stops[i][k] + w * (stops[i + 1][k] - stops[i][k])));
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
+
 function drawRep(v, g, r, u, colorIndex) {
   const m = mapFor(v);
   const cls = ['rep'];
@@ -532,6 +547,18 @@ function drawRep(v, g, r, u, colorIndex) {
         const pts = r.points.slice(cuts[k], cuts[k + 1]).map((p) => m.to(p).join(',')).join(' ');
         svg('polyline', { class: trace ? 'trace' : 'graph', points: pts, 'stroke-width': (trace ? 1.5 : 2) * u }, grp);
       }
+      break;
+    }
+    case 'raster': {
+      // Coloured cells of a field in the plane (D-091), as prismal-svg draws them.
+      const [fx, fy] = m.to(r.from);
+      const [tx, ty] = m.to(r.to);
+      const cw = (tx - fx) / r.cols, ch = (ty - fy) / r.rows;
+      const g = svg('g', { class: 'raster', 'shape-rendering': 'crispEdges' }, grp);
+      r.values.forEach((v, k) => {
+        const x0 = fx + (k % r.cols) * cw, y0 = fy + Math.floor(k / r.cols) * ch;
+        svg('rect', { x: Math.min(x0, x0 + cw), y: Math.min(y0, y0 + ch), width: Math.abs(cw) + 0.5, height: Math.abs(ch) + 0.5, fill: paletteColor(r.palette, v) }, g);
+      });
       break;
     }
     case 'polygon': {
@@ -847,7 +874,7 @@ function renderFrame(frame) {
       const top = svg('g', {}, v.svg);
       let arrows = 0;
       for (const r of vf.reps) {
-        if (['point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note'].includes(r.shape)) {
+        if (['point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note', 'raster'].includes(r.shape)) {
           // Draggable and clickable representations are drawn last and outside the plot's clip.
           drawRep(v, r.drag || r.click ? top : reps, r, u, r.shape === 'arrow' ? arrows++ : 0);
         } else if (!['axes', 'grid', 'title'].includes(r.shape)) {

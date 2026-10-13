@@ -192,6 +192,9 @@ pub struct Run {
 /// results).
 pub const SNAPSHOT_STEPS: usize = 8;
 
+/// Above this many continuous state components a run stores its steps compactly (RC-6.2a).
+pub const LARGE_STATE: usize = 4096;
+
 /// Everything needed to continue a run exactly from the top of its evolution loop at a
 /// committed instant (RC-14.1): the state, the event machinery, the solver's proposed next
 /// step, and how much of the trajectory, logs and action list lies before it.
@@ -587,6 +590,32 @@ impl<'a> Engine<'a> {
         self.diag(Category::Model, format!("the rate of `{}` is negative ({r})", self.cm.events[ei].name), Some(&self.cm.events[ei].id))
     }
 
+    /// Stores an accepted step of the trajectory. A run with more than `LARGE_STATE`
+    /// components (fields, D-091) keeps each step as the straight line between its two
+    /// states, each state shared with the neighbouring step: one state per step instead of
+    /// the solver's interpolant (RC-6.2a). Values at step ends are exact either way.
+    fn keep(&mut self, step: Step, base: usize) {
+        let n = self.cm.n_y();
+        if n <= LARGE_STATE || matches!(step.dense, Dense::Linear { .. }) {
+            self.run.segments.push(Segment { step, base });
+            return;
+        }
+        let prev = self.run.segments.last().and_then(|s| match &s.step.dense {
+            Dense::Linear { y1, .. } if s.step.t1 == step.t0 => Some(y1.clone()),
+            _ => None,
+        });
+        let at = |t: f64| {
+            let mut y = vec![0.0; n];
+            step.eval(t, &mut y);
+            std::rc::Rc::new(y)
+        };
+        let y0 = prev.unwrap_or_else(|| at(step.t0));
+        let y1 = at(step.t1);
+        let mut compact = Step::new(step.t0, step.t1 - step.t0, Dense::Linear { y0, y1 });
+        compact.t1 = step.t1;
+        self.run.segments.push(Segment { step: compact, base });
+    }
+
     /// The rates of the random events `which` at `t` inside a step (RC-13.8a). A negative
     /// rate is a model failure, reported at the first instant of the step found negative, by
     /// bisection to the time tolerance.
@@ -834,10 +863,10 @@ impl<'a> Engine<'a> {
         for q in &self.cm.equations {
             let Some(tol) = q.check_tol else { continue };
             // An equation over a field: the largest residual over its cells (D-091).
-            let cells = q.field.map(|g| g.n).unwrap_or(1);
+            let cells = q.field.map(|g| g.cells()).unwrap_or(1);
             let mut res = Some(0.0f64);
             for k in 0..cells {
-                let args = q.field.map(|g| [Value::Num(g.center(k))]);
+                let args = q.field.map(|g| [g.coord(k)]);
                 let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: args.as_ref().map(|a| &a[..]).unwrap_or(&[]), payloads: &[], draws: None, noise: &[], point: q.field.map(|_| k) };
                 let r = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
                     (Ok(a), Ok(b)) => distance(&a, &b),
@@ -886,7 +915,7 @@ impl<'a> Engine<'a> {
         if a > step.t0 {
             if let Some(v) = state(self, a) {
                 step.t1 = a;
-                self.run.segments.push(Segment { step, base });
+                self.keep(step, base);
                 self.t = a;
                 self.n = 0;
                 self.vals = v;
@@ -981,7 +1010,7 @@ impl<'a> Engine<'a> {
                 rhs.f(self.t, &y, &mut dy).map_err(|s| self.diag(Category::Model, s.cause, None))?;
                 let y1: Vec<f64> = y.iter().zip(&dy).map(|(a, d)| a + hs * d).collect();
                 rhs.noise.clear();
-                let step = Step::new(self.t, hs, Dense::Linear { y0: y.clone(), y1: y1.clone() });
+                let step = Step::new(self.t, hs, Dense::Linear { y0: std::rc::Rc::new(y.clone()), y1: std::rc::Rc::new(y1.clone()) });
                 (y1, step, None)
             } else {
                 match &self.cfg.solver {
@@ -1083,7 +1112,7 @@ impl<'a> Engine<'a> {
                 step.t1 = te;
                 let mut ye = vec![0.0; n_y];
                 step.eval(te, &mut ye);
-                self.run.segments.push(Segment { step, base });
+                self.keep(step, base);
                 self.t = te;
                 self.n = 0;
                 cm.load_y(&mut self.vals, &ye);
@@ -1110,7 +1139,7 @@ impl<'a> Engine<'a> {
                 return Err(self.fail_in_step(step, base, d));
             }
             self.advance_clocks(&varying, &clocks_total, t1);
-            self.run.segments.push(Segment { step, base });
+            self.keep(step, base);
             self.t = t1;
             self.n = 0;
             self.vals = v1;

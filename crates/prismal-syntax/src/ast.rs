@@ -406,6 +406,8 @@ pub enum PresItem {
     Layout(LayoutNode),
     /// `title "..."` (D-076).
     Title(String),
+    /// `until t0 + 20 s`: how long the presentation's run lasts (D-091).
+    Until(Expr),
     /// `instrument ruler(resolution: 1 mm, range: [0 m, 1 m], noise: 2 mm)` (PK-3.7, D-087).
     Instrument { name: Name, args: Vec<Arg>, span: Span },
 }

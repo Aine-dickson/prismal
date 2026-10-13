@@ -218,3 +218,87 @@ fn equations_over_fields() {
     let e = f.reps().find(|r| r.kind == "equation").unwrap();
     assert!(e.text.contains("heat"), "{}", e.text);
 }
+
+const PLANE: &str = r#"space Plane = euclidean(2)
+
+model Plate in Plane {
+  grid plate(x: [0 m, 1 m], y: [0 m, 1 m], cells: (40, 40))
+  param { alpha: Quantity<L^2/T> = 0.01 m^2/s }
+  state { T(p in plate): Real = sin(pi * p.x / 1 m) * sin(pi * p.y / 1 m) }
+  derived {
+    centre: Real = T(origin + (0.5 m, 0.5 m))
+    heat:   Area = integral(T)
+  }
+  flow der(T) = alpha * laplacian(T)
+  boundary T {
+    left = 0
+    right = 0
+    bottom = 0
+    top = 0
+  }
+}
+
+model Slope in Plane {
+  grid sheet(x: [0 m, 2 m], y: [0 m, 1 m], cells: (20, 10))
+  state { U(p in sheet): Real = p.x / 1 m }
+  derived { gx(p in sheet): Quantity<1/L> = gradient(U).x }
+  flow der(U) = 0 / 1 s
+}
+
+presentation PlateLab for Plate {
+  view plate: spatial(Plane, scale: 1 m -> 300 px, y: up) {
+    heatmap(T, range: [0, 1])
+  }
+}
+"#;
+
+/// A sine mode on a square plate held at 0 decays as `e^(-2 α π² t)`; its integral starts at
+/// `4 / π²` square metres.
+#[test]
+fn heat_on_a_plate() {
+    let prog = program(PLANE);
+    let cm = prog.model("Plate");
+    let r = run(cm, Config::until(5.0));
+    assert!(matches!(r.status, RunStatus::Completed), "{:?}", r.status);
+    let at = |t: f64, b: &str| r.state_at(t)[cm.idx(b)].num();
+    let pi2 = std::f64::consts::PI.powi(2);
+    assert!((at(0.0, "Plate.heat") - 4.0 / pi2).abs() < 1e-3, "{}", at(0.0, "Plate.heat"));
+    // The centre lies between four cell centres: bilinear reading, close to the mode.
+    let exact = (-2.0 * 0.01 * pi2 * 5.0).exp() * (std::f64::consts::PI / 80.0).cos().powi(2);
+    assert!((at(5.0, "Plate.centre") - exact).abs() < 2e-3, "{} against {exact}", at(5.0, "Plate.centre"));
+}
+
+/// The gradient in the plane is a vector of the model's space.
+#[test]
+fn gradients_in_the_plane() {
+    let prog = program(PLANE);
+    let cm = prog.model("Slope");
+    let r = run(cm, Config::until(0.1));
+    let Value::Field(g) = &r.state_at(0.1)[cm.idx("Slope.gx")] else { panic!() };
+    // Interior cells: 1 per metre; the insulated edges halve it at the ends of each row.
+    for j in 0..10 {
+        for i in 1..19 {
+            assert!((g[i + 20 * j] - 1.0).abs() < 1e-9, "({i}, {j}): {}", g[i + 20 * j]);
+        }
+        assert!((g[20 * j] - 0.5).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn a_heatmap_draws_the_plate() {
+    use prismal_present::frame::Shape;
+    let prog = program(PLANE);
+    let lab = prismal_present::interact::Interactive::new(&prog, "PlateLab", Config::until(10.0)).unwrap_or_else(|d| panic!("{d:?}"));
+    let f = lab.frame_at(0.0);
+    let h = f.reps().find(|r| r.kind == "heatmap").unwrap();
+    let Shape::Raster { cols, rows, values, palette, from, to, .. } = &h.shape else { panic!("{:?}", h.shape) };
+    assert_eq!((*cols, *rows, values.len()), (40, 40, 1600));
+    assert_eq!(palette, "sequential");
+    assert_eq!((from[0], to[0]), (0.0, 300.0));
+    assert!(to[1] < from[1], "y up: the top edge is above the bottom one in view coordinates");
+    assert!(h.text.starts_with("heatmap of T: 40 by 40 cells, values from 0."), "{}", h.text);
+    let text = format(&compile(PLANE).unwrap().doc);
+    assert!(text.contains("grid plate(x: [0 m, 1 m], y: [0 m, 1 m], cells: (40, 40))"), "{text}");
+    assert!(text.contains("T(p in plate): Real"), "{text}");
+    assert_eq!(format(&compile(&text).unwrap().doc), text);
+}

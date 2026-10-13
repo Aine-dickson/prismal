@@ -22,9 +22,12 @@ pub struct CBinding {
 
 /// Evaluates a pointwise expression in every cell of `grid`: a field's value (D-091).
 pub fn per_cell(e: &CExpr, grid: &crate::eval::CGrid, c: &Ctx) -> Result<Value, Status> {
-    let mut out = Vec::with_capacity(grid.n);
-    for k in 0..grid.n {
-        let args = [Value::Num(grid.center(k))];
+    if let Some(v) = e.eval_cells(c, grid) {
+        return Ok(Value::Field(std::rc::Rc::new(v)));
+    }
+    let mut out = Vec::with_capacity(grid.cells());
+    for k in 0..grid.cells() {
+        let args = [grid.coord(k)];
         let inner = Ctx { vals: c.vals, der: c.der, t: c.t, t0: c.t0, args: &args, payloads: c.payloads, draws: c.draws, noise: c.noise, point: Some(k) };
         out.push(e.eval(&inner)?.num());
     }
@@ -281,8 +284,13 @@ impl CModel {
                     FlowSet::Sum(es) => es.iter().collect(),
                 };
                 for e in es {
+                    let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise, point: None };
+                    if let Some(v) = e.eval_cells(&c, g) {
+                        out.iter_mut().zip(&v).for_each(|(o, x)| *o += x);
+                        continue;
+                    }
                     for (k, o) in out.iter_mut().enumerate() {
-                        let args = [Value::Num(g.center(k))];
+                        let args = [g.coord(k)];
                         let inner = Ctx { vals, der: None, t, t0, args: &args, payloads: &[], draws: None, noise, point: Some(k) };
                         *o += e.eval(&inner)?.num();
                     }
