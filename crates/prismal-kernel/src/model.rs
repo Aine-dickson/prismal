@@ -77,6 +77,8 @@ pub enum CTrigger {
 #[derive(Clone, Debug)]
 pub enum COp {
     Set { binding: usize, component: Option<usize>, value: CExpr },
+    /// A field set in each cell of its grid (D-091).
+    SetField { binding: usize, grid: crate::eval::CGrid, value: CExpr },
     /// `contribute x += e`: combined with the other contributions of the transition and the
     /// value before it, by `combine` (MK-14.9, D-073).
     Contribute { binding: usize, value: CExpr, combine: String },

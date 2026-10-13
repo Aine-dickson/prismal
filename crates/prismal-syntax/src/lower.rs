@@ -1080,6 +1080,10 @@ impl<'a> ModelCx<'a> {
 
     pub(crate) fn op(&mut self, o: &ast::OpStmt) -> Op {
         match o {
+            ast::OpStmt::Set { target, coord: Some(x), value, .. } => {
+                let body = self.expr(value, std::slice::from_ref(&x.text));
+                Op::Set { target: self.target(target), value: build::lambda_named(&[x.text.as_str()], vec![Type::real()], body) }
+            }
             ast::OpStmt::Set { target, value, .. } => Op::Set { target: self.target(target), value: self.expr(value, &[]) },
             ast::OpStmt::Contribute { target, value, .. } => Op::Contribute { target: self.target(target), value: self.expr(value, &[]) },
             ast::OpStmt::Emit { event, payload, .. } => {

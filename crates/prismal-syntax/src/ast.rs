@@ -238,7 +238,8 @@ pub struct Path {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum OpStmt {
-    Set { target: Path, value: Expr, span: Span },
+    /// `set x = e`; `set T(p) = e` sets a field in each cell (D-091).
+    Set { target: Path, coord: Option<Name>, value: Expr, span: Span },
     Contribute { target: Path, value: Expr, span: Span },
     Emit { event: Name, payload: Option<Expr>, span: Span },
     /// `create drops { pos = p }` (D-057).

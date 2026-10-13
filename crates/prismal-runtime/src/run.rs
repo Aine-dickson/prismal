@@ -1428,6 +1428,14 @@ impl<'a> Engine<'a> {
                         None => contributions.push((*binding, combine.clone(), vec![v])),
                     }
                 }
+                COp::SetField { binding, grid, value } => {
+                    if contributions.iter().any(|c| c.0 == *binding) || destroyed.contains(binding) || targets.iter().any(|(b, _)| b == binding) {
+                        return Err(conflict(self, *binding));
+                    }
+                    targets.push((*binding, None));
+                    let v = prismal_kernel::per_cell(value, grid, &self.ctx(&self.vals)).map_err(|s| self.diag(Category::Model, s.cause, None))?;
+                    proposed[*binding] = v;
+                }
                 COp::Set { binding, component, value } => {
                     if contributions.iter().any(|c| c.0 == *binding) {
                         return Err(conflict(self, *binding));

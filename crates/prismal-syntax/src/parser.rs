@@ -879,9 +879,17 @@ impl<'a> Parser<'a> {
         let start = self.span();
         if self.eat_word("set") {
             let target = self.path()?;
+            // `set T(p) = e`: a field set in each cell (D-091).
+            let coord = if target.member.is_none() && target.component.is_none() && self.eat_punct("(") {
+                let x = self.name("a coordinate name")?;
+                self.expect_punct(")")?;
+                Some(x)
+            } else {
+                None
+            };
             self.expect_punct("=")?;
             let value = self.expr()?;
-            return Ok(OpStmt::Set { target, value, span: self.since(start) });
+            return Ok(OpStmt::Set { target, coord, value, span: self.since(start) });
         }
         if self.eat_word("contribute") {
             let target = self.path()?;

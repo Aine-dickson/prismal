@@ -763,6 +763,11 @@ impl<'a> Printer<'a> {
 
     fn op(&self, o: &Op) -> String {
         match o {
+            // A field set in each cell: `set h(p) = ...` (D-091).
+            Op::Set { target, value: v @ Expr::Lambda { lambda } } => {
+                let x = lambda.names.first().cloned().unwrap_or_else(|| "x".into());
+                format!("set {}({x}) = {}", self.target(target), self.expr(v))
+            }
             Op::Set { target, value } => format!("set {} = {}", self.target(target), self.expr(value)),
             Op::Contribute { target, value } => format!("contribute {} += {}", self.target(target), self.expr(value)),
             Op::Emit { event, payload } => match payload {

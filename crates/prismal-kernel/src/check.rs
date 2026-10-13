@@ -1488,6 +1488,20 @@ fn check_ops(tc: &mut Tc, model: &Model, index: &HashMap<Id, usize>, ops: &[Op],
                     continue;
                 }
                 targets.push((bi, target.component));
+                // D-091: a field is set in each cell, as its initial value is given.
+                if let (Type::Field { grid, of }, None) = (&b.ty, target.component) {
+                    let Some(g) = tc.scope.grids.get(grid).copied() else { continue };
+                    let sites = tc.draws.map(|d| d.2);
+                    let v = tc.pointwise_expr(value, grid, of);
+                    if tc.draws.map(|d| d.2) != sites {
+                        tc.err("MK-E28", format!("a draw in each cell of `{}` (a random number per cell) is a later extension (MK-10.4)", b.name));
+                        continue;
+                    }
+                    if let Some(v) = v {
+                        out.push(COp::SetField { binding: bi, grid: g, value: v });
+                    }
+                    continue;
+                }
                 if let Some(v) = tc.expect(value, &want) {
                     out.push(COp::Set { binding: bi, component: target.component, value: v });
                 }

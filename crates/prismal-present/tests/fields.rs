@@ -302,3 +302,53 @@ fn a_heatmap_draws_the_plate() {
     assert!(text.contains("T(p in plate): Real"), "{text}");
     assert_eq!(format(&compile(&text).unwrap().doc), text);
 }
+
+const TANK: &str = r#"space Plane = euclidean(2)
+
+model Tank in Plane {
+  grid tank(x: [0 m, 1 m], y: [0 m, 1 m], cells: (30, 30))
+  param { c: Velocity = 0.5 m/s }
+  state {
+    h(p in tank): Length = 0 m
+    v(p in tank): Velocity = 0 m/s
+  }
+  derived { level: Length = h(origin + (0.5 m, 0.5 m)) }
+  flow {
+    der(h) = v
+    der(v) = c^2 * laplacian(h)
+  }
+  event drop on request(q: Point) {
+    set h(p) = h + 0.01 m * exp(-(|p - q| / 0.05 m)^2)
+  }
+}
+
+presentation TankLab for Tank {
+  view tank: spatial(Plane, scale: 1 m -> 300 px, y: up) {
+    heatmap(h)
+    on click as q request drop(q)
+  }
+}
+"#;
+
+/// A requested event sets a field in each cell: a stone dropped where the learner clicks.
+#[test]
+fn a_handler_sets_a_field() {
+    let prog = program(TANK);
+    let mut lab = prismal_present::interact::Interactive::new(&prog, "TankLab", Config::until(4.0)).unwrap_or_else(|d| panic!("{d:?}"));
+    let cm = prog.model("Tank");
+    let level = |lab: &prismal_present::interact::Interactive, t: f64| lab.session.current.state_at(t)[cm.idx("Tank.level")].num();
+    assert_eq!(level(&lab, 1.0), 0.0);
+    lab.seek(1.0);
+    let view = lab.frame().views[0].id.clone();
+    // The middle of the tank, in view coordinates (300 px per metre, y up).
+    lab.click_at(&view, [150.0, -150.0]).unwrap_or_else(|r| panic!("{r:?}"));
+    let after = level(&lab, 1.0);
+    // The middle is a corner of four cells, each centred 1/60 m from it along both axes.
+    let exact = 0.01 * (-(2f64.sqrt() / 60.0 / 0.05).powi(2)).exp();
+    assert!((after - exact).abs() < 1e-9, "{after} against {exact}");
+    assert!(level(&lab, 3.0).abs() < 0.005, "the ripple spreads out: {}", level(&lab, 3.0));
+    let text = format(&compile(TANK).unwrap().doc);
+    assert!(text.contains("set h(p) = h + 0.01 m * exp("), "{text}");
+    let d = codes(&TANK.replace("set h(p) = h +", "set h(p) = h + normal(0 m, 1 m) +"));
+    assert!(d.iter().any(|m| m.contains("MK-E28")), "{d:?}");
+}
