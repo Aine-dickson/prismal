@@ -139,7 +139,7 @@ fn lower_space(s: &ast::SpaceDecl, diags: &mut Vec<Diag>) -> Option<Space> {
         return None;
     }
     let n = match s.args.as_slice() {
-        [ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Num(n, None), .. }, every: None }] if (1.0..=3.0).contains(n) && n.fract() == 0.0 => *n as u32,
+        [ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Num(n, None), .. }, every: None, ensemble: None }] if (1.0..=3.0).contains(n) && n.fract() == 0.0 => *n as u32,
         _ => {
             diags.push(Diag::new("SX-E02", "a space is declared `euclidean(n)` with n = 1, 2 or 3", s.span));
             return None;

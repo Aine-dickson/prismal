@@ -57,6 +57,7 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 | `view v: ... { on click as q request E(q) ... }` | a view that requests an event with the point clicked, where no representation takes the click (D-060) |
 | `group(at: P, rotate: θ, scale: k) [as name] { reps }` | representations placed, turned and scaled together; members are written in the group's frame (D-043) |
 | `trace(pos every 0.02 s)`, `series_plot(y every 0.01 s)` | a sampled source: `expr every Δ`, only as a representation's argument (PK-6.3a) |
+| `histogram(n at t0 + 7 s over 200 runs, bins: 20)` | an ensemble source: `expr at τ over n runs`, the values in `n` runs with consecutive seeds; also an observation's schedule, `ends = n at τ over n runs` (PK-3.8, D-084) |
 | `plot(x: [0 s, 6 s], y: [0 m, 1.1 m])` | plot axes with dimensions; a plot marker is at a pair in those dimensions, `marker(at: (0, y))` (PK-7.3a) |
 | `permit learner { ... }` | permissions |
 | `layout row(scene, column(plot, controls))` | page layout: views side by side in a row, one below the other in a column, nested (D-063) |
@@ -68,7 +69,7 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 
 ### 1.3 Runs
 
-`run Name of Model with Presentation { param { ... } input { x = v; x = v at τ } config { ... } until τ; learner { ... } expect { ... } }`. `input` gives inputs their starting values and later changes (D-051). `config { seed = n }` names the run's seed, a whole number (D-083). A timeline's `request E(v)` supplies a payload (D-050); `request E(balls[2], v)` supplies a member and a value (D-059). A learner step is `at τ: continue`, `at τ: set slider x = v` or `at τ: press E` (an explore beat's button, D-069). `button(reset)`, `button(undo)` and `button(redo)` are runtime-control buttons of labs (D-069).
+`run Name of Model with Presentation { param { ... } input { x = v; x = v at τ } config { ... } until τ; learner { ... } expect { ... } }`. `input` gives inputs their starting values and later changes (D-051). `config { seed = n }` names the run's seed, a whole number (D-083). A timeline's `request E(v)` supplies a payload (D-050); `request E(balls[2], v)` supplies a member and a value (D-059). A learner step is `at τ: continue`, `at τ: set slider x = v` or `at τ: press E` (an explore beat's button, D-069). `button(reset)`, `button(undo)` and `button(redo)` are runtime-control buttons of labs (D-069); `button(reseed)` starts again with the next seed (D-084). Expectations may read `mean(obs)` and `deviation(obs)` (D-084).
 
 ### 1.4 Canonical printing (C4)
 
@@ -84,7 +85,7 @@ The formatter prints, from the IR: enumerations, then declarations grouped in bl
 - **Statements** end at a newline or `;`. Several statements on one line are separated by `;`. A line ending in an operator (other than a closing `|`), `,`, an open bracket or one of the operator words continues on the next line; so does every line inside `( )` or `[ ]`.
 - **Reserved words** (D-040), never names: `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 - **Representation kinds** are read where a representation is expected; there `equation`, reserved elsewhere, is the representation kind of PK-6.3.
-- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random`.
+- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed`.
 - **Built-in names** (not reserved, but predefined): `t`, `t0`, `elapsed`, `origin`, `der`, `π` and `pi` (D-039), `inf` (only as an interval bound), the SI units and named dimensions of MK section 3. Named dimensions: `Length`, `Mass`, `Time`, `Current`, `Amount`, `Area`, `Volume`, `Velocity`, `Acceleration`, `Frequency`, `Momentum`, `Force`, `Energy`, `Power`, `Pressure`, and `Angle` (dimensionless, D-021); base symbols `L M T I Θ N J` inside `Quantity<...>`.
 
 

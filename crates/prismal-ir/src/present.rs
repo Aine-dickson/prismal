@@ -88,7 +88,13 @@ pub enum Source {
 pub enum Schedule {
     Live,
     Every { period: Expr },
-    At { time: Expr },
+    /// `at τ`; with `runs`, `at τ over n runs`: one value from each of `n` runs, seeded from
+    /// the run's seed on (PK-3.8, D-084).
+    At {
+        time: Expr,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runs: Option<Expr>,
+    },
     On {
         event: Id,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -211,6 +217,9 @@ pub enum Arg {
     Word { word: String },
     /// A source sampled over the run: `pos every 0.02 s` (PK-6.3, `trace`, `series_plot`).
     Sampled { expr: Expr, every: Expr },
+    /// `n at t0 + 7 s over 200 runs`: the value of `expr` at instant `at` in each of `runs`
+    /// runs, with the seeds from the run's own on (PK-3.8, D-084).
+    Ensemble { expr: Expr, at: Expr, runs: Expr },
     /// A model element that is not a value: an event (`button`) or an equation (`equation`).
     Element { element: Id },
     /// Several texts: the words at a slider's two ends, `ends: ("cold", "hot")` (D-077).
@@ -558,6 +567,17 @@ pub enum Subject {
     },
     BeatStart { beat: Id },
     BeatEnd { beat: Id },
+    /// `mean(ends)`, `deviation(ends)`: a statistic of an observation's values (D-084).
+    Statistic { statistic: Statistic, observation: Id },
+}
+
+/// Statistics of the values of an observation (D-084): the mean, and the sample standard
+/// deviation (divided by `n - 1`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Statistic {
+    Mean,
+    Deviation,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

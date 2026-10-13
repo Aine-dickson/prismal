@@ -80,6 +80,56 @@ run another_seed of Sample with SampleLab {
 
 At the half-life each nucleus survives with probability 1/2, so about 500 remain: the count is binomial, with a standard deviation of about 16. The range `[440, 560]` is more than 3.5 deviations wide on each side, so the test holds for any seed except a very unlucky one, and the seeds named here are fixed. The first decay comes after an average of `1 / (0.1 /s * 1000) = 0.01 s`.
 
+## Many runs
+
+**Goal.** The same sample run 200 times: the learner sees how the count at the half-life spreads around 500, draws another run with a button, and the test checks the average rather than one run.
+**How it is built.** The model is `Sample` from the section before. Two runtime-control buttons in a `panel`: `button(reset)` replays the run shown, `button(reseed)` starts again with the next seed. A `histogram` in a `plot` view takes an **ensemble source**, `n at t0 + 6.93 s over 200 runs`: the value of `n` at that instant in each of 200 runs. The observation `halves` has the same form, and the test checks `mean(halves)` and `deviation(halves)`.
+
+```text
+model Sample2 {
+  param {
+    lambda: Frequency = 0.1 /s
+    n0:     Real      = 1000
+  }
+  discrete { n: Real = n0 }
+  event decay on random(lambda * n) { set n = n - 1 }
+}
+
+presentation ManyRuns for Sample2 {
+  view counts: plot(x: [0 s, 30 s], y: [0, 1000]) {
+    series_plot(n every 0.5 s)
+  }
+  view spread: plot(x: [420, 580], y: [0, 80]) {
+    histogram(n at t0 + 6.93 s over 200 runs, bins: 16)
+  }
+  panel controls {
+    slider(lambda, range: [0.05 /s, 0.2 /s])
+    button(reset, label: "Replay")
+    button(reseed, label: "Another run")
+  }
+  observe {
+    halves = n at t0 + 6.93 s over 200 runs
+  }
+}
+```
+
+- An ensemble source is written `value at instant over count runs`, inside a representation's parentheses or after an observation's `=`. Run `k` uses the seed of the run shown plus `k - 1`, so the first run is the one shown. Each run stops at the instant, so a long lab stays quick.
+- The histogram's `x` axis is the value, its `y` axis how many runs fall in each bin; `bins: 16` divides the `x` range into 16 equal bins. Its text alternative gives the mean and the deviation.
+- When the learner moves the slider, the histogram is computed again for the new rate; `reseed` moves it to 200 other runs.
+
+```cases
+run spread of Sample2 with ManyRuns {
+  config { seed = 4 }
+  until t0 + 7 s
+  expect {
+    mean(halves) == 500 within 6
+    deviation(halves) in [11, 21]
+  }
+}
+```
+
+`mean(halves)` is the average of the 200 values and `deviation(halves)` their standard deviation. At `6.93 s` each nucleus survives with probability `e^-0.693 = 0.5001`, so the count is binomial with mean `500.1` and deviation `sqrt(1000 * 0.5001 * 0.4999) = 15.8`. The mean of 200 runs then has a deviation of `15.8 / sqrt(200) = 1.1`, and the test's tolerance is five times that.
+
 ## Atoms one by one
 
 **Goal.** Twenty atoms in a row, each vanishing at its own random moment, so that the learner sees that decay happens to single atoms with no memory of how long they have waited.

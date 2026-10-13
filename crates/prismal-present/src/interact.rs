@@ -173,6 +173,18 @@ impl Interactive {
         self.grow();
     }
 
+    /// A new run from `t0` with the next seed (D-084): the learner sees another outcome of
+    /// the same model; `reset` replays the current one.
+    pub fn reseed(&mut self) {
+        self.cfg.seed = self.cfg.seed.wrapping_add(1);
+        self.reset();
+    }
+
+    /// The seed of the run shown (RC-13.1).
+    pub fn seed(&self) -> u64 {
+        self.cfg.seed
+    }
+
     /// Names of the event occurrences in `(a, b]`, in order (announcements, PK-11.3a).
     pub fn events_between(&self, a: f64, b: f64) -> Vec<String> {
         self.session.current.log.iter().filter(|l| l.t > a && l.t <= b).map(|l| l.name.clone()).collect()
@@ -245,7 +257,7 @@ impl Interactive {
     }
 
     /// Presses a button: requests its event at the instant shown (D-027, RC-11.4a), or
-    /// applies its runtime control: `reset`, `undo`, `redo` (D-069).
+    /// applies its runtime control: `reset`, `undo`, `redo` (D-069), `reseed` (D-084).
     pub fn press(&mut self, rep: &str) -> Result<(), Report> {
         let Some((_, r)) = self.rep(rep) else { return self.report(Why::Refused, format!("no button `{rep}`")) };
         match &r.kind {
@@ -260,6 +272,7 @@ impl Interactive {
             CKind::RunButton { control, .. } => {
                 match control.as_str() {
                     "reset" => self.reset(),
+                    "reseed" => self.reseed(),
                     "undo" => self.undo(),
                     _ => self.redo(),
                 }

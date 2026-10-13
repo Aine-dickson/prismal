@@ -25,7 +25,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "for", "view", "panel", "observe", "live", "over", "microstep", "show", "as", "drag", "click", "propose", "permit",
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
-    "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random",
+    "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -1237,7 +1237,17 @@ impl<'a> Parser<'a> {
                     value = Expr { kind: ExprKind::Aggregate { agg, body: Box::new(value), var, over, filter }, span: self.since(s) };
                 }
                 let every = if self.eat_word("every") { Some(self.expr()?) } else { None };
-                out.push(Arg { name, value, every });
+                // An ensemble source (D-084): `n at t0 + 7 s over 200 runs`.
+                let ensemble = if every.is_none() && self.eat_word("at") {
+                    let at = self.expr()?;
+                    self.expect_word("over")?;
+                    let n = self.expr()?;
+                    self.expect_word("runs")?;
+                    Some((at, n))
+                } else {
+                    None
+                };
+                out.push(Arg { name, value, every, ensemble });
                 if !self.eat_punct(",") {
                     break;
                 }
@@ -1480,7 +1490,16 @@ impl<'a> Parser<'a> {
         } else if self.eat_word("every") {
             Some(Schedule::Every(self.expr()?))
         } else if self.eat_word("at") {
-            Some(Schedule::At(self.expr()?))
+            let at = self.expr()?;
+            // `at τ over n runs` (D-084).
+            let runs = if self.eat_word("over") {
+                let n = self.expr()?;
+                self.expect_word("runs")?;
+                Some(n)
+            } else {
+                None
+            };
+            Some(Schedule::At(at, runs))
         } else if self.eat_word("on") {
             let ev = self.name("an event name")?;
             let micro = if self.eat_word("microstep") { Some(self.int()? as u32) } else { None };
@@ -1891,7 +1910,7 @@ fn belongs(word: &str) -> Option<&'static str> {
         "slider" | "number_input" | "toggle" | "button" | "label" => {
             "A control belongs in a presentation, inside `panel name { ... }` (or inside a view's braces)"
         }
-        "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "axes" | "grid"
+        "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" | "axes" | "grid"
         | "formula" | "equation" | "table" | "group" => "A representation is drawn in a view: it belongs inside `view name: plot(...) { ... }` or `view name: spatial(...) { ... }` of a presentation",
         "view" | "panel" | "observe" | "permit" | "timeline" | "layout" => "This belongs directly inside a `presentation Name for Model { ... }`",
         "scene" | "beat" | "narrate" | "explore" | "hold" => "This belongs in a presentation's `timeline { ... }` (a lesson)",
