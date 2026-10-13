@@ -475,6 +475,27 @@ impl Player {
         self.map(p, self.pb.current, s, rate);
     }
 
+    /// A new version of the current run from `t0` with the parameters of the instant shown
+    /// at `p`, and with the next seed when `reseed` (D-085, D-088).
+    fn restart_branch(&mut self, p: f64, reseed: bool) {
+        let s = self.sim_at(p);
+        let old = &self.pb.runs[self.cur()];
+        let mut cfg = crate::restarted(&old.run, s);
+        if reseed {
+            cfg.seed = cfg.seed.wrapping_add(1);
+        }
+        let t0 = cfg.t0;
+        let run = prismal_runtime::run(&old.run.model, cfg.clone());
+        let lineage = old.lineage.clone();
+        self.pb.runs.push(RunVersion { lineage, config: cfg, run });
+        self.pb.current = self.pb.runs.len() - 1;
+        if lineage_is(&self.pb.runs[self.pb.current], "lesson") {
+            self.lesson = self.pb.current;
+        }
+        let rate = self.open.rate;
+        self.map(p, self.pb.current, t0, rate);
+    }
+
     fn branch(&mut self, p: f64) -> usize {
         self.branches += 1;
         let s = self.sim_at(p);
@@ -509,21 +530,7 @@ impl Player {
                 self.map(p, self.cur(), t0, rate);
             }
             // D-085: a new run version from `t0`, with the parameters of the instant shown.
-            TAction::Restart => {
-                let s = self.sim_at(p);
-                let old = &self.pb.runs[self.cur()];
-                let cfg = crate::restarted(&old.run, s);
-                let t0 = cfg.t0;
-                let run = prismal_runtime::run(&old.run.model, cfg.clone());
-                let lineage = old.lineage.clone();
-                self.pb.runs.push(RunVersion { lineage, config: cfg, run });
-                self.pb.current = self.pb.runs.len() - 1;
-                if lineage_is(&self.pb.runs[self.pb.current], "lesson") {
-                    self.lesson = self.pb.current;
-                }
-                let rate = self.open.rate;
-                self.map(p, self.pb.current, t0, rate);
-            }
+            TAction::Restart => self.restart_branch(p, false),
             TAction::Branch => {
                 self.branch(p);
             }
@@ -561,7 +568,7 @@ impl Player {
             TAction::Show { view, reps } => {
                 let ctx = self.pb.projector.ctx(view.as_deref());
                 for r in reps {
-                    match compile_rep(&self.pb.cm, &ctx, r) {
+                    match compile_rep(&self.pb.cm, &ctx, r, &self.pb.pres.instruments) {
                         Ok(c) => self.pb.shown.push(Shown { from: p, until: f64::INFINITY, view: view.clone(), rep: c, reveal: None }),
                         Err(d) => self.pb.diagnostics.extend(d.into_iter().map(|x| x.to_string())),
                     }
@@ -581,7 +588,7 @@ impl Player {
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(1.0);
                 let ctx = self.pb.projector.ctx(view.as_deref());
                 for r in reps {
-                    match compile_rep(&self.pb.cm, &ctx, r) {
+                    match compile_rep(&self.pb.cm, &ctx, r, &self.pb.pres.instruments) {
                         Ok(c) => self.pb.shown.push(Shown { from: p, until: f64::INFINITY, view: view.clone(), rep: c, reveal: Some((*style, d)) }),
                         Err(e) => self.pb.diagnostics.extend(e.into_iter().map(|x| x.to_string())),
                     }
@@ -810,6 +817,16 @@ impl Player {
                         None => Action::Request(event.clone()),
                     });
                 }
+                // D-088: `restart` starts the branch again from `t0` with its parameters as
+                // they are; `reseed` does so with the next seed.
+                LearnerInput::Control { control } => {
+                    let offered = controls.iter().any(|c| c.kind == "button" && matches!(c.sources.first(), Some(prismal_ir::present::Arg::Word { word }) if word == control));
+                    if !offered {
+                        self.pb.refusals.push(Refusal { at: inp.at, input: describe(&inp.input), reason: format!("{beat} offers no button({control}) (PK-9.8)") });
+                        continue;
+                    }
+                    self.restart_branch(inp.at, control == "reseed");
+                }
             }
         }
         let end_input = end;
@@ -820,7 +837,7 @@ impl Player {
         };
         self.pb.waits.push(WaitPoint { beat: beat.to_string(), at: p, end, pending: end_input.is_none() && limit.is_none(), explore: true });
         for c in controls {
-            match compile_rep(&self.pb.cm, &ViewCtx::Panel, c) {
+            match compile_rep(&self.pb.cm, &ViewCtx::Panel, c, &self.pb.pres.instruments) {
                 Ok(cr) => self.pb.shown.push(Shown { from: p, until: end, view: None, rep: cr, reveal: None }),
                 Err(d) => self.pb.diagnostics.extend(d.into_iter().map(|x| x.to_string())),
             }
@@ -844,6 +861,7 @@ fn describe(i: &LearnerInput) -> String {
         LearnerInput::Continue => "continue".into(),
         LearnerInput::SetControl { control, binding, .. } => format!("set {control} {binding}"),
         LearnerInput::Press { event } => format!("press {event}"),
+        LearnerInput::Control { control } => format!("press {control}"),
     }
 }
 
@@ -917,7 +935,7 @@ fn play_once(prog: &Program, presentation: &str, base: Config, medium: Medium, i
         if !used {
             let reason = match inp.input {
                 LearnerInput::Continue => "no continue point at this instant".into(),
-                LearnerInput::SetControl { .. } | LearnerInput::Press { .. } => "outside an explore beat the learner has no model actions (PK-9.8, D-025)".to_string(),
+                LearnerInput::SetControl { .. } | LearnerInput::Press { .. } | LearnerInput::Control { .. } => "outside an explore beat the learner has no model actions (PK-9.8, D-025)".to_string(),
             };
             pl.pb.refusals.push(Refusal { at: inp.at, input: describe(&inp.input), reason });
         }

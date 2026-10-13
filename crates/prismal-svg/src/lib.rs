@@ -509,7 +509,8 @@ fn plot_chrome(out: &mut String, vl: &Json, map: &Map, th: &Theme) {
     }
     let units: Vec<&str> = arr(&vl["units"]).iter().map(s).collect();
     if let Some(ux) = units.first().filter(|u| !u.is_empty()) {
-        let t = if *ux == "s" { "elapsed time (s)".to_string() } else { format!("({ux})") };
+        let elapsed = vl["x_elapsed"].as_bool().unwrap_or(true);
+        let t = if *ux == "s" && elapsed { "elapsed time (s)".to_string() } else { format!("({ux})") };
         *out += &text(w - m, h - 8.0, &t, 12.0, false, th.muted, " text-anchor=\"end\" class=\"tick\"");
     }
     if let Some(uy) = units.get(1).filter(|u| !u.is_empty()) {
@@ -563,6 +564,7 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
     let style = match r["line"].as_str() {
         Some("dashed") => format!(" stroke-dasharray=\"{} {}\"", n(6.0 * u), n(4.0 * u)),
         Some("dotted") => format!(" stroke-dasharray=\"{} {}\" stroke-linecap=\"round\"", n(0.01 * u), n(4.0 * u)),
+        Some("solid") => " stroke-dasharray=\"none\"".to_string(),
         _ => String::new(),
     };
     let dash = match drawn {

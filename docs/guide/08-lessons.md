@@ -116,6 +116,7 @@ run pressed of FreeFall with DropTry {
 
 - `at 3 s: press drop` presses the button that requests `drop`. With `h` set to 20 m first, the ball falls from 20 m on the branch.
 - Outside an explore beat, or when the beat offers no button for the event, a press is refused, as a slider's setting is.
+- An explore beat may also offer `button(restart)`: it starts the learner's branch again from the beginning with the values the learner has set, so a learner can try a starting height or a number of molecules as often as they like. In a model with chance, `button(reseed)` does the same with another seed (chapter 15). A learner script presses them with `press restart` and `press reseed`. Other runtime controls (`reset`, `undo`, `redo`) belong to labs.
 
 **Goal of this chapter's program.** A narrated lesson: a ball is dropped, the lesson pauses to ask how long the fall took, lets the learner choose a new height, and drops it again.
 **How it is built.** The model only knows about falling (`state`, `flow`, an event `landed`) and an event `drop on request` that a lesson or button can ask for. Everything about the story is in the presentation's `timeline`: `scene`s made of `beat`s, each with actions (`narrate`, `run ... until landed`, `hold`, `highlight`, `explore` with a slider, `request drop`).

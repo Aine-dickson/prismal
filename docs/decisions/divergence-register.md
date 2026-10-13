@@ -1618,3 +1618,117 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** `prismal_present::restarted`; `Interactive::restart`, `reseed` reworked; timeline `Restart` (a new run version); IR action `restart`; parser, lowering, formatter, checker, host action list, word lists; frame `grid_step` and grid bars; PK-6.3d, PK-6.3e, PK-9.2 table; reference, working syntax, guide chapter 15; `examples/reaction.md` and its index row; tests `restart_keeps_the_settings` and `histogram_bars_follow_the_grid_of_the_values`.
 - **History:**
   - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-086: Rates that vary between events
+
+- **Status:** Accepted
+- **Original position:** D-083 (MK-15.16) let a random event's rate read only parameters, constants, discrete state and derived values of those, so that a rate is constant between transitions; a rate reading continuous state or `t` was MK-E27, "a later extension".
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers); the owner chose on 2026-10-13 to finish the stochastic leftovers before the next capability.
+- **Builds on:** D-004, D-083; MK-15.15, RC-7.5, RC-7.6, RC-13.8.
+- **Question:** How does a model write chance whose rate changes continuously: a counter moving away from a source, an ageing part that fails more often with time, a reaction rate that follows a temperature?
+- **Content the change serves:** inverse-square counting, hazard rates that grow with age (Weibull lifetimes), reactions in a changing environment, infection pressure from a continuous quantity.
+- **Options considered:**
+  1. **Keep MK-E27**; authors approximate with `every Δ` and `bernoulli(λ Δ)`. Wrong by a step-size error, and the step is the author's to choose.
+  2. **Thinning** (Lewis and Shedler 1979): draw candidates at a bounding rate and accept with probability `λ / λ_max`. Needs a bound the author declares or the runtime guesses; a wrong bound gives a wrong law silently.
+  3. **The integral of the rate as hidden continuous state** in the solver, with the occurrence located as a crossing of `Λ = P`. Exact to the solver's accuracy, but the rate's integral enters the solver's error control and changes the steps of every flow in the model.
+  4. **The integral of the rate by quadrature on the dense output of each step** (taken). Within a step the discrete state is fixed and the dense output gives the continuous state at any instant, so the rate is a smooth function of time on the step: its integral is computed by adaptive Gauss-Legendre panels, and the occurrence is located by bisection and cut as a crossing is.
+- **Accepted position:** option 4, under the owner's standing delegation of 2026-09-30.
+  - MK-15.16: a rate may read continuous state and time, directly or through derived values; MK-E27 is retired. The checker marks such a rate as varying (`CTrigger::Random { varying }`).
+  - RC-13.8a: a varying clock has no scheduled instant; its integral grows along each accepted step; reaching its target cuts the step there (to `ε_t`), and it fires as any clock. Targets come from the same stream as before, so a constant rate made varying keeps its draws.
+  - A negative rate inside a step is a model failure, located to `ε_t`.
+  - No new syntax: `random(λ)` takes any rate expression.
+- **Reason:** option 4 is exact to the solver's accuracy (the law tested against the closed forms below), adds no state to the solver, leaves models without varying rates bit for bit as they were, and keeps every guarantee of D-083 (streams by event identity, snapshots, resumed runs).
+- **Consequences:** MK-15.15, MK-15.16; RC-13.8a; `prismal_kernel::check::random_rate_varies`; runtime `integrate_rates`, `locate_clocks`, `fire_clock`; guide chapter 15 (Rates that change between events) and the reference (MK-E27 retired); tests: a count under the rate `k t / tau` against its Poisson law (mean and variance), its waiting time (first two moments), a rate read from cooling continuous state, resumed runs, a rate that turns negative.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-087: Instruments: readings with resolution, range and noise
+
+- **Status:** Accepted
+- **Original position:** PK-3.7 let an observation declare an instrument (resolution, range, a stated uncertainty) and deferred instrument noise to the stochastic slice (D-013). Nothing of it was implemented: no syntax, no IR, no runtime.
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: instrument noise in observations, PK-3.7); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-061, D-081, D-083, D-084, D-085; PK-3.1, PK-3.2, PK-3.7, PK-3.8, PK-6.3a, PK-6.3e; RC-13.5, RC-13.6.
+- **Question:** How does a lesson show that a measurement differs from the quantity measured (rounding, a limited range, random error), how does a learner see readings scatter, and how does a test check them?
+- **Content it serves:** measurement and uncertainty in school physics and chemistry: readings against the true curve, repeated measurements and their spread, the standard uncertainty of an instrument, the mean of many readings.
+- **Options considered:**
+  1. **Noise in the model**, `derived { reading = y + normal(0 m, s) }`. A distribution outside an event (MK-E28, D-083) for a good reason: a value read twice would differ, and the model would change with how it is shown.
+  2. **Options on each observation and representation** (`series_plot(y every 0.05 s, noise: 2 cm)`). Every place that reads would repeat the instrument, and an observation has no place for options.
+  3. **A named instrument in the presentation, applied like a function to a source** (taken): `instrument ruler(resolution: 1 cm, range: [0 m, 2 m], noise: 2 cm)`, then `ruler(y) every 0.05 s` in a series plot, a trace, a table, a histogram's ensemble or an observation. The declaration is a head word with named options, the existing form (D-081); the use is a call, the existing form; the only new word is the contextual `instrument`.
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13 (reuse existing forms; one new word).
+  - PK-3.7: options optional, constants with the dimension of the values; `range` for numbers and quantities only; readings outside the range are not available; noise is normal with the given deviation per component; the resolution rounds last. Text alternatives state the standard uncertainty `sqrt(noise^2 + resolution^2 / 12)`.
+  - RC-13.5a: a reading's noise is a pure function of the seed, the instrument, the source and the instant, so the series a learner sees and the observation a test checks are the same readings, and `button(reseed)` measures again.
+  - Readings never change the run (PK-3.2): the model stays exact.
+  - **Found while checking a still of the guide's lab:** a series of readings joined into a dotted line looked like a second curve; readings are drawn as separate points (a group of markers, which every renderer draws). A histogram of readings rounded to 1 cm in 1 cm bins showed a comb: values on the bins' edges were split by rounding; grid bars (D-085) now apply when the grid step equals the bin width, not only when it is wider.
+- **Reason:** an instrument belongs to how a model is observed, not to the model; naming it once lets every reading of a lesson share it, and writing it as a call reads as what it is, the ruler applied to the height.
+- **Version 1 (D-081):** an addition. `instrument` was not a valid presentation item before, and a call that names an instrument exists only in presentations that declare one.
+- **Consequences:** IR `Instrument`, `Presentation.instruments`, `Observation.instrument`, `instrument` of sampled and ensemble arguments; `prismal_present::measure` (`Meter`); `data::observe` and `compile_rep` take the presentation's instruments; series plots of readings as points; tables write `out of range`; parser, lowering, formatter, word lists; PK-3.7, PK-6.3a, PK-6.3e, RC-13.5a, 04-ir, working syntax, reference; guide chapter 15 (Measuring with an instrument); `prismal-present/tests/instruments.rs`.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-088: `restart` and `reseed` in explore beats
+
+- **Status:** Accepted
+- **Original position:** D-069 made every runtime-control button a static error in a presentation with a timeline (PK-E05): a lesson's timeline is directed by the learner through the player. D-085 gave lessons the timeline action `restart`, so a lesson could restart only in a beat written for it, after the explore beat (`examples/reaction.md`).
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: a `restart` button inside explore beats); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-025, D-069, D-084, D-085; PK-6.3d, PK-9.8, PK-9.9.
+- **Question:** How does a learner, during an explore beat, try a starting value (a number of molecules, a starting height) or another outcome of chance, more than once?
+- **Options considered:**
+  1. **Keep the restart after the beat.** One try per explore beat; the learner who moves the slider sees nothing change until the beat ends.
+  2. **Restart the branch whenever a parameter that sets a starting value changes.** Silent, and wrong for parameters that act during the run (a slider of a rate should take effect at the instant shown).
+  3. **Allow `button(restart)` and `button(reseed)` among an explore beat's controls** (taken): the words labs already use, acting on the learner's branch.
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30.
+  - PK-9.8c: a press makes a new version of the branch from `t0` with the branch's parameters at the instant shown and an empty log, and with the next seed for `reseed`; the beat ends as before (PK-9.9).
+  - A learner script writes `press restart` and `press reseed` (IR `LearnerInput::Control`), read as runtime controls unless the model has an event of that name, as `button(restart)` is.
+  - `reset`, `undo` and `redo` stay lab controls: on a branch, "back to the starting values" and the undo of the lesson's own actions have no clear meaning.
+  - The host's `lesson_press` accepts these buttons; the web player already sends a lesson's buttons through it.
+- **Reason:** the learner's branch is already a run of its own (D-025), so restarting it is the lab's restart applied to it; no new word, and the lesson's run is untouched.
+- **Version 1 (D-081):** an addition: programs that were errors (PK-E05) become valid; no valid program changes meaning.
+- **Consequences:** PK-6.3d, PK-9.8c; IR `LearnerInput::Control`; `EXPLORE_CONTROLS`; checker, timeline (`restart_branch`, shared with the action `restart`), host, formatter; guide chapters 8 and 15, the reference; `examples/reaction.md` offers "Try it" and "Another run" in its explore beat; `prismal-present/tests/explore_restart.rs`.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-089: Histograms of one run: values at events and sampled values
+
+- **Status:** Accepted
+- **Original position:** D-084 (PK-6.3e) gave `histogram` one source, an ensemble: the values of many runs at one instant. What happens again and again within one run (the faces of a die rolled every second, the waits between clicks of a counter) could be observed (`gap on click`, `x every Δ`) and checked (`mean(gaps)`), not drawn.
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: histograms over a whole run rather than one instant); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-070, D-084, D-085, D-087; PK-3.1, PK-3.4, PK-6.3a, PK-6.3e.
+- **Question:** How does a lesson draw the distribution of values within one run?
+- **Options considered:**
+  1. **A representation that refers to an observation** (`histogram(gaps)`). Rejected for the same reason as in D-084: representations have never referred to observations.
+  2. **New histogram options** (`histogram(gap, over: run)`). A second way to say what the observation phrases already say.
+  3. **The observation phrases as sources** (taken): `histogram(face on roll)` and `histogram(h every 1 s)`. `every Δ` was already a representation source (PK-6.3a); `on E` was an observation schedule (PK-3.4) and becomes a representation source too, the same phrase in both places, as `at τ over n runs` did in D-084.
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13.
+  - PK-6.3e: a histogram takes an ensemble, a sampled source or the values at each occurrence of an event, each in the state after the occurrence's transition (as an observation `on E`). The values of one run are those up to the instant shown, so the histogram grows while a lab plays; with none yet, the axis alone is drawn. Instruments (D-087) apply to all three.
+  - IR argument `{"kind": "on", "expr", "event", "instrument"?}`; `on E` in a model expression's arguments is SX-E08.
+  - **Found while checking a still of the guide's lab:** both renderers labelled every time axis "elapsed time (s)", wrong under a histogram of waits. The host's layout now says whether a plot's time axis is elapsed time (`x_elapsed`, HI-5.1), false in a view with a histogram.
+- **Reason:** one phrase for one meaning: what the observation `gap on click` collects is what `histogram(gap on click)` draws, so a lesson's picture and its test agree by construction.
+- **Version 1 (D-081):** an addition: `on` after an argument was an error before.
+- **Consequences:** IR `Arg::On`; AST `Arg.on`, parser, lowering, formatter, elaboration; `HistSource` in `prismal_present::frame`; host layout `x_elapsed`; SVG and web renderers; PK-6.3e, 04-ir, HI-5.1, working syntax, reference; guide chapter 15 (Waiting times); `prismal-present/tests/histograms.rs` (a die's faces, waits against the exponential law, a sampled level).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-090: Noise in flows: stochastic differential equations
+
+- **Status:** Accepted
+- **Original position:** D-013 accepted per-step and event-time sampling; D-083 implemented both with random events and draws in handlers, and kept expressions free of draws (MK-10.4). Noise inside a flow, a stochastic differential equation, was left for later: it needs a stochastic integrator (2026-10-13 handover).
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: SDE-style noise in flows); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-004, D-013, D-015, D-083, D-086; MK-10.4, MK-14 (flows), RC-6, RC-7, RC-13, RC-14.
+- **Question:** How does a model write a continuous quantity pushed at random at every instant (Brownian motion, Langevin's equation, a noisy oscillator, geometric Brownian motion), and how is it integrated?
+- **Content it serves:** Brownian motion and Einstein's diffusion law, Langevin's equation and the Ornstein-Uhlenbeck process, thermal noise, first passage times, geometric Brownian motion, noisy population growth.
+- **Options considered:**
+  1. **Per-step draws in an event** (`every Δ` with `set x = x + normal(0 m, s)`). A random walk, not a flow: no drift integrated with it, the step is the author's to tune, and events cannot be located inside the walk's steps.
+  2. **A separate noise statement** (`noise der(x) = b`), the diffusion term apart from the flow. A second statement for one equation; the drift and the diffusion of one quantity are written in two places.
+  3. **White noise as a built-in term of a flow** (taken): `der(x) = a + b * noise`, as physics texts write Langevin's equation (`dv/dt = -γ v + ξ(t)`). `noise` is a quantity of dimension `T^(-1/2)`, so `sqrt(2 * D) * noise` checks with `D` an area per time. Each occurrence is an independent noise, so a vector of independent components is `(k * noise, k * noise)`.
+  For the integrator: **Euler-Maruyama** with a fixed step (taken), weak order 1 and strong order 1/2 (1 for additive noise), the method of textbooks; higher-order schemes (Milstein, stochastic Runge-Kutta) need derivatives of the noise coefficients or more evaluations and can come later behind the same syntax.
+- **Accepted position:** option 3 with Euler-Maruyama, under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13 (reuse forms; one built-in name, no new statement).
+  - MK-14.16: flows linear in each noise (MK-E30); `noise` only in flows (MK-E29); Itô's reading; a name the author declares wins over `noise`, so no version 1 program changes meaning.
+  - RC-13.9: a model with noise steps by Euler-Maruyama with the case's `h`, else `t_ref / 1000`. One evaluation of the flows per step, with each noise at `N / sqrt(h)`, is exactly the Euler-Maruyama step because the flows are linear in the noises: no symbolic separation of drift and diffusion. `N` comes from Philox, keyed by the flow's identity and the occurrence, counted by the step's start instant, so runs resume from snapshots bit for bit. The dense output is the straight line between steps; events and varying random clocks (D-086) work on it unchanged.
+  - **Units with half powers.** Noise coefficients have half-integer dimensions (a volatility in `1/s^0.5`). Unit exponents may now be whole or half numbers (`s^0.5`, `s^-1.5`); dimensions already held rational powers.
+  - **Found while checking a still of the guide's lab:** an author's `line: solid` on a trace was dropped from frames (solid being every other shape's default), so a Brownian path could only be drawn dashed, and the web player drew any unnamed style as dotted. Frames now carry `solid`, and both renderers draw it without dashes.
+  - **Found by the step count:** looking up the state at an instant scanned every segment; a run with noise has one per millisecond. The lookup is now a bisection (same segment, same results).
+- **Reason:** writing the noise where the physics puts it keeps one equation in one place, and the dimension of white noise makes a wrong coefficient a type error; linearity in the noise is both what makes the equation meaningful and what lets one evaluation give the Euler-Maruyama step.
+- **Version 1 (D-081):** an addition: `noise` was an unknown name before, and declared names keep their meaning.
+- **Consequences:** IR builtin `noise`; `CExpr::Noise`, `Ctx::noise`, `CModel::noise`, `rhs_noisy`; checker MK-E29, MK-E30 (`noise_linear`); runtime Euler-Maruyama branch, `Dense::Linear`, `Config::h_noise` and `noise_step`, case `h`; unit exponents in halves (parser, `Unit::parse`); formatter, text and formula (`ξ`); frames carry `line: solid`, SVG and web renderers; `Run::state_at` by bisection; MK-14.16, RC-13.9, reference, guide chapter 15 (Noise in flows); `prismal-present/tests/noise.rs` (diffusion `2 D T`, independent components, Ornstein-Uhlenbeck spread, geometric Brownian motion in Itô's sense, first passage, reproducibility and resumed runs, step count, diagnostics).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.

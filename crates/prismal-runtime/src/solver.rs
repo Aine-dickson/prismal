@@ -13,6 +13,9 @@ pub trait Rhs {
 pub enum Dense {
     Hermite { y0: Vec<f64>, y1: Vec<f64>, f0: Vec<f64>, f1: Vec<f64> },
     Dopri { r: [Vec<f64>; 5] },
+    /// An Euler-Maruyama step (RC-13.9): the straight line between its two states, the
+    /// mean of the Brownian bridge.
+    Linear { y0: Vec<f64>, y1: Vec<f64> },
 }
 
 /// One accepted step. `t1` may be truncated at an event (RC-7.6); the interpolant stays the
@@ -45,6 +48,11 @@ impl Step {
                 let th1 = 1.0 - th;
                 for i in 0..out.len() {
                     out[i] = r[0][i] + th * (r[1][i] + th1 * (r[2][i] + th * (r[3][i] + th1 * r[4][i])));
+                }
+            }
+            Dense::Linear { y0, y1 } => {
+                for i in 0..out.len() {
+                    out[i] = y0[i] + th * (y1[i] - y0[i]);
                 }
             }
         }

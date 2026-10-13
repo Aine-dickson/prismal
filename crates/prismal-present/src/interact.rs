@@ -564,7 +564,7 @@ impl Interactive {
     /// The current data of an observation of the presentation.
     pub fn observe(&self, name: &str) -> Result<Data, String> {
         let o = self.pres.observations.iter().find(|o| o.name == name).ok_or(format!("no observation `{name}`"))?;
-        observe(&self.cm, &self.session.current, o, self.session.log())
+        observe(&self.cm, &self.session.current, o, self.session.log(), &self.pres.instruments)
     }
 }
 

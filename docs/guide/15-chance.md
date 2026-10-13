@@ -38,7 +38,7 @@ model Sample {
 
 - `random(lambda * n)` takes a rate, a quantity per unit of time (`Frequency` is `1/T`). A rate without a unit is an error: write `0.1 /s`, not `0.1`.
 - The rate is read again after every event, so it falls as nuclei decay. Between events the waiting time is random with the exponential law; the runtime computes it exactly, not by small time steps.
-- A rate may read parameters and discrete state, not continuous state or `t` (MK-E27): a rate changes only when an event changes what it reads.
+- A rate may read anything in the model, including continuous state and `t`; see [Rates that change between events](#rates-that-change-between-events).
 - When `n` reaches 0 the rate is 0 and the event never happens again.
 
 ```text
@@ -116,7 +116,7 @@ presentation ManyRuns for Sample2 {
 - An ensemble source is written `value at instant over count runs`, inside a representation's parentheses or after an observation's `=`. Run `k` uses the seed of the run shown plus `k - 1`, so the first run is the one shown. Each run stops at the instant, so a long lab stays quick.
 - The histogram's `x` axis is the value, its `y` axis how many runs fall in each bin; `bins: 16` divides the `x` range into 16 equal bins. Its text alternative gives the mean and the deviation.
 - When the learner moves the slider, the histogram is computed again for the new rate; `reseed` moves it to 200 other runs.
-- A slider that sets a starting value (how many nuclei there are, `n0`) changes nothing in a run under way: the count was set at the start. `button(restart)` starts a new run from `t0` with the parameters as the learner has set them; `reseed` does the same with the next seed; `reset` goes back to the presentation's own starting values. In a lesson, the timeline action `restart` does the same after an `intervene`.
+- A slider that sets a starting value (how many nuclei there are, `n0`) changes nothing in a run under way: the count was set at the start. `button(restart)` starts a new run from `t0` with the parameters as the learner has set them; `reseed` does the same with the next seed; `reset` goes back to the presentation's own starting values. In a lesson, the timeline action `restart` does the same after an `intervene`, and an explore beat may offer `button(restart)` and `button(reseed)` to the learner (D-088; `examples/reaction.md`).
 
 ```cases
 run spread of Sample2 with ManyRuns {
@@ -272,6 +272,207 @@ run settles of Isomer with IsomerLab {
 ```
 
 At equilibrium `b` is near `300 * 2 / 3 = 200`, with a deviation of about 8. Each event changes both counts, so the rates of both change at every event; the runtime keeps one clock per event, which is exact however the rates change (D-083).
+
+## Rates that change between events
+
+**Goal.** A counter carried away from a radioactive source: the learner hears the clicks thin out as the distance grows, because the rate falls with the square of the distance.
+**How it is built.** The distance `x` is continuous `state` with a `flow`. A `derived` value `level` gives the click rate from `x`, and the event's trigger `random(level)` reads it. Nothing else is needed: the runtime follows the rate as it changes between clicks.
+
+```text
+model Counter {
+  param {
+    r0: Frequency = 40 /s     // clicks per second at the reference distance
+    d0: Length    = 1 m       // reference distance
+    v:  Velocity  = 0.5 m/s   // the counter's speed away from the source
+  }
+  state { x: Length = 1 m }
+  discrete { clicks: Real = 0 }
+  derived { level: Frequency = r0 * (d0 / x)^2 }
+
+  flow der(x) = v
+
+  event click on random(level) { set clicks = clicks + 1 }
+}
+
+presentation CounterLab for Counter {
+  view counts: plot(x: [0 s, 10 s], y: [0, 80]) {
+    series_plot(clicks every 0.1 s)
+  }
+  panel controls {
+    slider(v, range: [0.1 m/s, 2 m/s])
+    label(level)
+    label(clicks)
+  }
+  observe { total = clicks at t0 + 10 s }
+}
+```
+
+```cases
+run thins_out of Counter with CounterLab {
+  config { seed = 4 }
+  until t0 + 10 s
+  expect { total in [40, 95] }
+}
+```
+
+- The rate reads `x`, which flows, so it is different at every instant. The event happens when the rate, added up over time, reaches a random amount drawn from the event's stream; the runtime adds it up along the solver's steps (RC-13.8a). The result is exact up to the solver's accuracy, not a sampling on a grid.
+- Over 10 s the expected number of clicks is `r0 d0^2 (1/x(0) - 1/x(10 s)) / v = 40 * (1 - 1/6) / 0.5`, about 67, with a deviation of about 8.
+- A rate that reads `t` works the same way: `random(k * elapsed / tau)` is an ageing part that fails more often the older it is.
+- A rate that turns negative stops the run at the instant it does: write rates that stay at or above 0.
+
+## Waiting times
+
+**Goal.** A counter near a steady source clicks at random. The learner sees the gaps between clicks collect into a histogram that takes the shape of the exponential law: short gaps are common, long ones rare.
+**How it is built.** The model keeps the time of the last click and the gap before the current one, both set in the click's handler. `histogram(gap on click)` collects the gap at every click of the run, up to the instant shown, so the histogram grows while the lab plays.
+
+```text
+model Geiger {
+  param { lambda: Frequency = 2 /s }
+  discrete {
+    last:   Time = 0 s     // when the last click came
+    gap:    Time = 0 s     // the wait before the last click
+    clicks: Real = 0
+  }
+
+  event click on random(lambda) {
+    set gap    = elapsed - last
+    set last   = elapsed
+    set clicks = clicks + 1
+  }
+}
+
+presentation GeigerLab for Geiger {
+  view gaps: plot(x: [0 s, 3 s], y: [0, 20], follow: y) {
+    histogram(gap on click, bins: 30)
+  }
+  panel controls {
+    slider(lambda, range: [0.5 /s, 5 /s])
+    button(reseed, label: "Another run")
+    label(clicks)
+  }
+  observe { gaps = gap on click }
+}
+```
+
+```cases
+run waits of Geiger with GeigerLab {
+  config { seed = 9 }
+  until t0 + 300 s
+  expect {
+    mean(gaps) == 0.5 s within 0.06 s
+    deviation(gaps) in [0.42 s, 0.58 s]
+  }
+}
+```
+
+- `gap on click` is the value of `gap` just after each click, the same phrase as the observation `gaps = gap on click`. `histogram(x every Δ)` collects samples of a value through the run in the same way.
+- Both handler lines read the values from before the click: `gap` gets the time since the previous click, then `last` moves on.
+- With a rate of 2 per second the mean wait is half a second, and the deviation is the same: for the exponential law the two are equal. A histogram over many runs (`at τ over n runs`, above) shows how runs differ; a histogram of one run shows what happens again and again within it.
+
+## Noise in flows
+
+**Goal.** A pollen grain in water, jostled by molecules too small to see: the learner watches its path wander, and checks Einstein's law that the mean square distance grows in proportion to time, `4 D t` in a plane.
+**How it is built.** The position is continuous `state` with a `flow`, as for any motion, but its rate of change is **white noise**: `noise`, a random push at every instant. Each `noise` written is a separate, independent noise, so the two components get one each. `D` is the diffusion coefficient, an area per time.
+
+```text
+space Water = euclidean(2)
+
+model Pollen in Water {
+  param { D: Quantity<L^2/T> = 0.5 m^2/s }    // diffusion coefficient
+  state { pos: Point = origin }
+
+  flow der(pos) = (sqrt(2 * D) * noise, sqrt(2 * D) * noise)
+}
+
+presentation PollenLab for Pollen {
+  view water: spatial(Water, scale: 1 m -> 60 px, y: up) {
+    axes
+    trace(pos every 0.01 s, line: solid)
+    marker(pos) as grain
+  }
+  panel controls {
+    slider(D, range: [0.1 m^2/s, 2 m^2/s])
+    button(reseed, label: "Another grain")
+  }
+  observe {
+    spread = |pos - origin|^2 at t0 + 1 s over 300 runs
+  }
+}
+```
+
+```cases
+run einstein of Pollen with PollenLab {
+  config { seed = 2 }
+  until t0 + 1 s
+  expect {
+    mean(spread) == 2 m^2 within 0.35 m^2
+  }
+}
+```
+
+- `noise` has the unit `1/s^0.5`: white noise is the rate of change of a random walk whose spread grows with the square root of time. So `sqrt(2 * D) * noise` is a velocity when `D` is an area per time, and the flow checks like any other.
+- A flow is **linear** in each noise: `der(x) = a + b * noise`, with `a` and `b` free of noise (MK-E30). `a` is the drift, the push that does not average out; `b` scales the noise. Several noises are added as several terms. `noise` is written only in flows (MK-E29).
+- The runtime steps such a model by the Euler-Maruyama method, every millisecond unless the case gives `h` in `config` (RC-13.9). Averages over many runs, like `mean(spread)`, are then accurate to about the step.
+- A drift and a noise together give much of statistical physics: `der(v) = -v / tau + s * sqrt(2 / tau) * noise` is a velocity relaxing to a random spread `s` (Langevin's equation, Ornstein-Uhlenbeck), and `der(S) = mu * S + sigma * S * noise` is geometric Brownian motion, where `sigma` has the unit `1/s^0.5`. The noise is read in Itô's sense: the coefficient takes the value at the start of each step.
+- Events see noisy paths: `event hit on falling(x)` finds the first instant a noisy `x` reaches 0.
+
+## Measuring with an instrument
+
+**Goal.** A ball dropped from 2 m and measured with a ruler that reads to the centimetre and errs by about 2 cm: the learner sees the readings scatter about the true height, and repeated measurements spread by the ruler's uncertainty.
+**How it is built.** The model is exact; the instrument belongs to the presentation. `instrument ruler(...)` declares how its readings differ from the truth: `resolution` rounds them, `range` leaves out values the instrument cannot read, `noise` adds a random error with that deviation. Writing `ruler(y)` instead of `y` in a sampled source, an ensemble or an observation reads `y` through the ruler.
+
+```text
+model Drop {
+  param { g: Acceleration = 9.81 m/s^2 }
+  state {
+    y: Length   = 2 m
+    v: Velocity = 0 m/s
+  }
+  flow {
+    der(y) = v
+    der(v) = -g
+  }
+}
+
+presentation DropLab for Drop {
+  instrument ruler(resolution: 1 cm, range: [0 m, 2 m], noise: 2 cm)
+
+  view height: plot(x: [0 s, 0.6 s], y: [0 m, 2.2 m]) {
+    series_plot(y every 0.01 s)
+    series_plot(ruler(y) every 0.05 s, color: orange)
+  }
+  view repeats: plot(x: [1.48 m, 1.64 m], y: [0, 80]) {
+    histogram(ruler(y) at t0 + 0.3 s over 300 runs, bins: 16)
+  }
+  panel controls {
+    button(reseed, label: "Measure again")
+  }
+  observe {
+    reading  = ruler(y) at t0 + 0.3 s
+    readings = ruler(y) at t0 + 0.3 s over 300 runs
+  }
+}
+```
+
+```cases
+run measured of Drop with DropLab {
+  config { seed = 5 }
+  until t0 + 0.6 s
+  expect {
+    reading in [1.48 m, 1.68 m]
+    mean(readings) == 1.5586 m within 0.006 m
+    deviation(readings) in [0.017 m, 0.023 m]
+  }
+}
+```
+
+- The true height at 0.3 s is `2 m - g (0.3 s)^2 / 2`, about 1.5586 m. A single reading may be several centimetres off; the mean of 300 is within a few millimetres.
+- Each option has the dimension of what the instrument reads: a ruler's options are lengths. An instrument without options reads exactly.
+- A series plot draws readings as separate points, not joined into a line: each is one measurement.
+- A reading outside the `range` is not available: a series plot shows no point, a table writes "out of range", an ensemble leaves the run out.
+- The noise of a reading depends on the seed, the instrument, the source and the instant: the orange points and the observation `reading` agree, the same seed gives the same readings, and "Measure again" gives others.
+- Text alternatives add the instrument's **standard uncertainty**, `sqrt(noise^2 + resolution^2 / 12)`: the noise together with the rounding.
+- An instrument reads at instants, so a `label` or a `live` observation cannot use one.
 
 ## Exercises
 

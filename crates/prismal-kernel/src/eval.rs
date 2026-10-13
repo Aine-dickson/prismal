@@ -167,6 +167,8 @@ pub enum CExpr {
     Time,
     Time0,
     Elapsed,
+    /// White noise number `k` of the model (D-090).
+    Noise(usize),
     Der(usize),
     Neg(Box<CExpr>),
     Not(Box<CExpr>),
@@ -228,6 +230,9 @@ pub struct Ctx<'a> {
     pub payloads: &'a [Option<Value>],
     /// The random streams, during event handling only (D-083).
     pub draws: Option<Draws<'a>>,
+    /// The values of the white noises during a stochastic step, by noise site (D-090); empty
+    /// elsewhere, where every noise reads 0 and a flow gives its drift.
+    pub noise: &'a [f64],
 }
 
 fn finite(x: f64, what: &str) -> EvalResult {
@@ -256,6 +261,7 @@ impl CExpr {
             CExpr::Time => Ok(Num(c.t)),
             CExpr::Time0 => Ok(Num(c.t0)),
             CExpr::Elapsed => Ok(Num(c.t - c.t0)),
+            CExpr::Noise(k) => Ok(Num(c.noise.get(*k).copied().unwrap_or(0.0))),
             CExpr::Der(i) => match c.der {
                 Some(d) => Ok(d[*i].clone()),
                 None => Err(Status { kind: StatusKind::Unavailable, cause: "derivative not available here".into() }),
@@ -318,7 +324,7 @@ impl CExpr {
                 Func(body) => {
                     let vals: Result<std::vec::Vec<Value>, Status> = args.iter().map(|a| a.eval(c)).collect();
                     let vals = vals?;
-                    let inner = Ctx { vals: c.vals, der: c.der, t: c.t, t0: c.t0, args: &vals, payloads: c.payloads, draws: c.draws };
+                    let inner = Ctx { vals: c.vals, der: c.der, t: c.t, t0: c.t0, args: &vals, payloads: c.payloads, draws: c.draws, noise: c.noise };
                     body.eval(&inner)
                 }
                 v => Err(Status::invalid(format!("{v} is not a function"))),

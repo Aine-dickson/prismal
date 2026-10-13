@@ -1206,8 +1206,9 @@ impl<'a> PCx<'a, '_> {
         match a {
             Arg::Expr { expr } => Arg::Expr { expr: self.e(s, expr) },
             Arg::Range { lo, hi } => Arg::Range { lo: self.e(s, lo), hi: self.e(s, hi) },
-            Arg::Sampled { expr, every } => Arg::Sampled { expr: self.e(s, expr), every: self.e(s, every) },
-            Arg::Ensemble { expr, at, runs } => Arg::Ensemble { expr: self.e(s, expr), at: self.e(s, at), runs: self.e(s, runs) },
+            Arg::Sampled { expr, every, instrument } => Arg::Sampled { expr: self.e(s, expr), every: self.e(s, every), instrument: instrument.clone() },
+            Arg::Ensemble { expr, at, runs, instrument } => Arg::Ensemble { expr: self.e(s, expr), at: self.e(s, at), runs: self.e(s, runs), instrument: instrument.clone() },
+            Arg::On { expr, event, instrument } => Arg::On { expr: self.e(s, expr), event: event.clone(), instrument: instrument.clone() },
             Arg::Scale { scale } => Arg::Scale { scale: crate::present::Scale { quantity: self.e(s, &scale.quantity), px: scale.px } },
             Arg::Text { .. } | Arg::Word { .. } | Arg::Element { .. } | Arg::Texts { .. } => a.clone(),
         }
@@ -1340,6 +1341,19 @@ fn presentation<'a>(cx: &mut Cx<'a>, root: &'a Model, p: &Presentation) -> Prese
     let mut pc = PCx { cx, root: Scope::root(root), families: vec![] };
     let s = pc.root.clone();
     let mut out = p.clone();
+    out.instruments = p
+        .instruments
+        .iter()
+        .map(|i| {
+            pc.cx.element = i.id.clone();
+            crate::present::Instrument {
+                resolution: i.resolution.as_ref().map(|e| pc.e(&s, e)),
+                range: i.range.as_ref().map(|(a, b)| (pc.e(&s, a), pc.e(&s, b))),
+                noise: i.noise.as_ref().map(|e| pc.e(&s, e)),
+                ..i.clone()
+            }
+        })
+        .collect();
     out.observations = p
         .observations
         .iter()

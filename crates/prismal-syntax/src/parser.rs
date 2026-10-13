@@ -26,6 +26,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
+    "instrument",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -1010,7 +1011,12 @@ impl<'a> Parser<'a> {
                 if self.tok().space_before {
                     return Err(self.unexpected("an exponent written without spaces"));
                 }
-                let n = self.int()?;
+                // A whole or half number (D-090): `s^2`, `s^0.5`.
+                let n = match self.peek() {
+                    Tok::Num(n) if (2.0 * n).fract() == 0.0 && n.abs() < 1e6 => *n,
+                    _ => return Err(self.unexpected("a whole or half number as a unit's exponent")),
+                };
+                self.bump();
                 text.push_str(&format!("^{}{n}", if neg { "-" } else { "" }));
                 continue;
             }
@@ -1247,7 +1253,9 @@ impl<'a> Parser<'a> {
                 } else {
                     None
                 };
-                out.push(Arg { name, value, every, ensemble });
+                // The values at each occurrence of an event (D-089): `gap on decay`.
+                let on = if every.is_none() && ensemble.is_none() && self.eat_word("on") { Some(self.name("an event name")?) } else { None };
+                out.push(Arg { name, value, every, ensemble, on });
                 if !self.eat_punct(",") {
                     break;
                 }
@@ -1450,6 +1458,12 @@ impl<'a> Parser<'a> {
         if self.eat_word("layout") {
             return Ok(vec![PresItem::Layout(self.layout_node()?)]);
         }
+        // `instrument ruler(resolution: 1 mm, noise: 2 mm)` (PK-3.7, D-087).
+        if self.eat_word("instrument") {
+            let name = self.name("an instrument name")?;
+            let args = self.args()?;
+            return Ok(vec![PresItem::Instrument { name, args, span: self.since(start) }]);
+        }
         // `title "Projectile motion"` (D-076).
         if self.eat_word("title") {
             return match self.peek().clone() {
@@ -1460,7 +1474,7 @@ impl<'a> Parser<'a> {
                 _ => Err(self.unexpected("a title in quotes")),
             };
         }
-        Err(self.unexpected("`observe`, `view`, `panel`, `permit`, `timeline` or `layout`"))
+        Err(self.unexpected("`observe`, `view`, `panel`, `instrument`, `permit`, `timeline` or `layout`"))
     }
 
     /// A view name, or `row(...)` or `column(...)` of layout nodes.
@@ -1915,7 +1929,7 @@ fn belongs(word: &str) -> Option<&'static str> {
         }
         "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" | "axes" | "grid"
         | "formula" | "equation" | "table" | "group" => "A representation is drawn in a view: it belongs inside `view name: plot(...) { ... }` or `view name: spatial(...) { ... }` of a presentation",
-        "view" | "panel" | "observe" | "permit" | "timeline" | "layout" => "This belongs directly inside a `presentation Name for Model { ... }`",
+        "view" | "panel" | "observe" | "instrument" | "permit" | "timeline" | "layout" => "This belongs directly inside a `presentation Name for Model { ... }`",
         "scene" | "beat" | "narrate" | "explore" | "hold" => "This belongs in a presentation's `timeline { ... }` (a lesson)",
         "expect" | "until" | "config" => "This belongs in a test case, `run name of Model with Presentation { ... }`",
         "model" | "presentation" | "run" | "space" => "This starts a new top-level item: close the braces of the item before it first",

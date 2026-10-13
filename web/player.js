@@ -414,7 +414,7 @@ function drawPlotChrome(v, g) {
   const [ux, uy] = v.units || ['', ''];
   if (ux) {
     const t = svg('text', { class: 'tick', x: v.W - v.m, y: v.H - 8, 'text-anchor': 'end', 'font-size': 12 }, g);
-    t.textContent = ux === 's' ? 'elapsed time (s)' : `(${ux})`;
+    t.textContent = ux === 's' && v.x_elapsed !== false ? 'elapsed time (s)' : `(${ux})`;
   }
   if (uy) {
     const t = svg('text', { class: 'tick', x: v.m, y: v.m - 10, 'font-size': 12 }, g);
@@ -557,7 +557,7 @@ function drawRep(v, g, r, u, colorIndex) {
   }
   if (r.line && r.drawn == null && r.valid !== false) {
     // The author's line style (D-061), as prismal-svg draws it.
-    const dash = r.line === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
+    const dash = r.line === 'solid' ? 'none' : r.line === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
     for (const e of grp.querySelectorAll('line, polyline, polygon, path')) {
       if (e.parentNode.classList.contains('arrow') && e.tagName === 'polygon') continue;
       e.style.strokeDasharray = dash;

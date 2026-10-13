@@ -15,6 +15,10 @@ use std::collections::HashMap;
 /// Runtime controls a `button` can offer instead of an event (PK-6.3, D-069).
 pub const RUN_CONTROLS: &[&str] = &["reset", "undo", "redo", "reseed", "restart"];
 
+/// The runtime controls an explore beat may offer: they start the learner's branch again
+/// (D-088).
+pub const EXPLORE_CONTROLS: &[&str] = &["restart", "reseed"];
+
 /// Representation kinds of the first slice (PK-6.3).
 const KINDS: &[&str] = &[
     "marker", "arrow", "segment", "polyline", "polygon", "circle", "ellipse", "arc", "trace", "function_graph", "series_plot", "axes", "grid", "label",
@@ -105,6 +109,8 @@ struct PresCx<'a, 'b> {
     pres: &'b str,
     views: HashMap<String, Id>,
     aliases: HashMap<String, Id>,
+    /// The presentation's instruments by name (PK-3.7, D-087).
+    instruments: HashMap<String, Id>,
 }
 
 impl PresCx<'_, '_> {
@@ -259,14 +265,29 @@ impl PresCx<'_, '_> {
                     Arg::Element { element }
                 }
                 // A positional name of an event or equation, not a binding: a model element.
-                (ExprKind::Name(n), None) if a.every.is_none() && !self.cx.bindings.contains_key(n) && (self.cx.events.contains_key(n) || self.equations.contains_key(n)) => {
+                (ExprKind::Name(n), None) if a.every.is_none() && a.on.is_none() && !self.cx.bindings.contains_key(n) && (self.cx.events.contains_key(n) || self.equations.contains_key(n)) => {
                     let element = self.cx.events.get(n).or_else(|| self.equations.get(n)).cloned().unwrap();
                     Arg::Element { element }
                 }
                 _ => match (&a.every, &a.ensemble) {
-                    (Some(dt), _) => Arg::Sampled { expr: self.expr(&a.value), every: self.expr(dt) },
-                    (None, Some((at, n))) => Arg::Ensemble { expr: self.expr(&a.value), at: self.expr(at), runs: self.expr(n) },
-                    (None, None) => Arg::Expr { expr: self.expr(&a.value) },
+                    (Some(dt), _) => {
+                        let (expr, instrument) = self.measured(&a.value);
+                        Arg::Sampled { expr, every: self.expr(dt), instrument }
+                    }
+                    (None, Some((at, n))) => {
+                        let (expr, instrument) = self.measured(&a.value);
+                        Arg::Ensemble { expr, at: self.expr(at), runs: self.expr(n), instrument }
+                    }
+                    (None, None) if a.on.is_some() => {
+                        let (expr, instrument) = self.measured(&a.value);
+                        Arg::On { expr, event: self.cx.event_id(a.on.as_ref().unwrap()), instrument }
+                    }
+                    (None, None) => {
+                        if let Some(name) = self.instrument_call(&a.value) {
+                            self.err("SX-E08", format!("instrument `{name}` reads at instants: a sampled source, `{name}(x) every 0.1 s`, or an ensemble"), a.value.span);
+                        }
+                        Arg::Expr { expr: self.expr(&a.value) }
+                    }
                 },
             };
             match &a.name {
@@ -362,7 +383,7 @@ impl PresCx<'_, '_> {
         let kind = match v.kind.text.as_str() {
             "spatial" => {
                 let space = match v.args.first() {
-                    Some(ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Name(s), span }, every: None, ensemble: None }) => match self.cx.space_by_name(s) {
+                    Some(ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Name(s), span }, every: None, ensemble: None, on: None }) => match self.cx.space_by_name(s) {
                         Some(id) => id,
                         None => {
                             self.err("SX-E03", format!("unknown space `{s}`"), *span);
@@ -453,8 +474,51 @@ impl PresCx<'_, '_> {
         Some(View { id, name: v.name.text.clone(), kind, representations, click })
     }
 
+    /// The name of the instrument `e` reads through, when `e` is `ruler(x)` for an
+    /// instrument `ruler` of the presentation.
+    fn instrument_call(&self, e: &ast::Expr) -> Option<String> {
+        let ExprKind::Call(f, args) = &e.kind else { return None };
+        let ExprKind::Name(n) = &f.kind else { return None };
+        (self.instruments.contains_key(n) && args.len() == 1 && args[0].name.is_none()).then(|| n.clone())
+    }
+
+    /// A source and the instrument it is read through: `ruler(x)` is `x` read by `ruler`
+    /// (PK-3.7, D-087); anything else is read exactly.
+    fn measured(&mut self, e: &ast::Expr) -> (Expr, Option<Id>) {
+        match self.instrument_call(e) {
+            Some(n) => {
+                let ExprKind::Call(_, args) = &e.kind else { unreachable!() };
+                (self.expr(&args[0].value), self.instruments.get(&n).cloned())
+            }
+            None => (self.expr(e), None),
+        }
+    }
+
+    /// `instrument ruler(resolution: 1 mm, range: [0 m, 1 m], noise: 2 mm)`.
+    fn instrument(&mut self, name: &ast::Name, args: &[ast::Arg], span: Span) -> Instrument {
+        let id = format!("{}.instrument.{}", self.pres, name.text);
+        self.cx.map.insert(id.clone(), span);
+        let mut bad = vec![];
+        let skip = check_options(args, "instrument", &["resolution", "range", "noise"], &mut bad);
+        for (m, s) in bad {
+            self.err("SX-E08", m, s);
+        }
+        let mut out = Instrument { id, name: name.text.clone(), resolution: None, range: None, noise: None };
+        for (i, a) in args.iter().enumerate() {
+            match a.name.as_ref().map(|n| n.text.as_str()) {
+                _ if skip.contains(&i) => {}
+                None => self.err("SX-E08", "an instrument takes named options: `resolution`, `range`, `noise`", a.value.span),
+                Some("range") => out.range = self.range(&a.value),
+                Some("resolution") => out.resolution = Some(self.expr(&a.value)),
+                Some(_) => out.noise = Some(self.expr(&a.value)),
+            }
+        }
+        out
+    }
+
     fn observation(&mut self, o: &ast::Observation, model: &Model) -> Observation {
         let id = format!("{}.observe.{}", self.pres, o.name.text);
+        let mut instrument = None;
         self.cx.map.insert(id.clone(), o.span);
         let word = match &o.expr.kind {
             ExprKind::Name(n) if matches!(n.as_str(), "event_log" | "diagnostics" | "intervention_log") => Some(n.as_str()),
@@ -501,7 +565,11 @@ impl PresCx<'_, '_> {
                 Source::Diagnostics { element }
             }
             Some(_) => Source::InterventionLog,
-            None => Source::Expr { expr: self.expr(&o.expr) },
+            None => {
+                let (expr, i) = self.measured(&o.expr);
+                instrument = i;
+                Source::Expr { expr }
+            }
         };
         let schedule = match &o.schedule {
             None => Schedule::Run,
@@ -525,7 +593,7 @@ impl PresCx<'_, '_> {
                 Schedule::Over { from, to, lo_closed: i.lo_closed, hi_closed: i.hi_closed }
             }
         };
-        Observation { id, name: o.name.text.clone(), source, schedule }
+        Observation { id, name: o.name.text.clone(), source, schedule, instrument }
     }
 
     #[allow(clippy::only_used_in_recursion)]
@@ -718,7 +786,18 @@ pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: 
     let id = p.name.text.clone();
     map.insert(id.clone(), p.span);
     let equations = model.equations.iter().map(|q| (q.name.clone(), q.id.clone())).collect();
-    let mut px = PresCx { cx: ModelCx::scope(model, spaces, diags, map), equations, pres: &id, views: HashMap::new(), aliases: HashMap::new() };
+    let mut px = PresCx { cx: ModelCx::scope(model, spaces, diags, map), equations, pres: &id, views: HashMap::new(), aliases: HashMap::new(), instruments: HashMap::new() };
+    // Instruments first: views and observations read through them.
+    let mut instruments = vec![];
+    for it in &p.items {
+        if let ast::PresItem::Instrument { name, args, span } = it {
+            if px.instruments.insert(name.text.clone(), format!("{id}.instrument.{}", name.text)).is_some() {
+                px.err("SX-E09", format!("instrument `{}` declared twice", name.text), name.span);
+                continue;
+            }
+            instruments.push(px.instrument(name, args, *span));
+        }
+    }
     let mut views = vec![];
     for it in &p.items {
         if let ast::PresItem::View(v) = it {
@@ -786,10 +865,10 @@ pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: 
                 }
                 timeline = Some(Timeline { scenes: out });
             }
-            ast::PresItem::View(_) => {}
+            ast::PresItem::View(_) | ast::PresItem::Instrument { .. } => {}
         }
     }
-    Some(Presentation { id: id.clone(), name: id.clone(), model: model.id.clone(), observations, views, permissions, timeline, layout, notes: vec![], title })
+    Some(Presentation { id: id.clone(), name: id.clone(), model: model.id.clone(), observations, instruments, views, permissions, timeline, layout, notes: vec![], title })
 }
 
 pub(crate) fn run(
@@ -842,6 +921,9 @@ pub(crate) fn run(
     for s in &r.learner {
         let input = match &s.action {
             ast::LearnerAction::Continue => LearnerInput::Continue,
+            // `press restart`: a runtime-control button, unless the model has an event of
+            // that name (D-088, as `button(restart)`).
+            ast::LearnerAction::Press(e) if EXPLORE_CONTROLS.contains(&e.text.as_str()) && !cx.events.contains_key(&e.text) => LearnerInput::Control { control: e.text.clone() },
             ast::LearnerAction::Press(e) => LearnerInput::Press { event: cx.event_id(e) },
             ast::LearnerAction::Set { control, value } => match control.as_slice() {
                 [kind, target] => LearnerInput::SetControl { control: kind.text.clone(), binding: cx.binding(target), value: cx.expr(value, &[]) },

@@ -52,8 +52,9 @@ pub enum CTrigger {
     Start,
     Request,
     Input(usize),
-    /// The jumps of a Poisson process at this rate (D-083).
-    Random(CExpr),
+    /// The jumps of a Poisson process at this rate (D-083). `varying`: the rate reads
+    /// continuous state or time, so it changes between transitions (MK-15.16).
+    Random { rate: CExpr, varying: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -128,6 +129,9 @@ pub struct CModel {
     pub functions: std::collections::HashMap<Id, (std::rc::Rc<crate::eval::CExpr>, Type)>,
     /// MK-14.15: no flows and no events other than requests.
     pub is_static: bool,
+    /// The stream key of each white noise in the flows, by noise number (D-090); a model
+    /// with noise is integrated by Euler-Maruyama (RC-13.9).
+    pub noise: Vec<u64>,
 }
 
 impl CModel {
@@ -149,7 +153,7 @@ impl CModel {
                 continue;
             }
             if let Some(e) = &b.init {
-                if let Ok(v) = e.eval(&Ctx { vals: &vals, der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None }) {
+                if let Ok(v) = e.eval(&Ctx { vals: &vals, der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None, noise: &[] }) {
                     vals[i] = v;
                 }
             }
@@ -172,7 +176,7 @@ impl CModel {
                 continue;
             }
             if let Some((w, none)) = &b.when {
-                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None };
+                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None, noise: &[] };
                 if !w.eval(&c)?.boolean() {
                     vals[i] = none.clone();
                     continue;
@@ -188,7 +192,7 @@ impl CModel {
                 _ => b.init.as_ref(),
             };
             let v = {
-                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None };
+                let c = Ctx { vals: &vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None, noise: &[] };
                 e.expect("checked").eval(&c).map_err(|s| Status { kind: s.kind, cause: format!("initializing `{}`: {}", b.name, s.cause) })?
             };
             vals[i] = v;
@@ -200,7 +204,7 @@ impl CModel {
     pub fn update_derived(&self, vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
         for &i in &self.derived_order {
             let v = {
-                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None };
+                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[] };
                 match &self.bindings[i].when {
                     Some((w, none)) if !w.eval(&c)?.boolean() => none.clone(),
                     _ => self.bindings[i].def.as_ref().expect("checked").eval(&c)?,
@@ -233,7 +237,13 @@ impl CModel {
     /// The combined flow of every continuous state (MK-14.5), written into `dy`.
     /// `vals` must hold current stored values and derived bindings.
     pub fn rhs(&self, vals: &[Value], t: f64, t0: f64, dy: &mut [f64]) -> Result<(), Status> {
-        let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None };
+        self.rhs_noisy(vals, t, t0, &[], dy)
+    }
+
+    /// The flows with the white noises at the values `noise` (D-090): during an
+    /// Euler-Maruyama step `ΔW / h` per noise, elsewhere none (each noise 0, the drift).
+    pub fn rhs_noisy(&self, vals: &[Value], t: f64, t0: f64, noise: &[f64], dy: &mut [f64]) -> Result<(), Status> {
+        let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise };
         for s in &self.cont {
             let out = &mut dy[s.offset..s.offset + s.len];
             match &s.flows {

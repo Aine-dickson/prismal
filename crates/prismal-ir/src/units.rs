@@ -61,7 +61,8 @@ impl Unit {
         lookup(sym).is_some()
     }
 
-    /// Parses a unit expression: `m/s^2`, `N/m`, `/m`, `kg*m^2`, `deg`.
+    /// Parses a unit expression: `m/s^2`, `N/m`, `/m`, `kg*m^2`, `deg`; exponents are whole
+    /// or half numbers, `/s^0.5` (D-090: the coefficients of white noise).
     pub fn parse(text: &str) -> Result<Unit, String> {
         let mut scale = 1.0;
         let mut dim = Dim::NONE;
@@ -72,14 +73,18 @@ impl Unit {
                 sign = -1;
                 continue;
             }
-            let (sym, exp) = match tok.split_once('^') {
-                Some((a, b)) => (a, b.parse::<i32>().map_err(|_| format!("bad unit exponent in `{text}`"))?),
-                None => (tok, 1),
+            // Twice the exponent, a whole number.
+            let (sym, twice) = match tok.split_once('^') {
+                Some((a, b)) => match b.parse::<f64>() {
+                    Ok(x) if (2.0 * x).fract() == 0.0 && x.abs() < 1e6 => (a, (2.0 * x) as i32),
+                    _ => return Err(format!("bad unit exponent in `{text}`: a whole or half number")),
+                },
+                None => (tok, 2),
             };
             let (s, d) = lookup(sym).ok_or_else(|| format!("unknown unit `{sym}`"))?;
-            let e = sign * exp;
-            scale *= s.powi(e);
-            dim = dim.mul(&d.pow(Ratio::int(e)));
+            let e = sign * twice;
+            scale *= s.powf(e as f64 / 2.0);
+            dim = dim.mul(&d.pow(Ratio::new(e, 2)));
         }
         // Every factor after the first `/` is in the denominator: `kg/m/s` is kg m^-1 s^-1.
         Ok(Unit { text: text.to_string(), scale, offset: 0.0, dim })
@@ -99,6 +104,9 @@ mod tests {
         assert_eq!(k.dim, Dim::parse("1/L").unwrap());
         let n = Unit::parse("N/m").unwrap();
         assert_eq!(n.dim, Dim::parse("M T^-2").unwrap());
+        let h = Unit::parse("/s^0.5").unwrap();
+        assert_eq!(h.dim, Dim::time().pow(Ratio::new(-1, 2)));
+        assert!(Unit::parse("s^0.3").is_err());
         let d = Unit::parse("deg").unwrap();
         assert!(d.dim.is_none());
         assert_eq!(10.0 * d.scale, 10.0 * (std::f64::consts::PI / 180.0));

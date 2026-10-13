@@ -432,6 +432,8 @@ x(t) = x(t_a⁺) + ∫[t_a, t] F_x(s) ds
 
 where `x(t_a⁺)` is the value committed at `t_a` and `F_x` is the combined flow of `x`. Derived bindings hold their defining expressions at every `t`. The runtime computes an approximation of this solution; its accuracy is execution configuration (runtime contract).
 
+- **MK-14.16** (D-090) A flow MAY contain the built-in **white noise** `noise`, of type `Quantity<T^(-1/2)>`, linearly: `der(x) = a + b_1 * noise + ... + b_k * noise`, with `a` (the drift) and each `b_i` free of noise. Each occurrence of `noise` in the elaborated model is an independent standard white noise `ξ_i = dW_i / dt`, and the flow means the Itô stochastic differential equation `dx = a dt + Σ b_i dW_i`. Linear means: noise appears only in sums, differences, negations, products and quotients by factors free of noise, conditional branches whose condition is free of noise, and the components of a tuple (MK-E30). `noise` elsewhere than in a flow is MK-E29. A name the author declares wins over `noise`. Expressions that read `der(x)` (MK-11.5) read the drift.
+
 ### 14.6 Time
 
 - **MK-14.14** Every model has the built-in binding `t : Instant<T>` (simulation time, R-23) and `t0 : Instant<T>` (the run's start instant). `elapsed = t - t0` is a built-in derived `Quantity<T>`.
@@ -491,8 +493,8 @@ where `x(t_a⁺)` is the value committed at `t_a` and `F_x` is the combined flow
 
 ### 15.4a Random events (D-083)
 
-- **MK-15.15** An event with the trigger `random(λ)` is due at the jump instants of a Poisson process whose intensity at `t` is `λ` evaluated on the state committed last before `t`. Between two transitions the intensity is constant and the waiting time is exponential; a transition that changes `λ` changes the law from that instant on. `λ = 0` makes no occurrence; a negative `λ` is a model failure.
-- **MK-15.16** In v0.2 `λ` reads only parameters, constants, discrete state and derived values of those, not continuous state or time (MK-E27, as MK-14.12). Rates that vary between events are a later extension.
+- **MK-15.15** An event with the trigger `random(λ)` is due at the jump instants of a Poisson process whose intensity at `t` is `λ` evaluated on the state at `t`. A rate that reads only parameters, constants, discrete state and derived values of those is constant between two transitions, and the waiting time is exponential; a transition that changes `λ` changes the law from that instant on. `λ = 0` makes no occurrence; a negative `λ` is a model failure.
+- **MK-15.16** (D-086) `λ` may also read continuous state and time, directly or through derived values. Such a rate varies between transitions: the event is due when the integral of `λ` along the trajectory reaches the clock's next target (RC-13.8a), an inhomogeneous Poisson process. MK-E27 is retired.
 - **MK-15.17** A random event is not a crossing: MK-15.12 does not apply, and its handler may change its own rate. A random event repeated per member (MK-15.1b) has rate 0 while its member is not alive.
 
 ### 15.5 Ordering
@@ -586,6 +588,8 @@ The kernel defines these static errors. They are detected before execution, on t
 | MK-E24 | Event payload without a source: not requested, and not following an event that carries a payload of the same type (members of the same collection) | MK-15.1a, MK-15.1c |
 | MK-E25 | `index` read outside the overrides of a collection | MK-8.3a |
 | MK-E26 | A member that does not exist or is not constant, a part used as a value, an unknown object type, a derived binding given a value in a part, or an aggregate without a value | MK-7.13, MK-8.3a |
+| MK-E29 | `noise` outside a flow | MK-14.16 |
+| MK-E30 | A flow that is not linear in each `noise` | MK-14.16 |
 
 Conflicts between different events can only be detected at run time.
 
@@ -769,7 +773,7 @@ Positions that elaborate accepted decisions without changing them are specified 
 | Item | Where it will be specified |
 |---|---|
 | Event location, microstep ordering, cascade and Zeno defaults, solver accuracy | `02-runtime-contract.md` |
-| Random streams and stochastic processes (D-013) | Done: MK-10.4, MK-15.15 to MK-15.17, RC-13.5 to RC-13.8 (D-083) |
+| Random streams and stochastic processes (D-013) | Done: MK-10.4, MK-15.15 to MK-15.17, RC-13.5 to RC-13.8 (D-083); rates that vary between events, MK-15.16, RC-13.8a (D-086); white noise in flows, MK-14.16, RC-13.9 (D-090) |
 | Random rates that depend on continuous state or time | Later extension of D-083 |
 | Algorithmic process mode (RUN-04) | Slice that needs it |
 | Field state evolution (D-010) | Slice that needs it |

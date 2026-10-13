@@ -39,6 +39,27 @@ model Flip {
   event back on random(k2 * b) { set a = a + 1; set b = b - 1 }
 }
 
+model Aging {
+  param { k: Frequency = 2 /s; tau: Time = 1 s }
+  discrete { n: Real = 0 }
+  event fail on random(k * elapsed / tau) { set n = n + 1 }
+}
+
+model Cooling {
+  param { k: Frequency = 30 /s; tau: Time = 2 s }
+  state { x: Real = 1 }
+  discrete { n: Real = 0 }
+  flow der(x) = -x / tau
+  event hit on random(k * x) { set n = n + 1 }
+}
+
+model Sinking {
+  param { k: Frequency = 3 /s }
+  state { x: Real = 1 }
+  flow der(x) = -1 / 1 s
+  event hit on random(k * x)
+}
+
 presentation DecayLab for Decay {
   panel controls {
     button(reset, label: "Replay")
@@ -143,6 +164,71 @@ fn seeds_reproduce_runs() {
     }
 }
 
+/// A rate that grows with time (MK-15.16, D-086): the count at `T` is Poisson with mean
+/// `k T^2 / (2 tau)`, here 16 at 4 s.
+#[test]
+fn rates_that_vary_with_time() {
+    let n = final_of("Aging", "Aging.n", 4.0, 400);
+    near(&n, 16.0, 16.0);
+    let m = mean(&n);
+    let var = n.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (n.len() - 1) as f64;
+    assert!((var - 16.0).abs() < 4.0, "variance {var}");
+}
+
+/// A rate read from continuous state: `k x` with `x = e^(-t / tau)` gives a Poisson count of
+/// mean `k tau (1 - e^(-T / tau))`, here 60 (1 - e^-1) at 2 s.
+#[test]
+fn rates_that_vary_with_continuous_state() {
+    let m = 60.0 * (1.0 - (-1f64).exp());
+    near(&final_of("Cooling", "Cooling.n", 2.0, 300), m, m);
+}
+
+/// The first occurrence of a rate `k t / tau` from `t0`: survival `e^(-k t^2 / (2 tau))`, so
+/// the waiting time has mean `sqrt(pi tau / (2 k))` and its square has mean `2 tau / k`.
+#[test]
+fn waiting_times_under_a_varying_rate() {
+    let prog = program(SRC);
+    let cm = prog.model("Aging");
+    let w: Vec<f64> = (0..600).map(|seed| run(cm, Config::until(10.0).seed(seed)).log.iter().find(|e| e.name == "fail").unwrap().t).collect();
+    near(&w, (std::f64::consts::PI / 4.0).sqrt(), 1.0 - std::f64::consts::PI / 4.0);
+    let sq: Vec<f64> = w.iter().map(|x| x * x).collect();
+    near(&sq, 1.0, 1.0);
+}
+
+/// Varying clocks are reproduced by their seed and resumed from snapshots like the others.
+#[test]
+fn varying_clocks_resume_and_reproduce() {
+    let prog = program(SRC);
+    let cm = prog.model("Cooling");
+    let bits = |r: &prismal_runtime::Run| r.log.iter().map(|e| (e.name.clone(), e.t.to_bits())).collect::<Vec<_>>();
+    let first = run(cm, Config::until(3.0).seed(5));
+    assert_eq!(bits(&first), bits(&run(cm, Config::until(3.0).seed(5))));
+    let cfg = Config::until(3.0).seed(5).at(1.5, prismal_runtime::Action::Intervene(vec![]));
+    let resumed = prismal_runtime::resume(&first, cfg.clone());
+    assert_eq!(bits(&resumed), bits(&run(cm, cfg)));
+    // The action is a stop the solver lands on, so the steps differ: same events, same
+    // instants to the solver's accuracy.
+    assert_eq!(resumed.log.len(), first.log.len());
+    for (a, b) in resumed.log.iter().zip(&first.log) {
+        assert!((a.t - b.t).abs() < 1e-6, "{} {}", a.t, b.t);
+    }
+}
+
+/// A rate that becomes negative between events stops the run where it does.
+#[test]
+fn a_varying_rate_that_turns_negative_stops_the_run() {
+    let prog = program(SRC);
+    let cm = prog.model("Sinking");
+    let r = run(cm, Config::until(3.0));
+    match &r.status {
+        RunStatus::Stopped(d) => {
+            assert!(d.message.contains("negative"), "{}", d.message);
+            assert!(d.t > 1.0 && d.t < 1.1, "{}", d.t);
+        }
+        s => panic!("{s:?}"),
+    }
+}
+
 /// An intervention resumed from a snapshot gives the same run as one computed from the start.
 #[test]
 fn resumed_runs_keep_their_streams() {
@@ -177,11 +263,9 @@ fn codes(src: &str) -> Vec<String> {
 }
 
 #[test]
-fn draws_only_in_events_and_rates_without_continuous_state() {
+fn draws_only_in_events_and_rates_with_a_unit_per_time() {
     let d = codes("model M { param { s: Length = 1 m }\n derived { x: Length = normal(0 m, s) } }");
     assert!(d.iter().any(|m| m.contains("MK-E28")), "{d:?}");
-    let d = codes("model M { state { y: Real = 1 }\n flow der(y) = -y / 1 s\n event e on random(y / 1 s) }");
-    assert!(d.iter().any(|m| m.contains("MK-E27")), "{d:?}");
     let d = codes("model M { event e on random(2) }");
     assert!(d.iter().any(|m| m.contains("MK-E")), "a rate needs a unit per time: {d:?}");
 }

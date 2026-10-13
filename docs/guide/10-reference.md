@@ -59,6 +59,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `match p { a => x, b => y }` | a value per case of an enumeration, every case once | 5 |
 | `a`, `Phase.a` | a case of an enumeration | 5 |
 | `t`, `t0`, `elapsed` | current time, start, time since start | 4 |
+| `noise` | white noise in a flow, `der(x) = a + b * noise`: each occurrence independent, of dimension `T^(-1/2)` | 15 |
 | `sin cos tan sqrt exp log abs min max atan2` | functions | 2 |
 | `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
@@ -79,8 +80,9 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms
 | `timeline { scene s { beat b { actions } } }` | a lesson | 8 |
 | `layout row(a, column(b, c))` | where views go on the page | 7 |
 | `title "..."` | the presentation's title, above its views | 7 |
+| `instrument n(resolution: r, range: [a, b], noise: s)` | an instrument; `n(e) every Δ` reads `e` through it in observations, series plots, traces, tables and histograms | 15 |
 
-**Representations:** `text("... {e} ... {e:.N} ..." [, at: P])` (an author's text with values in braces, `:.N` for N decimals; `at` places it in a spatial or plot view), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `histogram(e at τ over n runs, bins: k)` (how many of `n` runs give each value, chapter 15), `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider` (with `ends: ("low", "high")`, words at its ends), `number_input`, `toggle`, `button(E)`, `button(E(v))`, `button(reset|undo|redo|restart|reseed)`, `group(at: P, rotate: θ, scale: k) { members }` (chapter 7). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink` and `line: solid|dashed|dotted` style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7). Markers, arrows and graphs take `label: "..."` or `label: none` (chapter 7).
+**Representations:** `text("... {e} ... {e:.N} ..." [, at: P])` (an author's text with values in braces, `:.N` for N decimals; `at` places it in a spatial or plot view), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `histogram(e at τ over n runs, bins: k)` (how many of `n` runs give each value), `histogram(e on E)`, `histogram(e every Δ)` (the values of one run up to the instant shown, chapter 15), `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider` (with `ends: ("low", "high")`, words at its ends), `number_input`, `toggle`, `button(E)`, `button(E(v))`, `button(reset|undo|redo|restart|reseed)` (in a lesson, only `restart` and `reseed`, in an explore beat), `group(at: P, rotate: θ, scale: k) { members }` (chapter 7). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink` and `line: solid|dashed|dotted` style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7). Markers, arrows and graphs take `label: "..."` or `label: none` (chapter 7).
 
 **Observation schedules:** `live`, `every Δ`, `at τ`, `on E [microstep n]`, `over [a, b]`. **Sources:** any expression, `event_log [of E] [where zeno_applied]`, `diagnostics [of element]`, `intervention_log`.
 
@@ -108,6 +110,7 @@ Two forms add details to a form, one for each place they appear (D-081):
 | `number_input` | `range`, `step` |
 | `button` | `label` |
 | `group` | `at`, `rotate`, `scale` |
+| `instrument` (not a representation) | `resolution`, `range`, `noise` |
 | `axes`, `grid`, `label`, `title`, `table`, `toggle` | none |
 | view `spatial(Space, ...)` | `scale`, `y` |
 | view `plot(...)` | `x`, `y`, `follow`, `x_unit`, `y_unit`, `window` |
@@ -159,7 +162,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `const` | constants: never change | 2 |
 | `constraint` | a condition checked while running, with a policy | 6 |
 | `continue` | a learner step that ends an explore beat or a continue point | 8 |
-| `press` | a learner step that presses an explore beat's button: `at 3 s: press drop` | 8 |
+| `press` | a learner step that presses an explore beat's button: `at 3 s: press drop`, or its runtime control: `press restart`, `press reseed` | 8, 15 |
 | `crossing` | an event when a value crosses zero either way | 5 |
 | `derived` | values computed from others, always current | 1 |
 | `discrete` | state changed only by events | 5 |
@@ -218,6 +221,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `request` | an event requested from outside (a button, a lesson) | 5 |
 | `undo`, `redo` | in `button(...)`, a lab's runtime controls, with `reset` | 7, 8 |
 | `reseed` | in `button(...)`, a lab's runtime control: start again with the next seed, keeping the learner's settings | 15 |
+| `instrument` | in a presentation, declares an instrument whose readings are rounded to `resolution`, limited to `range` and disturbed by normal `noise`; `n(e)` reads `e` through it | 15 |
 | `restart` | a new run from `t0` with the parameters as they are now: a timeline action, and in `button(...)` a lab's runtime control (`reset` goes back to the starting values) | 15 |
 | `run` | a test case; in timelines, `run rate r` | 1, 8 |
 | `set` | an operation that replaces a value | 5 |
@@ -236,7 +240,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument`.
 
 ## Diagnostics
 
@@ -271,8 +275,10 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E24 | event payload with no source |
 | MK-E25 | `index` read outside the overrides of a collection |
 | MK-E26 | a member that does not exist, a part used as a value, or an aggregate that has no value |
-| MK-E27 | a random event's rate depends on continuous state or `t` |
+| MK-E27 | retired (D-086): rates may read continuous state and `t` |
 | MK-E28 | a distribution outside an event's condition and operations |
+| MK-E29 | `noise` outside a flow |
+| MK-E30 | a flow that is not linear in `noise` |
 
 **Presentation** (`PK`): E01 broken reference, E02 expression does not check (the kernel's message is quoted), E03 control or action targets something the learner may not change, E04 missing or wrong scale or axis dimension, E05 representation unsuited to its sources or view, E06 representation kind not implemented.
 

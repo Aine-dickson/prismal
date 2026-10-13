@@ -336,6 +336,8 @@ pub struct Arg {
     pub every: Option<Expr>,
     /// `n at t0 + 7 s over 200 runs`: an ensemble source (D-084), the instant and the count.
     pub ensemble: Option<(Expr, Expr)>,
+    /// `gap on decay`: the values at each occurrence of an event (D-089).
+    pub on: Option<Name>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -396,6 +398,8 @@ pub enum PresItem {
     Layout(LayoutNode),
     /// `title "..."` (D-076).
     Title(String),
+    /// `instrument ruler(resolution: 1 mm, range: [0 m, 1 m], noise: 2 mm)` (PK-3.7, D-087).
+    Instrument { name: Name, args: Vec<Arg>, span: Span },
 }
 
 /// A view, or views in a row or a column; the name of a row or column is its keyword.

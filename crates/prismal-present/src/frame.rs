@@ -9,6 +9,7 @@
 //! plot's own coordinates; in a panel, none.
 
 use crate::math::{self, MathLayout};
+use crate::measure::{self, Meter};
 use crate::text::{fmt_binding, fmt_num, fmt_value, print, symbol, unit_text};
 use crate::{constant, number, PDiag};
 use prismal_ir::build::{num, origin, tuple};
@@ -168,9 +169,11 @@ fn style_props(rep: &Rep) -> Result<Rep, PDiag> {
     Ok(Rep { props: rep.props.iter().filter(|p| p.name != "color" && p.name != "line").cloned().collect(), ..rep.clone() })
 }
 
+/// The author's style word (D-061). `line: solid` is carried too: a trace is dashed unless
+/// its author says otherwise (D-090, a Brownian path).
 fn style_word(rep: &Rep, name: &str) -> Option<String> {
     match rep.prop(name) {
-        Some(Arg::Word { word }) if !(name == "line" && word == "solid") => Some(word.clone()),
+        Some(Arg::Word { word }) => Some(word.clone()),
         _ => None,
     }
 }
@@ -452,11 +455,11 @@ pub enum CKind {
     Segment { a: CExpr, b: CExpr },
     Graph { f: CExpr, lo: f64, hi: f64, label: String },
     /// The path of a point, sampled every `every` seconds from the run's start (PK-6.3).
-    Trace { pos: CExpr, every: f64, label: String },
+    Trace { pos: CExpr, every: f64, label: String, meter: Option<Meter> },
     /// A scalar against elapsed time, sampled every `every` seconds (PK-6.3). `steps`: the
     /// value changes only at transitions (it reads no continuous state and no time), so it
     /// is drawn as a staircase (D-084).
-    Series { value: CExpr, every: f64, label: String, steps: bool },
+    Series { value: CExpr, every: f64, label: String, steps: bool, meter: Option<Meter> },
     /// `idx`: the binding shown, whose display unit the text uses (MK-3.12).
     Label { value: CExpr, ty: Type, label: String, idx: Option<usize> },
     /// An author's text: the pieces between values, the values with their types and, for a
@@ -475,15 +478,27 @@ pub enum CKind {
     Button { event: Id, label: String, payload: Option<Expr> },
     /// A runtime control (D-069): `reset`, `undo` or `redo`.
     RunButton { control: String, label: String },
-    Table { value: CExpr, tys: Vec<Type>, every: f64, columns: Vec<String> },
+    Table { value: CExpr, tys: Vec<Type>, every: f64, columns: Vec<String>, meter: Option<Meter> },
     Axes,
     Grid,
-    /// How many of `runs` runs give `expr` at `at` in each of `bins` equal bins over the
-    /// plot's x range (D-084). The values are kept for the run configuration they came from.
-    Histogram { expr: Expr, at: f64, runs: usize, bins: usize, label: String, cache: EnsembleCache },
+    /// How many values fall in each of `bins` equal bins over the plot's x range: the values
+    /// of many runs at one instant (D-084), or of one run up to the instant shown (D-089).
+    Histogram { source: HistSource, bins: usize, label: String, meter: Option<Meter> },
     /// Members drawn with a shared transform: placed at `at`, turned by `rotate`, scaled by
     /// `scale` (D-043).
     Group { at: Option<CExpr>, rotate: Option<CExpr>, scale: Option<CExpr>, members: Vec<CRep> },
+}
+
+/// Where a histogram's values come from (PK-6.3e).
+#[derive(Clone, Debug)]
+pub enum HistSource {
+    /// `n at τ over k runs` (D-084); the values are kept for the run configuration they came
+    /// from.
+    Ensemble { expr: Expr, at: f64, runs: usize, cache: EnsembleCache },
+    /// `x every Δ`: the samples of the run up to the instant shown (D-089).
+    Every { value: CExpr, every: f64 },
+    /// `x on E`: the values at each occurrence of `E` up to the instant shown (D-089).
+    On { expr: Expr, event: String },
 }
 
 /// The values of an ensemble and the configuration of the run they were computed for: a
@@ -592,7 +607,7 @@ fn prop_expr<'a>(rep: &'a Rep, name: &str) -> Option<&'a Expr> {
 }
 
 /// Compiles a representation for a view, checking its sources, scales and inverse.
-pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<PDiag>> {
+pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prismal_ir::present::Instrument]) -> Result<CRep, Vec<PDiag>> {
     let stripped = style_props(full).map_err(|d| vec![d])?;
     let rep = &stripped;
     let d = |code: &'static str, message: String| vec![PDiag { code, message, element: rep.id.clone() }];
@@ -679,19 +694,21 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
             CKind::Graph { f: c, lo: x.0, hi: x.1, label: label(e) }
         }
         "histogram" => {
-            let ViewCtx::Plot { dims, x, .. } = ctx else { return Err(d("PK-E05", "a histogram belongs in a plot view: x for the values, y for how many runs give them".into())) };
-            let what = "an ensemble source: `n at t0 + 7 s over 200 runs`";
-            let Some(Arg::Ensemble { expr: e, at, runs }) = rep.sources.first() else { return Err(needs(what)) };
-            let (_, ty) = ce(e, None)?;
+            let ViewCtx::Plot { dims, x, .. } = ctx else { return Err(d("PK-E05", "a histogram belongs in a plot view: x for the values, y for how many of them fall in each bin".into())) };
+            let what = "an ensemble source, `n at t0 + 7 s over 200 runs`, a sampled source, `face every 1 s`, or the values at an event, `gap on decay`";
+            let (e, instrument) = match rep.sources.first() {
+                Some(Arg::Ensemble { expr, instrument, .. } | Arg::Sampled { expr, instrument, .. } | Arg::On { expr, instrument, .. }) => (expr, instrument),
+                _ => return Err(needs(what)),
+            };
+            let (c, ty) = ce(e, None)?;
+            let meter = measure::meter(cm, instruments, instrument.as_ref(), e, &ty).map_err(|m| d("PK-E04", m))?;
             let Type::Quantity { dim } = ty else { return Err(needs("a number or a quantity")) };
             if dim != dims.0 {
                 return Err(d("PK-E04", format!("the values have dimension {dim}, the plot's x axis {} (PK-7.3)", dims.0)));
             }
             if !dims.1.is_none() {
-                return Err(d("PK-E04", "a histogram's y axis counts runs: a range of plain numbers, `y: [0, 50]` (PK-7.3)".into()));
+                return Err(d("PK-E04", "a histogram's y axis counts values: a range of plain numbers, `y: [0, 50]` (PK-7.3)".into()));
             }
-            ce(at, Some(&Type::Instant { dim: Dim::time() }))?;
-            let at = number(cm, at).map_err(|m| d("PK-E02", m))?;
             let whole = |e: &Expr, lo: f64, hi: f64, what: &str| -> Result<usize, Vec<PDiag>> {
                 match number(cm, e) {
                     Ok(n) if n.fract() == 0.0 && n >= lo && n <= hi => Ok(n as usize),
@@ -699,7 +716,29 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
                     Err(m) => Err(d("PK-E02", m)),
                 }
             };
-            let runs = whole(runs, 1.0, crate::data::MAX_RUNS as f64, "a number of runs")?;
+            let source = match rep.sources.first() {
+                Some(Arg::Ensemble { at, runs, .. }) => {
+                    ce(at, Some(&Type::Instant { dim: Dim::time() }))?;
+                    let at = number(cm, at).map_err(|m| d("PK-E02", m))?;
+                    let runs = whole(runs, 1.0, crate::data::MAX_RUNS as f64, "a number of runs")?;
+                    HistSource::Ensemble { expr: e.clone(), at, runs, cache: Default::default() }
+                }
+                Some(Arg::Sampled { every, .. }) => {
+                    let dt = match compile_expr(cm, every, None) {
+                        Ok((_, Type::Quantity { dim })) if dim == Dim::time() => number(cm, every).map_err(|m| d("PK-E02", m))?,
+                        _ => return Err(d("PK-E04", "a sampling interval is a duration: `every 1 s`".into())),
+                    };
+                    if !(dt > 0.0) {
+                        return Err(d("PK-E05", "a sampling interval is positive".into()));
+                    }
+                    HistSource::Every { value: c, every: dt }
+                }
+                Some(Arg::On { event, .. }) => {
+                    let Some(ev) = cm.ir.events.iter().find(|x| &x.id == event) else { return Err(d("PK-E01", format!("unknown event `{event}`"))) };
+                    HistSource::On { expr: e.clone(), event: ev.name.clone() }
+                }
+                _ => unreachable!(),
+            };
             let bins = match prop_expr(rep, "bins") {
                 Some(b) => whole(b, 1.0, 1000.0, "a number of bins")?,
                 None => 20,
@@ -707,10 +746,10 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
             if !(x.1 > x.0) {
                 return Err(d("PK-E05", "a histogram needs an x range from low to high".into()));
             }
-            CKind::Histogram { expr: e.clone(), at, runs, bins, label: label(e), cache: Default::default() }
+            CKind::Histogram { source, bins, label: label(e), meter }
         }
         "trace" | "series_plot" => {
-            let Some(Arg::Sampled { expr: e, every }) = rep.sources.first() else {
+            let Some(Arg::Sampled { expr: e, every, instrument }) = rep.sources.first() else {
                 return Err(needs("a sampled source: `pos every 0.02 s`"));
             };
             let dt = match compile_expr(cm, every, None) {
@@ -722,8 +761,9 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
             }
             if rep.kind == "trace" {
                 let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", "a trace belongs in a spatial view".into())) };
-                let (c, _) = ce(e, Some(&Type::Point { space: space.clone() }))?;
-                CKind::Trace { pos: c, every: dt, label: label(e) }
+                let (c, t) = ce(e, Some(&Type::Point { space: space.clone() }))?;
+                let meter = measure::meter(cm, instruments, instrument.as_ref(), e, &t).map_err(|m| d("PK-E04", m))?;
+                CKind::Trace { pos: c, every: dt, label: label(e), meter }
             } else {
                 let ViewCtx::Plot { dims, .. } = ctx else { return Err(d("PK-E05", "a series plot belongs in a plot view".into())) };
                 let (c, t) = ce(e, None)?;
@@ -734,7 +774,10 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
                 if dim != dims.1 {
                     return Err(d("PK-E04", format!("the series has dimension {dim}, the plot's y axis {} (PK-7.3)", dims.1)));
                 }
-                CKind::Series { value: c, every: dt, label: label(e), steps: piecewise_constant(cm, e) }
+                let meter = measure::meter(cm, instruments, instrument.as_ref(), e, &t).map_err(|m| d("PK-E04", m))?;
+                // Readings are taken at the samples: a staircase would show the exact value.
+                let steps = meter.is_none() && piecewise_constant(cm, e);
+                CKind::Series { value: c, every: dt, label: label(e), steps, meter }
             }
         }
         "label" => {
@@ -944,7 +987,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
             }
         }
         "table" => {
-            let Some(Arg::Sampled { expr: e, every }) = rep.sources.first() else {
+            let Some(Arg::Sampled { expr: e, every, instrument }) = rep.sources.first() else {
                 return Err(needs("a sampled source: `table((pos.x, pos.y) every 0.5 s)`"));
             };
             let dt = match compile_expr(cm, every, None) {
@@ -959,7 +1002,8 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
                 (Type::Tuple { items }, Expr::Tuple { tuple }) => (items.clone(), tuple.iter().map(|x| print(x, cm, &[])).collect()),
                 _ => (vec![t.clone()], vec![print(e, cm, &[])]),
             };
-            CKind::Table { value: c, tys, every: dt, columns }
+            let meter = measure::meter(cm, instruments, instrument.as_ref(), e, &t).map_err(|m| d("PK-E04", m))?;
+            CKind::Table { value: c, tys, every: dt, columns, meter }
         }
         "group" => {
             let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", "a group belongs in a spatial view (PK-6.3b)".into())) };
@@ -995,7 +1039,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep) -> Result<CRep, Vec<P
                     });
                     continue;
                 }
-                match compile_rep(cm, ctx, m) {
+                match compile_rep(cm, ctx, m, instruments) {
                     Ok(c) => members.push(c),
                     Err(e) => diags.extend(e),
                 }
@@ -1115,7 +1159,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 for i in 0..=n {
                     let x = lo + (hi - lo) * i as f64 / n as f64;
                     let args = [Value::Num(x)];
-                    let y = body.eval(&Ctx { vals, der: None, t, t0: run.config.t0, args: &args, payloads: &[], draws: None });
+                    let y = body.eval(&Ctx { vals, der: None, t, t0: run.config.t0, args: &args, payloads: &[], draws: None, noise: &[] });
                     if let Ok(Value::Num(y)) = y {
                         pts.push([x, y]);
                     }
@@ -1125,7 +1169,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             Ok(_) => (Shape::Status { status: "not a function".into() }, "graph: not available".into()),
             Err(s) => status(s),
         },
-        CKind::Trace { pos, every, label } => {
+        CKind::Trace { pos, every, label, meter } => {
             // A member's trace starts when it is made and ends when it is destroyed (D-057).
             let mut prev: Option<f64> = None;
             let mut pts: Vec<[f64; 2]> = vec![];
@@ -1135,6 +1179,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     continue;
                 }
                 let Ok(v) = run.eval_state(pos, &st, s) else { continue };
+                let Some(v) = read(meter, v, run.config.seed, s) else { continue };
                 if prev.is_some_and(|a| jumped(run, pos, a, s)) && !pts.is_empty() {
                     breaks.push(pts.len());
                 }
@@ -1145,20 +1190,45 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 (Some(_), Some(_)) => format!("trace of {label}: {} samples every {} s up to t = {} s", pts.len(), fmt_num(*every), fmt_num(t - run.config.t0)),
                 _ => format!("trace of {label}: no samples"),
             };
-            (Shape::Polyline { points: pts }, text)
+            (Shape::Polyline { points: pts }, measured(text, meter))
         }
-        CKind::Histogram { expr, at, runs, bins, label, cache } => {
+        CKind::Histogram { source, bins, label, meter } => {
             let ViewCtx::Plot { x: (lo, hi), .. } = ctx else { unreachable!() };
-            let cached = cache.borrow().as_ref().filter(|c| c.0 == run.config).map(|c| c.1.clone());
-            let values = match cached {
-                Some(v) => Ok(v),
-                None => crate::data::ensemble(run, expr, *at, *runs).map(|vs| {
-                    let xs: Vec<f64> = vs.iter().map(|v| if let Value::Num(x) = v { *x } else { f64::NAN }).collect();
-                    *cache.borrow_mut() = Some((run.config.clone(), xs.clone()));
-                    xs
-                }),
+            let seed = run.config.seed;
+            let shown = t - run.config.t0;
+            // Readings outside an instrument's range are left out (PK-3.7).
+            let num = |v: Option<Value>| match v {
+                Some(Value::Num(x)) => Some(x),
+                _ => None,
+            };
+            let (values, whence) = match source {
+                HistSource::Ensemble { expr, at, runs, cache } => {
+                    let cached = cache.borrow().as_ref().filter(|c| c.0 == run.config).map(|c| c.1.clone());
+                    let values = match cached {
+                        Some(v) => Ok(v),
+                        None => crate::data::ensemble(run, expr, *at, *runs).map(|vs| {
+                            // The k-th run has the k-th seed (PK-3.8).
+                            let xs: Vec<f64> = vs.into_iter().enumerate().filter_map(|(k, v)| num(read(meter, v, seed.wrapping_add(k as u64), *at))).collect();
+                            *cache.borrow_mut() = Some((run.config.clone(), xs.clone()));
+                            xs
+                        }),
+                    };
+                    (values, format!("at {} s over {runs} runs", fmt_num(at - run.config.t0)))
+                }
+                HistSource::Every { value, every } => {
+                    let xs: Vec<f64> = samples(run, t, *every).filter_map(|s| run.eval_state(value, &run.state_at(s), s).ok().and_then(|v| num(read(meter, v, seed, s)))).collect();
+                    let n = xs.len();
+                    (Ok(xs), format!("every {} s up to {} s, {n} values", fmt_num(*every), fmt_num(shown)))
+                }
+                HistSource::On { expr, event } => {
+                    let times = run.times(event);
+                    let xs: Vec<f64> = times.iter().zip(run.on(event, expr, None)).filter(|(s, _)| **s <= t).filter_map(|(s, v)| num(read(meter, v, seed, *s))).collect();
+                    let n = xs.len();
+                    (Ok(xs), format!("on {event} up to {} s, {n} values", fmt_num(shown)))
+                }
             };
             match values {
+                Ok(xs) if xs.is_empty() => (Shape::Polygon { points: vec![[*lo, 0.0], [*hi, 0.0]] }, measured(format!("histogram of {label} {whence}: no values yet"), meter)),
                 Ok(xs) => {
                     let w = (hi - lo) / *bins as f64;
                     let outside = xs.iter().filter(|&&v| !(v >= *lo && v <= *hi)).count();
@@ -1166,7 +1236,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     // molecules) get one bar per grid value, centred on it and as wide as the
                     // grid's step, so that no empty bins fall between them (PK-6.3e).
                     let bars: Vec<(f64, f64, usize)> = match grid_step(&xs) {
-                        Some((start, d)) if d > w * (1.0 + 1e-9) => {
+                        Some((start, d)) if d >= w * (1.0 - 1e-9) => {
                             let mut bars: Vec<(f64, f64, usize)> = vec![];
                             for &v in xs.iter().filter(|&&v| v >= *lo && v <= *hi) {
                                 let k = ((v - start) / d).round();
@@ -1205,37 +1275,56 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     let mean = xs.iter().sum::<f64>() / n;
                     let dev = if n > 1.0 { (xs.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0)).sqrt() } else { 0.0 };
                     let more = if outside > 0 { format!("; {outside} outside the axis") } else { String::new() };
-                    let text = format!("histogram of {label} at {} s over {runs} runs: mean {}, deviation {}{more}", fmt_num(at - run.config.t0), fmt_num(mean), fmt_num(dev));
-                    (Shape::Polygon { points: pts }, text)
+                    let text = format!("histogram of {label} {whence}: mean {}, deviation {}{more}", fmt_num(mean), fmt_num(dev));
+                    (Shape::Polygon { points: pts }, measured(text, meter))
                 }
                 Err(m) => (Shape::Status { status: m.clone() }, format!("histogram of {label}: not available ({m})")),
             }
         }
-        CKind::Series { value, every, label, steps } => {
+        CKind::Series { value, every, label, steps, meter } => {
             let t0 = run.config.t0;
             let mut prev: Option<f64> = None;
             let mut pts: Vec<[f64; 2]> = vec![];
             // A value that changes only at transitions holds until it changes: a staircase
             // with a step at each instant it changed, up to `STEPS` steps (D-084).
             let staircase = if *steps { stairs(run, value, t) } else { None };
+            // A reading outside an instrument's range leaves a gap (PK-3.7).
+            let mut gap = false;
             for s in samples(run, t, *every).filter(|_| staircase.is_none()) {
-                if let Ok(Value::Num(y)) = run.eval_state(value, &run.state_at(s), s) {
-                    // A flowing value that jumped breaks the path (D-078).
-                    if prev.is_some_and(|a| jumped(run, value, a, s)) && !pts.is_empty() {
-                        breaks.push(pts.len());
-                    }
-                    prev = Some(s);
-                    pts.push([s - t0, y]);
+                let Ok(v) = run.eval_state(value, &run.state_at(s), s) else { continue };
+                let Some(Value::Num(y)) = read(meter, v, run.config.seed, s) else {
+                    gap = true;
+                    continue;
+                };
+                // A flowing value that jumped breaks the path (D-078).
+                if (gap || prev.is_some_and(|a| jumped(run, value, a, s))) && !pts.is_empty() {
+                    breaks.push(pts.len());
                 }
+                gap = false;
+                prev = Some(s);
+                pts.push([s - t0, y]);
             }
             if let Some(st) = staircase {
                 pts = st;
             }
-            let text = match pts.last() {
-                Some(p) => format!("series of {label} against elapsed time: {} samples, last {} at {} s", pts.len(), fmt_num(p[1]), fmt_num(p[0])),
-                None => format!("series of {label}: no samples"),
-            };
-            (Shape::Polyline { points: pts }, text)
+            // Readings are separate measurements, drawn as points, not joined into a path
+            // (PK-3.7, D-087).
+            if meter.is_some() {
+                breaks.clear();
+                let text = match pts.last() {
+                    Some(p) => format!("readings of {label} against elapsed time: {} readings, last {} at {} s", pts.len(), fmt_num(p[1]), fmt_num(p[0])),
+                    None => format!("readings of {label}: none"),
+                };
+                let color = style_word(&r.rep, "color");
+                let members = pts.iter().enumerate().map(|(k, p)| dot(format!("{}.reading[{}]", r.rep.id, k + 1), *p, color.clone())).collect();
+                (Shape::Group { members }, measured(text, meter))
+            } else {
+                let text = match pts.last() {
+                    Some(p) => format!("series of {label} against elapsed time: {} samples, last {} at {} s", pts.len(), fmt_num(p[1]), fmt_num(p[0])),
+                    None => format!("series of {label}: no samples"),
+                };
+                (Shape::Polyline { points: pts }, text)
+            }
         }
         CKind::Text { pieces, values, places, at } => {
             let mut s = pieces[0].clone();
@@ -1375,12 +1464,17 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             (Shape::Button { event: Some(event.clone()), control: None, label: label.clone() }, format!("button {label}: requests {name}"))
         }
         CKind::RunButton { control, label } => (Shape::Button { event: None, control: Some(control.clone()), label: label.clone() }, format!("button {label}: {control}")),
-        CKind::Table { value, tys, every, columns } => {
+        CKind::Table { value, tys, every, columns, meter } => {
             let t0 = run.config.t0;
             let mut rows = vec![];
             for s in samples(run, t, *every) {
                 let Ok(v) = run.eval_state(value, &run.state_at(s), s) else { continue };
                 let mut row = vec![fmt_num(s - t0)];
+                let Some(v) = read(meter, v, run.config.seed, s) else {
+                    row.extend(tys.iter().map(|_| "out of range".to_string()));
+                    rows.push(row);
+                    continue;
+                };
                 match (&v, tys.len()) {
                     (Value::Tuple(items), n) if n > 1 => row.extend(items.iter().zip(tys).map(|(x, ty)| fmt_value(x, ty))),
                     _ => row.push(fmt_value(&v, &tys[0])),
@@ -1390,7 +1484,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             let mut cols = vec!["t (s)".to_string()];
             cols.extend(columns.iter().cloned());
             let text = format!("table of {} with {} rows, every {} s", columns.join(", "), rows.len(), fmt_num(*every));
-            (Shape::Table { columns: cols, rows }, text)
+            (Shape::Table { columns: cols, rows }, measured(text, meter))
         }
         CKind::Group { at, rotate, scale, members } => {
             let num = |c: &Option<CExpr>, default: f64| match c.as_ref().map(eval) {
@@ -1546,6 +1640,46 @@ fn jumped(run: &Run, e: &CExpr, a: f64, b: f64) -> bool {
     false
 }
 
+/// One reading of a measured series: a point with no label.
+fn dot(id: Id, at: [f64; 2], color: Option<String>) -> RepFrame {
+    RepFrame {
+        id,
+        kind: "marker".into(),
+        name: None,
+        shape: Shape::Point { at },
+        text: format!("reading {} at {} s", fmt_num(at[1]), fmt_num(at[0])),
+        highlighted: false,
+        valid: None,
+        opacity: None,
+        drawn: None,
+        label: None,
+        drag: None,
+        click: None,
+        color,
+        line: None,
+        color_to: None,
+        color_mix: None,
+        scale: None,
+        breaks: vec![],
+    }
+}
+
+/// A value as an instrument reads it (PK-3.7), or the value itself without one.
+fn read(meter: &Option<Meter>, v: Value, seed: u64, t: f64) -> Option<Value> {
+    match meter {
+        Some(m) => m.read(&v, seed, t),
+        None => Some(v),
+    }
+}
+
+/// A text alternative, with the instrument that read its values.
+fn measured(text: String, meter: &Option<Meter>) -> String {
+    match meter {
+        Some(m) => format!("{text}; {}", m.describe()),
+        None => text,
+    }
+}
+
 /// Sample instants `t0, t0 + dt, ...` up to `t`, and `t` itself (PK-6.3, PK-7.5: a trace
 /// ends at the instant shown).
 fn samples(run: &Run, t: f64, dt: f64) -> impl Iterator<Item = f64> {
@@ -1615,7 +1749,7 @@ impl Projector {
                     }
                     let mut reps = vec![];
                     for r in &v.representations {
-                        match compile_rep(cm, &ctx, r) {
+                        match compile_rep(cm, &ctx, r, &p.instruments) {
                             Ok(c) => reps.push(c),
                             Err(d) => diags.extend(d),
                         }
