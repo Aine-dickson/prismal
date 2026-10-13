@@ -314,10 +314,21 @@ impl CModel {
             }
             Ok((r, size))
         };
-        let merit = |r: &[f64]| r.iter().map(|x| x * x).sum::<f64>();
-        let (mut r, mut size) = residuals(vals, &u)?;
+        // The size of the residuals: their Euclidean norm, scaled by the largest so that
+        // squares of residuals near 1e156 (a diode guessed far above its knee) do not overflow.
+        let merit = |r: &[f64]| {
+            let m = r.iter().fold(0.0f64, |m, x| m.max(x.abs()));
+            if m == 0.0 || !m.is_finite() { m } else { m * r.iter().map(|x| (x / m) * (x / m)).sum::<f64>().sqrt() }
+        };
+        let within = |r: &[f64], size: &[f64], tol: f64| r.iter().zip(size).all(|(x, s)| x.abs() <= tol * s || *x == 0.0);
+        let (mut r, mut size) = residuals(vals, &u).map_err(|e| Status {
+            cause: format!("the equations for {} cannot be evaluated at the guesses: {} (MK-11.8); give guesses nearer the solution", names(), e.cause),
+            ..e
+        })?;
         for _ in 0..SOLVE_ITERATIONS {
-            if r.iter().zip(&size).all(|(x, s)| x.abs() <= 1e-12 * s || *x == 0.0) {
+            if within(&r, &size, 1e-12) {
+                // The values in place may be a rejected trial: evaluate at the solution again.
+                residuals(vals, &u)?;
                 return Ok(());
             }
             // The Jacobian by forward differences, column by column.
@@ -334,6 +345,18 @@ impl CModel {
             let Some(du) = gauss(jac, r.iter().map(|x| -x).collect()) else {
                 return Err(Status::invalid(format!("the equations do not determine {} here: they are dependent (MK-11.8)", names())));
             };
+            // A residual is computed no more precisely than its terms: in `V0 - Vd == I * R`
+            // with `Vd` near `V0` the left side is a difference of two close numbers and its
+            // rounding can exceed both sides. The Newton correction measures the distance to
+            // the solution instead: when it is at the rounding level of every unknown (relative
+            // to its value, or to its scale near zero), the corrected values are the solution.
+            let settled = du.iter().zip(&u).zip(&scale).all(|((d, a), s)| d.abs() <= 1e-12 * a.abs() + 1e-15 * s);
+            if settled && r.iter().all(|x| x.is_finite()) {
+                let v: Vec<f64> = u.iter().zip(&du).map(|(a, d)| a + d).collect();
+                if residuals(vals, &v).is_ok_and(|(rv, _)| rv.iter().all(|x| x.is_finite())) {
+                    return Ok(());
+                }
+            }
             // Backtracking: the longest step, halved up to ten times, that lowers the residual.
             let m0 = merit(&r);
             let mut lambda = 1.0;
@@ -348,14 +371,30 @@ impl CModel {
                 }
                 lambda *= 0.5;
             }
-            let Some((v, rv, sv)) = next else { break };
+            let Some((mut v, mut rv, mut sv)) = next else { break };
+            // On the far side of an exponential a full step moves by a fixed amount (about
+            // `Vt` for a diode above its knee) and the solve would take hundreds of steps:
+            // when the full step lowers the residual, longer steps are tried while they lower it
+            // further.
+            if lambda == 1.0 {
+                for _ in 0..30 {
+                    lambda *= 2.0;
+                    let w: Vec<f64> = u.iter().zip(&du).map(|(a, d)| a + lambda * d).collect();
+                    match residuals(vals, &w) {
+                        Ok((rw, sw)) if merit(&rw) < merit(&rv) => (v, rv, sv) = (w, rw, sw),
+                        _ => break,
+                    }
+                }
+            }
             let small = v.iter().zip(&u).zip(&scale).all(|((a, b), s)| (a - b).abs() <= 1e-14 * (b.abs() + s));
             (u, r, size) = (v, rv, sv);
             if small {
                 break;
             }
         }
-        if r.iter().zip(&size).all(|(x, s)| x.abs() <= 1e-9 * s || *x == 0.0) {
+        // The last values tried may be a rejected step: evaluate at the best values again.
+        let (r, size) = residuals(vals, &u)?;
+        if within(&r, &size, 1e-9) {
             // Converged to the precision the arithmetic allows; the values are in place.
             return Ok(());
         }
@@ -455,13 +494,30 @@ impl CModel {
 }
 
 /// Solves `a x = b` by Gaussian elimination with partial pivoting; `None` when `a` is
-/// singular to working precision.
+/// singular to working precision. Rows are equations and columns unknowns, each in its own
+/// unit (a diode's row in amperes per volt can hold 1e23 beside a resistor's 1000), so each
+/// row and then each column is first scaled to a largest entry of 1: singularity is judged
+/// in the scaled matrix, where units play no part.
 fn gauss(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     let n = b.len();
-    let norm = a.iter().flatten().fold(0.0f64, |m, x| m.max(x.abs()));
+    for (row, y) in a.iter_mut().zip(b.iter_mut()) {
+        let m = row.iter().fold(0.0f64, |m, x| m.max(x.abs()));
+        if !(m > 0.0 && m.is_finite()) {
+            return None;
+        }
+        row.iter_mut().for_each(|x| *x /= m);
+        *y /= m;
+    }
+    let cols: Vec<f64> = (0..n).map(|j| a.iter().fold(0.0f64, |m, row| m.max(row[j].abs()))).collect();
+    if cols.iter().any(|m| !(*m > 0.0)) {
+        return None;
+    }
+    for row in a.iter_mut() {
+        row.iter_mut().zip(&cols).for_each(|(x, m)| *x /= m);
+    }
     for c in 0..n {
         let p = (c..n).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
-        if !(a[p][c].abs() > 1e-13 * norm) {
+        if !(a[p][c].abs() > 1e-13) {
             return None;
         }
         a.swap(c, p);
@@ -481,5 +537,6 @@ fn gauss(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
         let s: f64 = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
         x[r] = (b[r] - s) / a[r][r];
     }
+    x.iter_mut().zip(&cols).for_each(|(x, m)| *x /= m);
     x.iter().all(|v| v.is_finite()).then_some(x)
 }

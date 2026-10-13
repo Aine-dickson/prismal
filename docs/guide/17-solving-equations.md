@@ -195,3 +195,4 @@ run conducts of DiodeCircuit with DiodeLab {
 
 1. Add a third resistor `R3` in parallel with `R2` in the divider. Which unknowns and equations do you need? (Hint: one more current, and the current law at the junction.)
 2. In the charging capacitor, make the battery switch off at 3 s (an event that sets a discrete `on` to false, and `V0 * (if on then 1 else 0)` in the loop equation). What does the current do?
+3. Reverse the battery of the diode circuit: let `V0` and its slider run from -10 V to 10 V. What current flows when `V0` is negative, and why does `Vd` now follow `V0` instead of staying near 0.6 V? (Hint: `exp(Vd / Vt)` for a negative `Vd`, and `Is`.)

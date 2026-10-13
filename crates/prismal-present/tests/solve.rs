@@ -140,6 +140,82 @@ fn a_diode() {
     assert!(vd > 0.5 && vd < 0.7, "{vd}");
 }
 
+/// The same circuit and guesses over a range of batteries, reversed ones included: the
+/// solve must not depend on guesses near each solution.
+#[test]
+fn a_diode_over_many_batteries() {
+    let prog = program(SRC);
+    let cm = prog.model("Diode");
+    let volt = prismal_ir::Unit::parse("V").unwrap();
+    let mut failed = vec![];
+    for v0 in [-50.0, -5.0, -0.5, 0.0, 1e-3, 0.3, 0.6, 1.0, 5.0, 50.0, 1000.0] {
+        let cfg = Config::until(1e-9).param("Diode.V0", prismal_ir::Expr::Num { num: v0, unit: Some(volt.clone()) });
+        let r = run(cm, cfg);
+        if !matches!(r.status, RunStatus::Completed) {
+            failed.push(v0);
+            continue;
+        }
+        let v = r.state_at(0.0);
+        let (i, vd) = (v[cm.idx("Diode.I")].num(), v[cm.idx("Diode.Vd")].num());
+        assert!((v0 - vd - i * 1000.0).abs() <= 1e-9 * (v0.abs() + vd.abs()).max(1e-12), "V0 = {v0}: {vd} {i}");
+        let shockley = 1e-12 * ((vd / 0.02585).exp() - 1.0);
+        assert!((i - shockley).abs() <= 1e-9 * (i.abs() + shockley.abs()).max(1e-24) + 1e-27, "V0 = {v0}: {vd} {i}");
+        if v0 < 0.0 {
+            // Reversed, the diode blocks: the leakage current, nearly all the battery across it.
+            assert!((i + 1e-12).abs() < 1e-15 && (vd - v0).abs() < 1e-6, "V0 = {v0}: {vd} {i}");
+        }
+    }
+    assert!(failed.is_empty(), "no solution for V0 = {failed:?}");
+}
+
+fn diode_guessed(guess: &str) -> String {
+    format!("model D {{
+  param {{
+    V0: Voltage = 5 V
+    R:  Resistance = 1 kΩ
+    Is: Current = 1e-12 A
+    Vt: Voltage = 25.85 mV
+  }}
+  unknown {{
+    I:  Current
+    Vd: Voltage{guess}
+  }}
+  equation resistor: V0 - Vd == I * R
+  equation shockley: I == Is * (exp(Vd / Vt) - 1)
+}}
+")
+}
+
+/// Guesses far from the solution on either side of the diode's knee: below it a full Newton
+/// step overshoots into the exponential, above it a full step moves only about `Vt`, and at
+/// 10 V the diode's current is near 1e156 A. Each reaches the solution.
+#[test]
+fn a_diode_from_far_guesses() {
+    let volt = prismal_ir::Unit::parse("V").unwrap();
+    let mut failed = vec![];
+    for guess in ["", " = 0.2 V", " = 2 V", " = 10 V", " = -3 V", " = -1000 V"] {
+        let prog = program(&diode_guessed(guess));
+        let cm = prog.model("D");
+        for v0 in [-5.0, 0.0, 0.7, 5.0, 1000.0] {
+            let r = run(cm, Config::until(1e-9).param("D.V0", prismal_ir::Expr::Num { num: v0, unit: Some(volt.clone()) }));
+            if !matches!(r.status, RunStatus::Completed) {
+                failed.push((guess, v0));
+                continue;
+            }
+            let v = r.state_at(0.0);
+            let (i, vd) = (v[cm.idx("D.I")].num(), v[cm.idx("D.Vd")].num());
+            assert!((v0 - vd - i * 1000.0).abs() <= 1e-9 * (v0.abs() + vd.abs()).max(1e-12), "{guess} V0 = {v0}: {vd} {i}");
+        }
+    }
+    assert!(failed.is_empty(), "no solution for {failed:?}");
+    // At 25 V the guess itself overflows: the run cannot start, and the message says so.
+    let prog = program(&diode_guessed(" = 25 V"));
+    match &run(prog.model("D"), Config::until(1.0)).status {
+        RunStatus::NotStarted(d) => assert!(d.message.contains("cannot be evaluated at the guesses"), "{}", d.message),
+        s => panic!("{s:?}"),
+    }
+}
+
 /// `K (1 - x)² = x²` with `K = 4` has the root `x = 2/3` in `[0, 1]`, found from 0.5.
 #[test]
 fn an_equilibrium() {
