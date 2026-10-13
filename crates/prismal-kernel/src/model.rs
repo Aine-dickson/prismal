@@ -114,6 +114,8 @@ pub struct CEquation {
     pub rhs: CExpr,
     pub check: bool,
     pub check_tol: Option<f64>,
+    /// An equation over a field holds in each cell of this grid (D-091).
+    pub field: Option<crate::eval::CGrid>,
 }
 
 #[derive(Clone, Debug)]

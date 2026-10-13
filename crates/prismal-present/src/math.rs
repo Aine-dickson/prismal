@@ -158,10 +158,12 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
         Expr::Field { .. } | Expr::Part { .. } | Expr::Item { .. } | Expr::Var { .. } | Expr::Aggregate { .. } | Expr::Extreme { .. } | Expr::End { .. } | Expr::Other { .. } | Expr::Has { .. } | Expr::Pick { .. } => MathBox::Text { text: "…".into() },
         Expr::Const { .. } => ident("π"),
         Expr::Origin { .. } => upright("O"),
-        Expr::Der { der } => MathBox::Frac {
-            num: Box::new(row(vec![ident("d"), ident(&symbol(cm, der))])),
-            den: Box::new(row(vec![ident("d"), ident("t")])),
-        },
+        // A field's rate is a partial derivative, ∂T/∂t (D-091).
+        Expr::Der { der } => {
+            let field = cm.index.get(der).is_some_and(|&i| matches!(cm.bindings[i].ty, prismal_ir::Type::Field { .. }));
+            let d = if field { "∂" } else { "d" };
+            MathBox::Frac { num: Box::new(row(vec![ident(d), ident(&symbol(cm, der))])), den: Box::new(row(vec![ident(d), ident("t")])) }
+        }
         Expr::Neg { neg } => row(vec![op("−", OpKind::Prefix), wrap(neg, 6)]),
         Expr::Not { not } => row(vec![op("¬", OpKind::Prefix), wrap(not, 6)]),
         Expr::Norm { norm } => MathBox::Fenced { open: "|".into(), close: "|".into(), body: Box::new(p(norm)) },

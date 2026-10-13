@@ -201,3 +201,20 @@ fn fields_are_checked() {
     let d = codes("model M {\n state { T(x in nowhere): Real = 0 }\n}");
     assert!(d.iter().any(|m| m.contains("unknown grid")), "{d:?}");
 }
+
+/// An equation over a field holds in every cell; a checked one is checked in each (D-091),
+/// and a presentation typesets it.
+#[test]
+fn equations_over_fields() {
+    let src = "model Heat {\n grid rod(x: [0 m, 1 m], cells: 20)\n param { alpha: Quantity<L^2/T> = 0.01 m^2/s }\n state { T(x in rod): Real = sin(pi * x / 1 m) }\n flow der(T) = alpha * laplacian(T)\n equation heat: der(T) == alpha * laplacian(T) checked within 1e-9 /s\n equation wrong: der(T) == 2 * alpha * laplacian(T) checked within 1e-9 /s\n}\npresentation Show for Heat {\n panel p { equation(heat) }\n}\n";
+    let prog = program(src);
+    let cm = prog.model("Heat");
+    let r = run(cm, Config::until(1.0));
+    let named = |n: &str| r.diagnostics.iter().filter(|d| d.message.contains(&format!("`{n}`"))).count();
+    assert_eq!(named("heat"), 0, "{:?}", r.diagnostics);
+    assert!(named("wrong") > 0, "{:?}", r.diagnostics);
+    let lab = prismal_present::interact::Interactive::new(&prog, "Show", Config::until(1.0)).unwrap_or_else(|d| panic!("{d:?}"));
+    let f = lab.frame_at(0.5);
+    let e = f.reps().find(|r| r.kind == "equation").unwrap();
+    assert!(e.text.contains("heat"), "{}", e.text);
+}

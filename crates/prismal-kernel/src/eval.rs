@@ -421,7 +421,11 @@ impl CExpr {
             },
             CExpr::Field(op) => op.eval(c),
             CExpr::Der(i) => match c.der {
-                Some(d) => Ok(d[*i].clone()),
+                // A field's rate in the cell of a pointwise evaluation (D-091).
+                Some(d) => match (&d[*i], c.point) {
+                    (Field(v), Some(k)) => Ok(Num(v[k])),
+                    (v, _) => Ok(v.clone()),
+                },
                 None => Err(Status { kind: StatusKind::Unavailable, cause: "derivative not available here".into() }),
             },
             CExpr::Neg(e) => match e.eval(c)? {

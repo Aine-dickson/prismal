@@ -833,11 +833,21 @@ impl<'a> Engine<'a> {
         let der = self.cm.der_values(&self.vals, self.t, self.cfg.t0).ok();
         for q in &self.cm.equations {
             let Some(tol) = q.check_tol else { continue };
-            let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
-            let res = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
-                (Ok(a), Ok(b)) => distance(&a, &b),
-                _ => None,
-            };
+            // An equation over a field: the largest residual over its cells (D-091).
+            let cells = q.field.map(|g| g.n).unwrap_or(1);
+            let mut res = Some(0.0f64);
+            for k in 0..cells {
+                let args = q.field.map(|g| [Value::Num(g.center(k))]);
+                let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: args.as_ref().map(|a| &a[..]).unwrap_or(&[]), payloads: &[], draws: None, noise: &[], point: q.field.map(|_| k) };
+                let r = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
+                    (Ok(a), Ok(b)) => distance(&a, &b),
+                    _ => None,
+                };
+                res = match (res, r) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    _ => None,
+                };
+            }
             if res.map(|r| r > tol).unwrap_or(true) {
                 let message = match res {
                     Some(r) => format!("check equation `{}` at t = {} s: residual {r:.3e} exceeds {tol:e}", q.name, self.t),

@@ -266,7 +266,12 @@ impl<'a, 'b> Tc<'a, 'b> {
                     return self.err("MK-E06", format!("der({}) of a binding that is not continuous state", b.name));
                 }
                 let t = derivative_type(&b.ty)?;
-                Some((CExpr::Der(i), t))
+                // D-091: in a pointwise expression, `der(T)` of a field of its grid is read in
+                // the cell.
+                match (&t, &self.pointwise) {
+                    (Type::Field { grid, of }, Some(p)) if grid == p => Some((CExpr::Der(i), (**of).clone())),
+                    _ => Some((CExpr::Der(i), t)),
+                }
             }
             Expr::Neg { neg } => {
                 let (c, t) = self.expr(neg, exp)?;
@@ -1165,6 +1170,21 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     let mut cequations = vec![];
     for q in &model.equations {
         let mut tc = Tc::new(&scope, &mut diags, &q.id);
+        // D-091: an equation that reads a field holds in every cell of its grid.
+        let mut field_grid = None;
+        for side in [&q.lhs, &q.rhs] {
+            side.walk(&mut |x| {
+                let id = match x {
+                    Expr::Ref { r#ref } => r#ref,
+                    Expr::Der { der } => der,
+                    _ => return,
+                };
+                if let Some(Type::Field { grid, .. }) = index.get(id).map(|&i| &model.bindings[i].ty) {
+                    field_grid.get_or_insert(grid.clone());
+                }
+            });
+        }
+        tc.pointwise = field_grid.clone();
         let Some((l, lt)) = tc.expr(&q.lhs, None) else { continue };
         let Some(r) = tc.expect(&q.rhs, &lt) else { continue };
         let tol = match (&q.role, &q.tol) {
@@ -1177,7 +1197,8 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             }
             _ => None,
         };
-        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check });
+        let field = field_grid.and_then(|g| grids.get(&g).copied());
+        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field });
     }
 
     // Constraints (MK section 12).
