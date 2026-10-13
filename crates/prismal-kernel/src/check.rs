@@ -1306,6 +1306,29 @@ struct SolvePlan {
 /// directly or through derived values, determine the unknowns. There are as many of their
 /// components as unknowns, and each unknown can be matched to an equation that reads it.
 fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CEquation], spaces: &[Space], diags: &mut Vec<Diagnostic>) -> Option<SolvePlan> {
+    // MK-11.9: elaboration has given every state of numbers or quantities whose rate an
+    // equation reads a hidden unknown and its flow. A rate still without a flow is of a vector
+    // or a point, whose unknowns are a later extension.
+    for q in model.equations.iter().filter(|q| q.role != EquationRole::Check) {
+        let mut rates = BTreeSet::new();
+        for side in [&q.lhs, &q.rhs] {
+            side.walk(&mut |x| {
+                if let Expr::Der { der } = x {
+                    rates.insert(der.clone());
+                }
+            });
+        }
+        for x in rates {
+            let Some(b) = index.get(&x).map(|&i| &model.bindings[i]) else { continue };
+            if b.role == Role::Continuous && !matches!(b.ty, Type::Field { .. }) && !model.flows.iter().any(|f| f.target == x) {
+                diags.push(Diagnostic {
+                    code: "MK-E35",
+                    message: format!("equation `{}` gives the rate of `{}`, a vector or point: rates of vectors given by equations are a later extension; write its flow, `flow der({}) = ...` (MK-11.9)", q.name, b.name, b.name),
+                    element: q.id.clone(),
+                });
+            }
+        }
+    }
     let unknowns: Vec<usize> = model.bindings.iter().enumerate().filter(|(_, b)| b.role == Role::Unknown).map(|(i, _)| i).collect();
     if unknowns.is_empty() {
         return None;
@@ -1547,7 +1570,7 @@ fn check_ops(tc: &mut Tc, model: &Model, index: &HashMap<Id, usize>, ops: &[Op],
                 };
                 let b = &model.bindings[bi];
                 match b.role {
-                    Role::Derived | Role::Constant | Role::Input => {
+                    Role::Derived | Role::Constant | Role::Input | Role::Unknown => {
                         tc.err("MK-E06", format!("operation targets `{}`, a {:?} binding", b.name, b.role));
                         continue;
                     }

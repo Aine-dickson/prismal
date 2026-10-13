@@ -256,6 +256,19 @@ fn solves_are_checked() {
         RunStatus::NotStarted(d) => assert!(d.message.contains("dependent"), "{}", d.message),
         s => panic!("{s:?}"),
     }
+    // The rate of a vector given by an equation is a later extension, named as such.
+    let d = codes("space Plane = euclidean(2)
+model M in Plane {
+  param { m: Mass = 1 kg }
+  state { v: Vector<Velocity> = (1 m/s, 0 m/s) }
+  equation newton: m * der(v) == (0 N, -9.81 N)
+}");
+    assert!(d.len() == 1 && d[0].contains("MK-E35") && d[0].contains("`v`") && d[0].contains("flow der(v)"), "{d:?}");
+    // An unknown is determined by its equations: no operation sets it.
+    let d = codes("model M { unknown { x: Real }
+ equation a: x == 1
+ event e on every 1 s { set x = 2 } }");
+    assert!(d.iter().any(|m| m.contains("MK-E06") && m.contains("`x`")), "{d:?}");
     // A checked equation stays a check.
     let d = codes("model M { unknown { x: Real }\n equation a: x == 2\n equation b: x == 2 checked within 1e-9 }");
     assert!(d.is_empty(), "{d:?}");

@@ -85,6 +85,34 @@ energy: Energy = 0.5 * m * v^2 + 0.5 * k * x^2
 
 A derived value is always up to date; it never needs a flow. See [chapter 1](01-first-program.md).
 
+### Find values that only equations give together
+
+Combine **unknowns** with **equations** that read them.
+
+```prismal
+// model / unknown
+I:  Current
+V2: Voltage
+// model
+equation loop: V0 == I * R1 + V2
+equation load: V2 == I * R2
+```
+
+Write one equation per unknown. The runtime solves them at every instant; a value after an unknown's type (`Vd: Voltage = 0.6 V`) is a guess that starts the solver. See [chapter 17](17-solving-equations.md).
+
+### Give a rate by an equation
+
+Write an **equation** that reads `der(x)` of a **state** with no flow.
+
+```prismal
+// model / state
+I: Current = 0 A
+// model
+equation faraday: L * der(I) == V0 - R * I
+```
+
+The equation gives `I` its rate, as a flow would. See [chapter 17](17-solving-equations.md).
+
 ### Make something happen when a value crosses a threshold
 
 Combine an **event** with a **crossing trigger** and **set**.
