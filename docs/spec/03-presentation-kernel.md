@@ -256,7 +256,7 @@ The explanation timeline is a peer of the model (D-009): it observes the model a
 
 ### 9.3 Learner control
 
-- **PK-9.7** During a narrated lesson, the learner always has runtime controls over the **timeline**: pause, resume, replay a beat or scene, change narration speed. View actions (zoom, pan) are available where the presentation permits them. These never change the lesson run's results.
+- **PK-9.7** During a narrated lesson, the learner always has runtime controls over the **timeline**: pause, resume, replay a beat or scene, change narration speed. Narration speed is the speed of the whole lesson: the voice and the timeline it narrates change together, so a narration stays with its beat and captions (D-095); the reference player offers 0.5x to 2x. View actions (zoom, pan) are available where the presentation permits them. These never change the lesson run's results.
 - **PK-9.8** Model actions by the learner (interventions) are allowed only inside `explore` beats. An `explore` beat:
   - branches the lesson run at the current instant (RC-12.3); the learner's interventions and run controls act on the branch;
   - declares which controls and intervenable bindings are available, a subset of the presentation's permissions;

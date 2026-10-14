@@ -1344,6 +1344,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     // Dependency analysis (MK section 13).
     let derived_order = order_derived(model, &index, plan.as_ref(), &mut diags);
     let init_order = order_init(model, &index, plan.as_ref(), &mut diags);
+    let flow_order = flow_order(model, &index, plan.as_ref(), &derived_order);
     for k in &mut cconstraints {
         for lv in &mut k.levels {
             lv.derived = derived_order.iter().copied().filter(|i| lv.derived.contains(i)).collect();
@@ -1360,6 +1361,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         index,
         bindings: cbindings,
         derived_order,
+        flow_order,
         init_order,
         cont,
         events: cevents,
@@ -2042,6 +2044,31 @@ fn topo(n: usize, deps: &[Vec<usize>], nodes: &[usize]) -> Result<Vec<usize>, Ve
     } else {
         Err(nodes.iter().copied().filter(|i| !out.contains(i)).collect())
     }
+}
+
+/// D-095: the derived bindings the flows read, directly, through other derived values and
+/// their conditions, or through the solve (whose equations, inner values and guesses read
+/// more), in the order of `derived_order`.
+fn flow_order(model: &Model, index: &HashMap<Id, usize>, plan: Option<&SolvePlan>, derived_order: &[usize]) -> Vec<usize> {
+    let mut need: BTreeSet<usize> = BTreeSet::new();
+    let mut solve = false;
+    let mut stack: Vec<usize> = model.flows.iter().flat_map(|f| f.expr.refs()).filter_map(|r| index.get(&r).copied()).collect();
+    while let Some(i) = stack.pop() {
+        if !need.insert(i) {
+            continue;
+        }
+        let b = &model.bindings[i];
+        if let Some(p) = plan {
+            if (b.role == Role::Unknown || p.inner.contains(&i)) && !solve {
+                solve = true;
+                stack.extend(solve_refs(p, model).iter().filter_map(|r| index.get(r).copied()));
+            }
+        }
+        if b.role == Role::Derived {
+            stack.extend(b.def.iter().chain(b.when.iter()).flat_map(|e| e.refs()).filter_map(|r| index.get(&r).copied()));
+        }
+    }
+    derived_order.iter().copied().filter(|&i| if i == SOLVE { solve } else { need.contains(&i) }).collect()
 }
 
 /// The solve as one node of the dependency graph, `SOLVE` in an order (D-092): it stands for

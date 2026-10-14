@@ -179,6 +179,9 @@ pub struct CModel {
     pub index: HashMap<Id, usize>,
     pub bindings: Vec<CBinding>,
     pub derived_order: Vec<usize>,
+    /// The part of `derived_order` the flows read, directly or through other derived values
+    /// and the solve (D-095): what a solver's evaluation of the flows needs.
+    pub flow_order: Vec<usize>,
     pub init_order: Vec<usize>,
     pub cont: Vec<ContState>,
     pub events: Vec<CEvent>,
@@ -425,7 +428,17 @@ impl CModel {
 
     /// Recomputes every derived binding from the stored values (MK-6.4).
     pub fn update_derived(&self, vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
-        for &i in &self.derived_order {
+        self.update_in(&self.derived_order, vals, t, t0)
+    }
+
+    /// Recomputes the derived bindings the flows read (D-095), for a solver's evaluation of
+    /// the flows; the others keep their earlier values.
+    pub fn update_for_flows(&self, vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
+        self.update_in(&self.flow_order, vals, t, t0)
+    }
+
+    fn update_in(&self, order: &[usize], vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
+        for &i in order {
             if i == crate::check::SOLVE {
                 self.solve_unknowns(vals, t, t0)?;
                 continue;

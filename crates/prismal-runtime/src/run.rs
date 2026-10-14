@@ -281,7 +281,7 @@ struct SegmentRhs<'a> {
 impl Rhs for SegmentRhs<'_> {
     fn f(&mut self, t: f64, y: &[f64], dy: &mut [f64]) -> Result<(), Status> {
         self.cm.load_y(&mut self.scratch, y);
-        self.cm.update_derived(&mut self.scratch, t, self.t0)?;
+        self.cm.update_for_flows(&mut self.scratch, t, self.t0)?;
         self.cm.rhs_noisy(&self.scratch, t, self.t0, &self.noise, dy)
     }
 }

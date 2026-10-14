@@ -213,6 +213,9 @@ run page_layout of Cannon with CannonPage {
 
 A **group** draws several representations with one shared placement: its members are written in the group's own frame, then moved to `at`, turned by `rotate` and scaled by `scale`. A rigid body is drawn this way: its shape once, in its own coordinates, and its position and angle from the model.
 
+**Goal.** A wheel rolling along the ground with its spoke turning, drawn as one rigid body.
+**How it is built.** The model has the wheel's position `x` and angle `φ`; a `group` placed at the hub and turned by `-φ` draws the rim and the spoke in the wheel's own frame.
+
 ```text
 space Plane = euclidean(2)
 
@@ -276,6 +279,9 @@ run quarter_turn of Wheel with WheelView {
 ```
 
 A member of a group may be dragged. The gesture's value is then the pointer's point **in the group's frame**, the frame the member is written in (D-062):
+
+**Goal.** The learner sets a radius by dragging the tip of a dial that is drawn turned.
+**How it is built.** The tip is a member of a turned `group`; its drag gives the pointer in the group's frame, so `p.x` is the radius whichever way the dial is turned.
 
 ```text
 space Plane = euclidean(2)
@@ -406,6 +412,9 @@ A plot's ranges say what part of the curve is drawn. A curve that leaves them is
 - `permit learner { zoom; pan }` lets the learner scroll the wheel over a plot to zoom about the pointer, pinch it with two fingers, and drag it to look beyond its ranges, as in a spatial view. A function graph is drawn over whatever range is shown. `Reset view` returns to the author's framing.
 
 `x_unit` and `y_unit` choose the unit the axis is labelled in. The axis keeps its dimension: `y_unit: cm` on a length axis shows `5` where the value is `0.05 m`.
+
+**Goal.** A spring's swing plotted against time, staying in view when the learner makes it larger than the plot's range, and open to zoom and pan.
+**How it is built.** The plot declares `follow: (x, y)` so its axes grow to the data, `y_unit: cm` to label lengths in centimetres; `permit learner { zoom; pan }` lets the learner look around.
 
 ```text
 model Spring {
