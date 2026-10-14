@@ -15,7 +15,7 @@ pub trait Modules {
 
 /// The first-party library (R-55, D-099): modules written in Prismal and shipped with it, in
 /// the repository's `lib` directory.
-pub const FIRST_PARTY: &[(&str, &str)] = &[("mechanics", include_str!("../../../lib/mechanics.prismal"))];
+pub const FIRST_PARTY: &[(&str, &str)] = &[("mechanics", include_str!("../../../lib/mechanics.prismal")), ("optics", include_str!("../../../lib/optics.prismal"))];
 
 /// The first-party modules, and nothing else.
 pub struct FirstParty;

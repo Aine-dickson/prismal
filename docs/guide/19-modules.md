@@ -6,7 +6,7 @@ Chapter 9 wrote an object type inside the model that uses it. A kind of thing wo
 > - A **shared definition** is an `object`, `enum` or `fn` written at the top level of a file, not inside a model. Every model in the file can use it by name.
 > - A **module** is a file of shared definitions with a name, such as `mechanics`. `use mechanics` at the top of another file makes its definitions visible there.
 > - Shared definitions work in a model of any space: a `Point` in a shared object type is a point of whichever space the model using it is in, a plane or a room.
-> - Prismal ships with modules of its own, the **first-party library**, written in Prismal like any author's module. `mechanics` is the first.
+> - Prismal ships with modules of its own, the **first-party library**, written in Prismal like any author's module. `mechanics` is the first; `optics` (chapter 22) is another.
 
 ## Definitions for every model of a file
 
