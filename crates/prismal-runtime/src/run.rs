@@ -1336,6 +1336,9 @@ impl<'a> Engine<'a> {
                 Some(c) => matches!(c.eval(&self.ctx(&vals)), Ok(Value::Bool(true))),
                 None => true,
             });
+            // A finished algorithm no longer occurs (MK-14.17, D-101).
+            due.retain(|&ei| !self.finished(ei));
+            requested.retain(|(ei, _)| !self.finished(*ei));
             due.sort();
             due.dedup();
             if due.is_empty() && requested.is_empty() {
@@ -1360,12 +1363,12 @@ impl<'a> Engine<'a> {
                         }
                     }
                 } else {
-                    ops.extend(self.cm.events[ei].handler.clone());
+                    ops.extend(self.work_of(ei)?);
                     handled.push((ei, false, false));
                 }
             }
-            for (ei, _) in requested.iter() {
-                ops.extend(self.cm.events[*ei].handler.clone());
+            for (ei, _) in requested.clone().iter() {
+                ops.extend(self.work_of(*ei)?);
                 handled.push((*ei, false, true));
             }
             let emitted = self.transition(&ops, false)?;
@@ -1411,6 +1414,103 @@ impl<'a> Engine<'a> {
             *requested = vec![];
         }
         Ok(true)
+    }
+
+    /// Whether event `ei` is an algorithm that has run to its end (D-101).
+    fn finished(&self, ei: usize) -> bool {
+        self.cm.events[ei].algorithm.as_ref().is_some_and(|a| self.vals[a.resume].num() as usize >= a.code.len())
+    }
+
+    /// The operations of an occurrence of event `ei`: its handler, or for an algorithm the
+    /// changes made by running it to its next `step` (D-101).
+    fn work_of(&mut self, ei: usize) -> Result<Vec<COp>, RunDiag> {
+        if self.cm.events[ei].algorithm.is_none() {
+            return Ok(self.cm.events[ei].handler.clone());
+        }
+        self.algorithm_step(ei)
+    }
+
+    /// Runs algorithm `ei` from where it stopped to its next `step` or its end, each
+    /// statement reading the values the ones before it wrote (MK-14.17, RC-5.12). The result
+    /// is a `set` of each stored value that changed, its resume point included, and the
+    /// events it emitted: the transition then treats them as a handler's operations.
+    fn algorithm_step(&mut self, ei: usize) -> Result<Vec<COp>, RunDiag> {
+        let cm = self.cm;
+        let ev = &cm.events[ei];
+        let alg = ev.algorithm.as_ref().unwrap();
+        let mut work = self.vals.clone();
+        let mut emits = vec![];
+        let mut pc = work[alg.resume].num() as usize;
+        let mut count = 0;
+        let fail = |s: &Self, st: Status| s.diag(Category::Model, format!("algorithm `{}`: {}", ev.name, st.cause), Some(&ev.id));
+        while pc < alg.code.len() {
+            count += 1;
+            if count > prismal_kernel::ALGORITHM_INSTRUCTIONS {
+                return Err(self.diag(Category::Model, format!("algorithm `{}` ran {} instructions without reaching `step` or its end", ev.name, prismal_kernel::ALGORITHM_INSTRUCTIONS), Some(&ev.id)));
+            }
+            match &alg.code[pc] {
+                prismal_kernel::CInstr::Step => {
+                    pc += 1;
+                    break;
+                }
+                prismal_kernel::CInstr::Jump(to) => pc = *to,
+                prismal_kernel::CInstr::Unless(c, to) => {
+                    let v = c.eval(&self.ctx(&work)).map_err(|s| fail(self, s))?;
+                    pc = if v.boolean() { pc + 1 } else { *to };
+                }
+                prismal_kernel::CInstr::Do(ops) => {
+                    let before = work.clone();
+                    self.apply_in_order(ops, &before, &mut work, &mut emits).map_err(|s| fail(self, s))?;
+                    cm.update_derived(&mut work, self.t, self.cfg.t0).map_err(|s| fail(self, s))?;
+                    pc += 1;
+                }
+            }
+        }
+        work[alg.resume] = Value::Num(pc as f64);
+        let mut out: Vec<COp> = (0..work.len())
+            .filter(|&b| !matches!(cm.bindings[b].role, Role::Derived | Role::Unknown | Role::Constant) && work[b] != self.vals[b])
+            .map(|b| COp::Set { binding: b, component: None, value: CExpr::Const(work[b].clone()) })
+            .collect();
+        out.extend(emits);
+        Ok(out)
+    }
+
+    /// Performs one statement's operations on `work`, all reading `before` (D-101).
+    fn apply_in_order(&self, ops: &[COp], before: &[Value], work: &mut [Value], emits: &mut Vec<COp>) -> Result<(), Status> {
+        for op in ops {
+            match op {
+                COp::If { cond, ops } => {
+                    if cond.eval(&self.ctx(before))?.boolean() {
+                        self.apply_in_order(ops, before, work, emits)?;
+                    }
+                }
+                COp::Set { binding, component, value } => {
+                    let v = value.eval(&self.ctx(before))?;
+                    match component {
+                        None => work[*binding] = v,
+                        Some(k) => {
+                            let mut a = work[*binding].arr();
+                            a.v[*k] = v.num();
+                            work[*binding] = match work[*binding] {
+                                Value::Point(_) => Value::Point(a),
+                                _ => Value::Vec(a),
+                            };
+                        }
+                    }
+                }
+                COp::SetField { binding, grid, value } => work[*binding] = prismal_kernel::per_cell(value, grid, &self.ctx(before))?,
+                COp::Destroy { binding } => work[*binding] = Value::Bool(false),
+                COp::Emit { event, payload } => {
+                    let p = match payload {
+                        Some(c) => Some(CExpr::Const(c.eval(&self.ctx(before))?)),
+                        None => None,
+                    };
+                    emits.push(COp::Emit { event: *event, payload: p });
+                }
+                COp::Contribute { .. } => return Err(Status::invalid("`contribute` in an algorithm")),
+            }
+        }
+        Ok(())
     }
 
     /// One transition (MK-16.3): conflicts, proposed state, constraints, commit.

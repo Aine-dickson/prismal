@@ -18,7 +18,7 @@
 
 use std::collections::BTreeMap;
 use crate::present::{Action, Arg, Check, Inverse, Item, LearnerInput, Observation, Operand, Presentation, Prop, Rep, RunCase, Schedule, Source, Subject, Tolerance, ViewKind};
-use crate::{Agg, BinOp, Binding, Builtin, Constraint, Display, Document, Each, Event, Expr, Flow, Guarded, Id, Model, Op, Policy, Role, Target, Trigger, Type, Zeno, ZenoPolicy};
+use crate::{Agg, BinOp, Binding, Builtin, Constraint, Display, Document, Each, Event, Expr, Flow, Guarded, Id, Model, Op, Policy, Role, Stmt, Target, Trigger, Type, Zeno, ZenoPolicy};
 
 /// A problem found while elaborating; `element` is the identity of what was written.
 #[derive(Clone, Debug, PartialEq)]
@@ -305,6 +305,16 @@ impl<'a> Cx<'a> {
                 Some((_, sel)) => Some(sel.clone()),
                 None => self.member(s, e).map(Sel::One),
             },
+            // D-101: a member chosen by a number computed during the run (`bars[j + 1]`).
+            Expr::Item { item, index } if self.constant_index(s, index).is_none() => {
+                let (ms, many) = self.members(s, item)?;
+                if !many {
+                    self.err("MK-E26", format!("`{}` is one object, not a collection", part_name(s.ty, item)));
+                    return None;
+                }
+                let index = self.expr(s, index);
+                Some(Sel::Chosen { members: ms, index, coll: coll_key(&s.path, item) })
+            }
             _ => self.member(s, e).map(Sel::One),
         }
     }
@@ -619,6 +629,7 @@ impl<'a> Cx<'a> {
         let chosen = match m {
             Expr::End { .. } | Expr::Other { .. } => true,
             Expr::Var { var } => matches!(s.vars.iter().rev().find(|(v, _)| v == var), Some((_, Sel::Chosen { .. }))),
+            Expr::Item { index, .. } => self.constant_index(s, index).is_none(),
             _ => false,
         };
         if !chosen {
@@ -633,7 +644,19 @@ impl<'a> Cx<'a> {
             self.err("MK-E26", format!("an object `{}` has no binding `{}`", members[0].ty.name, t.binding.rsplit('.').next().unwrap_or(&t.binding)));
             return Some(vec![]);
         }
-        Some(members.iter().map(|m| (Expr::bin(BinOp::Eq, index.clone(), num(m.pos as f64)), Target { binding: flat(&t.binding, &m.path), component: t.component, member: None })).collect())
+        // The first member's condition picks among all members, so that a number outside the
+        // collection fails as a read of it does (D-101), not silently writing nothing.
+        let n = members.len();
+        Some(
+            members
+                .iter()
+                .enumerate()
+                .map(|(k, m)| {
+                    let cond = if k == 0 { Expr::Pick { pick: Box::new(index.clone()), from: (0..n).map(|j| Expr::Bool { bool: members[j].pos == m.pos }).collect() } } else { Expr::bin(BinOp::Eq, index.clone(), num(m.pos as f64)) };
+                    (cond, Target { binding: flat(&t.binding, &m.path), component: t.component, member: None })
+                })
+                .collect(),
+        )
     }
 
     /// The payload `e` supplied to an event that declares `declared`, in scope `s`: a member
@@ -913,8 +936,24 @@ impl<'a> Cx<'a> {
             process: e.process.as_ref().map(|p| s.local(p)),
             payload,
             each: None,
+            algorithm: e.algorithm.as_ref().map(|a| self.stmts(s, a)),
             notes: e.notes.clone(),
         }
+    }
+
+    /// The statements of an algorithm (D-101): their operations and expressions elaborated
+    /// as a handler's, a loop's binding named in the scope of the model.
+    fn stmts(&mut self, s: &Scope<'a>, stmts: &[Stmt]) -> Vec<Stmt> {
+        stmts
+            .iter()
+            .map(|st| match st {
+                Stmt::Do { ops } => Stmt::Do { ops: self.ops(s, ops) },
+                Stmt::If { r#if, then, r#else } => Stmt::If { r#if: self.expr(s, r#if), then: self.stmts(s, then), r#else: self.stmts(s, r#else) },
+                Stmt::While { r#while, body } => Stmt::While { r#while: self.expr(s, r#while), body: self.stmts(s, body) },
+                Stmt::For { var, from, to, body } => Stmt::For { var: s.local(var), from: self.expr(s, from), to: self.expr(s, to), body: self.stmts(s, body) },
+                Stmt::Step => Stmt::Step,
+            })
+            .collect()
     }
 
     fn guarded(live: &Expr, g: Expr) -> Expr {

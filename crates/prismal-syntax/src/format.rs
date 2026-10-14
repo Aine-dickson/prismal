@@ -467,6 +467,10 @@ impl<'a> Printer<'a> {
                     Func::Min => "min",
                     Func::Max => "max",
                     Func::Atan2 => "atan2",
+                    Func::Floor => "floor",
+                    Func::Ceil => "ceil",
+                    Func::Round => "round",
+                    Func::Mod => "mod",
                     Func::Dot => "dot",
                     Func::Cross => "cross",
                     Func::Laplacian => "laplacian",
@@ -496,8 +500,8 @@ impl<'a> Printer<'a> {
             Expr::Field { field, of } => format!("{}.{}", self.member(of, params), self.field_name(field)),
             Expr::Part { .. } | Expr::Item { .. } | Expr::Var { .. } | Expr::End { .. } | Expr::Other { .. } => self.member(e, params),
             Expr::Has { has, rel } => format!("{}.has({})", self.member(rel, params), self.member(has, params)),
-            // Made by elaboration only (D-058).
-            Expr::Pick { pick, from } => format!("pick({}, {})", p(pick), from.iter().map(&p).collect::<Vec<_>>().join(", ")),
+            // An item of a list of values by its number (D-101); also made by elaboration (D-058).
+            Expr::Pick { pick, from } => format!("({})[{}]", from.iter().map(&p).collect::<Vec<_>>().join(", "), p(pick)),
             Expr::Aggregate { aggregate, var, over, body, filter } => {
                 let coll = self.part_name(over);
                 let filter = filter.as_ref().map(|f| format!(" if {}", p(f))).unwrap_or_default();
@@ -853,6 +857,48 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// An algorithm's statements as a block, one per line (D-101).
+    fn stmts(&self, stmts: &[Stmt], depth: usize) -> String {
+        let ind = INDENT.repeat(depth + 1);
+        let mut s = "{\n".to_string();
+        for st in stmts {
+            match st {
+                Stmt::Do { ops } => {
+                    for o in ops {
+                        let _ = writeln!(s, "{ind}{}", self.op(o));
+                    }
+                }
+                Stmt::If { r#if, then, r#else } => {
+                    let _ = write!(s, "{ind}if {} {}", self.expr(r#if), self.stmts(then, depth + 1));
+                    match r#else.as_slice() {
+                        [] => {}
+                        [inner @ Stmt::If { .. }] => {
+                            let nested = self.stmts(std::slice::from_ref(inner), depth);
+                            // `else if`: the nested statement without its block's braces.
+                            let body = nested.trim_start_matches("{\n").trim_end_matches('}').trim_end();
+                            let _ = write!(s, " else {}", body.trim_start());
+                        }
+                        other => {
+                            let _ = write!(s, " else {}", self.stmts(other, depth + 1));
+                        }
+                    }
+                    s.push('\n');
+                }
+                Stmt::While { r#while, body } => {
+                    let _ = writeln!(s, "{ind}while {} {}", self.expr(r#while), self.stmts(body, depth + 1));
+                }
+                Stmt::For { var, from, to, body } => {
+                    let _ = writeln!(s, "{ind}for {} in [{}, {}] {}", self.binding_name(var), self.expr(from), self.expr(to), self.stmts(body, depth + 1));
+                }
+                Stmt::Step => {
+                    let _ = writeln!(s, "{ind}step");
+                }
+            }
+        }
+        let _ = write!(s, "{}}}", INDENT.repeat(depth));
+        s
+    }
+
     fn trigger(&self, t: &Trigger) -> String {
         match t {
             Trigger::Rising { guard } => format!("rising({})", self.expr(guard)),
@@ -878,12 +924,16 @@ impl<'a> Printer<'a> {
         let ind = INDENT.repeat(depth);
         let mut s = String::new();
         notes(&mut s, &ind, &e.notes);
-        let _ = write!(s, "{ind}event {} on {}", e.name, self.trigger(&e.trigger));
+        let word = if e.algorithm.is_some() { "algorithm" } else { "event" };
+        let _ = write!(s, "{ind}{word} {} on {}", e.name, self.trigger(&e.trigger));
         if let Some(p) = &e.payload {
             let _ = write!(s, "({})", self.payload_decl(p));
         }
         if let Some(c) = &e.enable {
             let _ = write!(s, " if {}", self.expr(c));
+        }
+        if let Some(a) = &e.algorithm {
+            let _ = write!(s, " {}", self.stmts(a, depth));
         }
         if !e.handler.is_empty() {
             let _ = write!(s, " {}", self.ops(&e.handler, depth));

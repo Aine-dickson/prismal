@@ -202,8 +202,21 @@ pub struct EventDecl {
     pub enable: Option<Expr>,
     pub handler: Vec<OpStmt>,
     pub zeno: Option<ZenoClause>,
+    /// `algorithm name on trigger { statements }` (D-101): the event runs these in order.
+    pub algorithm: Option<Vec<AlgoStmt>>,
     pub notes: Vec<String>,
     pub span: Span,
+}
+
+/// A statement of an algorithm (D-101).
+#[derive(Clone, Debug, PartialEq)]
+pub enum AlgoStmt {
+    Op(OpStmt),
+    If { cond: Expr, then: Vec<AlgoStmt>, otherwise: Vec<AlgoStmt>, span: Span },
+    While { cond: Expr, body: Vec<AlgoStmt>, span: Span },
+    /// `for i in [a, b] { ... }`, `i` a discrete binding of the model.
+    For { var: Name, from: Expr, to: Expr, body: Vec<AlgoStmt>, span: Span },
+    Step(Span),
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -778,6 +778,24 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
     };
     let needs = |what: &str| d("PK-E05", format!("`{}` needs {what} (PK-6.3)", rep.kind));
     let label = |e: &Expr| rep.name.clone().unwrap_or_else(|| print(e, cm, &[]));
+    // A point of the view's space, or in a plot a pair of coordinates in the units of its
+    // axes (PK-7.3a; segments, polylines and polygons too, D-101).
+    let point = |e: &Expr, what: &str| -> Result<CExpr, Vec<PDiag>> {
+        let (c, t) = match ctx {
+            ViewCtx::Spatial { space, .. } => ce(e, Some(&Type::Point { space: space.clone() }))?,
+            ViewCtx::Plot { .. } => ce(e, None)?,
+            ViewCtx::Panel => return Err(d("PK-E05", format!("a {} belongs in a spatial or plot view", rep.kind))),
+        };
+        let ok = match (&t, ctx) {
+            (Type::Point { .. }, ViewCtx::Spatial { .. }) => true,
+            (Type::Tuple { items }, ViewCtx::Plot { dims, .. }) => items.len() == 2 && items[0] == (Type::Quantity { dim: dims.0 }) && items[1] == (Type::Quantity { dim: dims.1 }),
+            _ => false,
+        };
+        if !ok {
+            return Err(needs(&format!("{what}: points of the view's space, or pairs of plot coordinates in the units of the plot's axes")));
+        }
+        Ok(c)
+    };
     let kind = match rep.kind.as_str() {
         "marker" => {
             let e = source(rep, 0).or(prop_expr(rep, "at")).ok_or_else(|| needs("a position"))?;
@@ -840,10 +858,8 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             CKind::Arrow { vec: c, ty: t, from, px_per_unit, label: label(e) }
         }
         "segment" => {
-            let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", "a segment belongs in a spatial view".into())) };
-            let p = Type::Point { space: space.clone() };
-            let a = ce(source(rep, 0).ok_or_else(|| needs("two points"))?, Some(&p))?.0;
-            let b = ce(source(rep, 1).ok_or_else(|| needs("two points"))?, Some(&p))?.0;
+            let a = point(source(rep, 0).ok_or_else(|| needs("two points"))?, "two points")?;
+            let b = point(source(rep, 1).ok_or_else(|| needs("two points"))?, "two points")?;
             CKind::Segment { a, b }
         }
         "function_graph" => {
@@ -1100,12 +1116,10 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             CKind::Control { control: rep.kind.clone(), binding: r#ref.clone(), idx, min, max, step, ends, options }
         }
         "polyline" | "polygon" => {
-            let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", format!("a {} belongs in a spatial view", rep.kind))) };
-            let p = Type::Point { space: space.clone() };
             let mut points = vec![];
             for a in &rep.sources {
                 let Arg::Expr { expr } = a else { return Err(needs("points")) };
-                points.push(ce(expr, Some(&p))?.0);
+                points.push(point(expr, "points")?);
             }
             if points.len() < 2 {
                 return Err(needs("at least two points"));

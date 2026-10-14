@@ -84,6 +84,15 @@ impl Program {
         if diags.is_empty() {
             Ok(prog)
         } else {
+            // A representation repeated per member reports a mistake once, not per member.
+            let mut seen: Vec<PDiag> = vec![];
+            diags.retain(|d| {
+                let again = seen.contains(d);
+                if !again {
+                    seen.push(d.clone());
+                }
+                !again
+            });
             Err(diags)
         }
     }

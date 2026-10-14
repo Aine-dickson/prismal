@@ -94,6 +94,12 @@ pub enum Func {
     Dot,
     /// The cross product of two vectors of one space of three dimensions (D-100).
     Cross,
+    /// Whole numbers (D-101): the largest at most a number, the smallest at least it, the
+    /// nearest (halves away from zero); and `mod(a, b) = a - b floor(a / b)`.
+    Floor,
+    Ceil,
+    Round,
+    Mod,
     /// Of a field, at the cell of a pointwise expression (MK-9.7, D-091).
     Laplacian,
     Gradient,

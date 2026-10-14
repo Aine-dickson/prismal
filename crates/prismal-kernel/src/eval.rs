@@ -591,6 +591,15 @@ impl CExpr {
                     F::Min => x.min(y),
                     F::Max => x.max(y),
                     F::Atan2 => x.atan2(y),
+                    F::Floor => x.floor(),
+                    F::Ceil => x.ceil(),
+                    F::Round => x.round(),
+                    F::Mod => {
+                        if y == 0.0 {
+                            return Err(Status::invalid("mod by zero"));
+                        }
+                        x - y * (x / y).floor()
+                    }
                     F::Dot | F::Cross => unreachable!(),
                     F::Laplacian | F::Gradient | F::Integral | F::Mean => return Err(Status::invalid("a field operation compiled as a call")),
                 };
@@ -1022,6 +1031,9 @@ impl CExpr {
                     F::Exp => a.map(f64::exp),
                     F::Log => a.map(f64::ln),
                     F::Abs => a.map(f64::abs),
+                    F::Floor => a.map(f64::floor),
+                    F::Ceil => a.map(f64::ceil),
+                    F::Round => a.map(f64::round),
                     _ => return Ok(None),
                 }
             }

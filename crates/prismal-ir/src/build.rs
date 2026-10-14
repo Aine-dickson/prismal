@@ -283,6 +283,7 @@ impl ModelBuilder {
             process: None,
             payload: None,
             each: None,
+            algorithm: None,
             notes: vec![],
         });
         id

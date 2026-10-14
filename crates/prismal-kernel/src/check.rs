@@ -660,7 +660,7 @@ impl<'a, 'b> Tc<'a, 'b> {
             }
             return Some((CExpr::Field(Box::new(self.field_op(i, grid, op)?)), ty));
         }
-        let n = if matches!(f, Func::Min | Func::Max | Func::Atan2) { 2 } else { 1 };
+        let n = if matches!(f, Func::Min | Func::Max | Func::Atan2 | Func::Mod) { 2 } else { 1 };
         if args.len() != n {
             return self.err("MK-E01", format!("{f:?} takes {n} arguments"));
         }
@@ -678,7 +678,14 @@ impl<'a, 'b> Tc<'a, 'b> {
             }
             Func::Sqrt => Some((CExpr::Call(f, vec![a]), Type::Quantity { dim: dim.pow(Ratio::new(1, 2)) })),
             Func::Abs => Some((CExpr::Call(f, vec![a]), Type::Quantity { dim })),
-            Func::Min | Func::Max | Func::Atan2 => {
+            // D-101: a whole number of a quantity would depend on its unit.
+            Func::Floor | Func::Ceil | Func::Round => {
+                if !dim.is_none() {
+                    return self.err("MK-E02", format!("{} of a quantity with dimension {dim}: divide by a unit first, `{}(x / 1 m)`", func_word(f), func_word(f)));
+                }
+                Some((CExpr::Call(f, vec![a]), Type::real()))
+            }
+            Func::Min | Func::Max | Func::Atan2 | Func::Mod => {
                 let bc = self.expect(&args[1], &Type::Quantity { dim })?;
                 let rt = if f == Func::Atan2 { Type::real() } else { Type::Quantity { dim } };
                 Some((CExpr::Call(f, vec![a, bc]), rt))
@@ -761,6 +768,9 @@ fn func_word(f: Func) -> &'static str {
         Func::Mean => "mean",
         Func::Min => "min",
         Func::Max => "max",
+        Func::Floor => "floor",
+        Func::Ceil => "ceil",
+        Func::Round => "round",
         _ => "function",
     }
 }
@@ -977,6 +987,14 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     let model = if model.constraints.iter().any(|k| k.policy == Policy::Enforce && !model.equations.iter().any(|q| q.id == prismal_ir::enforce::equation_id(&k.id))) {
         elaborated = prismal_ir::enforce::elaborate(model.clone());
         &elaborated
+    } else {
+        model
+    };
+    // D-101: each algorithm resumes from a hidden discrete binding.
+    let resumed;
+    let model = if model.events.iter().any(|e| e.algorithm.is_some() && !model.bindings.iter().any(|b| b.id == resume_id(&e.id))) {
+        resumed = with_resume(model.clone());
+        &resumed
     } else {
         model
     };
@@ -1220,7 +1238,12 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
                 n: z.n,
                 window: z.window,
             });
-        cevents.push(CEvent { id: e.id.clone(), name: e.name.clone(), trigger, enable, handler, zeno });
+        let algorithm = e.algorithm.as_ref().map(|stmts| {
+            let mut code = vec![];
+            compile_stmts(&mut tc, model, &index, stmts, &mut code);
+            CAlgorithm { resume: index.get(&prismal_ir::resume_id(&e.id)).copied().unwrap_or(0), code }
+        });
+        cevents.push(CEvent { id: e.id.clone(), name: e.name.clone(), trigger, enable, handler, zeno, algorithm });
     }
     // MK-15.11, MK-15.12 with D-038: self-retriggering crossing events need a Zeno policy.
     for e in &model.events {
@@ -1648,6 +1671,71 @@ fn const_value(c: &CExpr) -> Option<f64> {
     match c {
         CExpr::Const(Value::Num(x)) => Some(*x),
         _ => None,
+    }
+}
+
+/// Compiles an algorithm's statements to a flat program (MK-14.17, D-101): `if` and `while`
+/// to conditional jumps, `for i in [a, b]` to `set i = a`, a test of `i <= b` before each
+/// turn and `set i = i + 1` after it.
+fn compile_stmts(tc: &mut Tc, model: &Model, index: &HashMap<Id, usize>, stmts: &[Stmt], code: &mut Vec<CInstr>) {
+    let patch = |code: &mut Vec<CInstr>, at: usize, to: usize| match &mut code[at] {
+        CInstr::Unless(_, t) | CInstr::Jump(t) => *t = to,
+        _ => unreachable!(),
+    };
+    for st in stmts {
+        match st {
+            Stmt::Do { ops } => {
+                if ops.iter().any(|o| matches!(o, Op::Contribute { .. })) {
+                    tc.err("MK-E37", "`contribute` combines the contributions of one instant; an algorithm writes in order with `set` (MK-14.17)".into());
+                }
+                let c = check_ops(tc, model, index, ops, false);
+                code.push(CInstr::Do(c));
+            }
+            Stmt::If { r#if, then, r#else } => {
+                let cond = tc.expect(r#if, &Type::Boolean).unwrap_or(CExpr::Const(Value::Bool(false)));
+                let test = code.len();
+                code.push(CInstr::Unless(cond, 0));
+                compile_stmts(tc, model, index, then, code);
+                if r#else.is_empty() {
+                    let end = code.len();
+                    patch(code, test, end);
+                } else {
+                    let skip = code.len();
+                    code.push(CInstr::Jump(0));
+                    let other = code.len();
+                    patch(code, test, other);
+                    compile_stmts(tc, model, index, r#else, code);
+                    let end = code.len();
+                    patch(code, skip, end);
+                }
+            }
+            Stmt::While { r#while, body } => {
+                let top = code.len();
+                let cond = tc.expect(r#while, &Type::Boolean).unwrap_or(CExpr::Const(Value::Bool(false)));
+                code.push(CInstr::Unless(cond, 0));
+                compile_stmts(tc, model, index, body, code);
+                code.push(CInstr::Jump(top));
+                let end = code.len();
+                patch(code, top, end);
+            }
+            Stmt::For { var, from, to, body } => {
+                let Some(&i) = index.get(var).filter(|&&i| model.bindings[i].role == Role::Discrete && model.bindings[i].ty == Type::real()) else {
+                    let name = var.rsplit('.').next().unwrap_or(var);
+                    tc.err("MK-E37", format!("the counter `{name}` of a `for` is a discrete number of the model: `discrete {{ {name}: Real = 0 }}` (MK-14.17)"));
+                    continue;
+                };
+                let (Some(a), Some(b)) = (tc.expect(from, &Type::real()), tc.expect(to, &Type::real())) else { continue };
+                code.push(CInstr::Do(vec![COp::Set { binding: i, component: None, value: a }]));
+                let top = code.len();
+                code.push(CInstr::Unless(CExpr::Bin(BinOp::Le, Box::new(CExpr::Load(i)), Box::new(b)), 0));
+                compile_stmts(tc, model, index, body, code);
+                code.push(CInstr::Do(vec![COp::Set { binding: i, component: None, value: CExpr::Bin(BinOp::Add, Box::new(CExpr::Load(i)), Box::new(CExpr::Const(Value::Num(1.0)))) }]));
+                code.push(CInstr::Jump(top));
+                let end = code.len();
+                patch(code, top, end);
+            }
+            Stmt::Step => code.push(CInstr::Step),
+        }
     }
 }
 
