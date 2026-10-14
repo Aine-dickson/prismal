@@ -468,6 +468,7 @@ impl<'a> Printer<'a> {
                     Func::Max => "max",
                     Func::Atan2 => "atan2",
                     Func::Dot => "dot",
+                    Func::Cross => "cross",
                     Func::Laplacian => "laplacian",
                     Func::Gradient => "gradient",
                     Func::Integral => "integral",
@@ -1070,7 +1071,12 @@ impl<'a> Printer<'a> {
         }
         for v in &p.views {
             let head = match &v.kind {
-                ViewKind::Spatial { space, scale, y_up } => format!(
+                // A view of a space of three dimensions has `z` up and its look (D-100).
+                ViewKind::Spatial { space, scale, look, .. } if self.doc.spaces.iter().any(|s| &s.id == space && s.dimension == 3) => {
+                    let turn = look.as_ref().map(|[a, e]| format!(", azimuth: {}, elevation: {}", self.expr(a), self.expr(e))).unwrap_or_default();
+                    format!("view {}: spatial({}, scale: {} -> {} px{turn})", v.name, self.space_name(space), self.expr(&scale.quantity), number(scale.px))
+                }
+                ViewKind::Spatial { space, scale, y_up, .. } => format!(
                     "view {}: spatial({}, scale: {} -> {} px, y: {})",
                     v.name,
                     self.space_name(space),

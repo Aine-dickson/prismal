@@ -119,6 +119,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-097 | Vector and point unknowns | Accepted |
 | D-098 | Enforced inequalities: contact, release and slack ropes | Accepted |
 | D-099 | Shared definitions, modules and the first-party library | Accepted |
+| D-100 | Spaces of three dimensions and views that look at them | Accepted |
 
 ---
 
@@ -1986,3 +1987,29 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** IR `Use`, `Library`, `SHARED`, `ANY_SPACE`, `link`; elaboration keeps shared function identities; syntax `Item::Use`, `Item::Shared`, `modules` (`Modules`, `FirstParty`, `DirModules`, `MapModules`, `NoModules`, `Visible`), `compile_with`, `lower_with`, the formatter prints `use` lines and shared definitions; `prismal-present` links before elaborating; guide splitting starts a program at `use`; the `prismal` command and `fmt`; MK-7.1a, 04-ir section 2, working syntax, the reference and its glossary; guide chapter 19 (Shared definitions and modules); `lib/mechanics.prismal`; `prismal-present/tests/modules.rs` (one object type in a plane and a room, a shared function and enumeration, the canonical text, a module by name, a document without its modules' files, a module that uses a module, the first-party library, diagnostics).
 - **History:**
   - 2026-10-14 accepted under the owner's standing delegation and implemented.
+
+## D-100: Spaces of three dimensions and views that look at them
+
+- **Status:** Accepted; implemented on branch `space3d`.
+- **Original position:** D-014 makes spatial dimension a type parameter; D-022 gives every space standard axes and allows declared frames. The prototype accepted `euclidean(3)` in the model kernel, but nothing computed with three-dimensional vectors beyond componentwise arithmetic, and a spatial view (PK-7.2) drew only a plane, `x` to the right and `y` up or down.
+- **Raised by:** D-096, fourth item of the 0.3 headline.
+- **Builds on:** D-014, D-021, D-022, D-047, D-054, D-093; PK-7.2; MK-10.7a; 04-ir section 7.
+- **Question:** What does a model in a space of three dimensions need beyond the plane's vocabulary, and how is such a space shown on a flat medium by every renderer?
+- **Content it serves:** a charge spiralling in a magnetic field (the cyclotron), torque and angular momentum as vectors, a top or gyroscope, tilted orbits; later rigid bodies and optics in space.
+- **Options considered:**
+  For computing: **componentwise only** (an author writes the cross product by hand from components): no new word, but every torque and every magnetic force repeats six products and is easy to get wrong. **`cross(a, b)`** (taken): a built-in like `dot` (D-093), defined for two vectors of one space of three dimensions, the dimension the product of the two.
+  For the projection: **perspective** (a camera position, a field of view): realistic, but lengths along an axis can no longer be compared and a scene's scale depends on depth, against the plain textbook figure most lessons need. **Orthographic from an azimuth and an elevation** (taken): the projection of textbook and engineering figures; the view's `scale` keeps its meaning (one model length to pixels, everywhere); two angles say where the viewer stands. **A rotation matrix or quaternion**: complete but not readable by an author.
+  For who projects: **each renderer** (the browser and the SVG renderer each project points): two copies of the geometry and of axes and grid. **The engine** (taken): frames carry points already projected to the view's two coordinates, and a view's axes and floor grid come as projected lines (shape `lines`), so every medium draws them alike and a renderer needs no notion of a third axis.
+- **Accepted position:** `cross` and orthographic views, projected by the engine, under the standing delegation of 2026-09-30.
+  - MK-10.7a: `cross(a, b)` of two vectors of one space of three dimensions; MK-E01 otherwise.
+  - PK-7.2a: `spatial(Room, scale: 1 m -> 40 px, azimuth: a, elevation: e)`, by default 30 deg and 20 deg; `z` up on the screen; `y:` in such a view and `azimuth`, `elevation` in a view of a plane are SX-E08. A point `p` is drawn at `(p · r, -(p · u))` times the scale, `r` the view's right and `u` its up. Circles are a sphere's outline facing the viewer. `axes` are three labelled axis lines, `grid` the `x y` plane at `z = 0`. Ellipses, arcs, heatmaps and groups lie in a plane and are PK-E05 in such a view. A pointer position lands in the plane through the origin facing the viewer.
+  - IR: `ViewKind::Spatial.look`, the azimuth and elevation as expressions, absent for a plane or the defaults.
+- **Findings while building it:**
+  1. **Shared definitions lost their identities in a round trip.** Reconciling a reprinted document with its original (D-036) did not match the libraries of D-099, so a shared enumeration came back as `shared.enum.Heading~2`. Chapter 19 was not among the player's examples, and the round-trip test never saw it. Libraries' enumerations, functions and object types are now matched by name within the library of the same name, and their order restored; chapters 19 and 20 are in the player's examples.
+  2. **The content check read an empty program on Windows.** `web/check-content.mjs` extracted the spoon example from `examples/heat.md` with a pattern for `\n` only; a checkout with `\r\n` line ends gave no program. Line ends are normalized before extraction.
+- **Reason:** `cross` is the one operation of three dimensions that componentwise arithmetic does not give readably; an orthographic view keeps the view's scale and the comparisons a figure is drawn for; projecting in the engine keeps renderers two-dimensional and identical.
+- **Version 1 (D-081):** additions. `cross` was an unknown function, `azimuth` and `elevation` unknown options. No valid program changes meaning.
+- **Not yet:** rotating frames (a frame turning with time, its fictitious forces) and components read in a declared frame of three dimensions; perspective views and a camera that moves around a scene (orbit, animated azimuth and elevation in a timeline); depth order and hidden lines (shapes are drawn in written order); ellipses, arcs and groups in such a view; drags constrained to a chosen plane; surfaces and fields on grids of three axes.
+- **Consequences:** `Func::Cross` (checking, evaluation, typesetting as `×`, printing); `ViewKind::Spatial.look`; `prismal-present` frames project points, vectors and circles and emit `lines` for axes and grid; pointer positions map back through the projection; the host marks such views (`three_d`); the web player and `prismal-svg` draw `lines`; the formatter prints `azimuth` and `elevation`; `prismal_syntax::identity` matches libraries; PK-7.2a, MK-10.7a, 04-ir section 7, working syntax, the reference; guide chapter 20 (Three dimensions); `prismal-present/tests/space3d.rs` (a charge in a magnetic field, views from the front, from above and by default, the canonical text, diagnostics); a browser check of the projected axes and floor.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.

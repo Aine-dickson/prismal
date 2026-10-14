@@ -354,8 +354,9 @@ function drawSpatialChrome(v, g, reps, u) {
   const [x, y, w, h] = v.box;
   const step = niceStep((60 * u) / v.px_per_m) * v.px_per_m; // at least ~60 screen px
   const metres = step / v.px_per_m;
-  const hasGrid = reps.some((r) => r.kind === 'grid');
-  const hasAxes = reps.some((r) => r.kind === 'axes');
+  // In a view of three dimensions the axes and grid come drawn as projected lines (D-100).
+  const hasGrid = reps.some((r) => r.shape === 'grid');
+  const hasAxes = reps.some((r) => r.shape === 'axes');
   if (hasGrid) {
     for (let gx = Math.ceil(x / step) * step; gx <= x + w; gx += step) svg('line', { class: 'gridline', x1: gx, y1: y, x2: gx, y2: y + h, 'stroke-width': u }, g);
     for (let gy = Math.ceil(y / step) * step; gy <= y + h; gy += step) svg('line', { class: 'gridline', x1: x, y1: gy, x2: x + w, y2: gy, 'stroke-width': u }, g);
@@ -496,6 +497,20 @@ function drawRep(v, g, r, u, colorIndex) {
   title.textContent = r.text;
   let focusable = null;
   switch (r.shape) {
+    case 'lines': {
+      // Axes and grid of a view of three dimensions, projected by the engine (D-100).
+      const cls = r.kind === 'axes' ? 'axis' : 'gridline';
+      for (const [a, b] of r.lines) {
+        const [A, B] = [m.to(a), m.to(b)];
+        svg('line', { class: cls, x1: A[0], y1: A[1], x2: B[0], y2: B[1], 'stroke-width': u }, grp);
+      }
+      for (const l of r.labels) {
+        const [X, Y] = m.to(l.at);
+        const t = svg('text', { class: 'tick', x: X, y: Y, 'font-size': 10 * u, 'text-anchor': 'middle' }, grp);
+        t.textContent = l.text;
+      }
+      break;
+    }
     case 'point': {
       const [X, Y] = m.to(r.at);
       if (r.highlighted) svg('circle', { class: 'ring', cx: X, cy: Y, r: 13 * u, 'stroke-width': 3 * u }, grp);
@@ -903,7 +918,7 @@ function renderFrame(frame) {
       const top = svg('g', {}, v.svg);
       let arrows = 0;
       for (const r of vf.reps) {
-        if (['point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note', 'raster'].includes(r.shape)) {
+        if (['lines', 'point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note', 'raster'].includes(r.shape)) {
           // Draggable and clickable representations are drawn last and outside the plot's clip.
           drawRep(v, r.drag || r.click ? top : reps, r, u, r.shape === 'arrow' ? arrows++ : 0);
         } else if (!['axes', 'grid', 'title'].includes(r.shape)) {
@@ -948,7 +963,7 @@ function renderDescription(frame) {
   lastDescription = now;
   const list = $('#description');
   const lines = [`${frame.run} run, simulation time ${fmt(frame.t)} s`];
-  for (const [, r] of allReps(frame)) if (r.shape !== 'axes' && r.shape !== 'grid') lines.push(r.text);
+  for (const [, r] of allReps(frame)) if (r.kind !== 'axes' && r.kind !== 'grid') lines.push(r.text);
   list.replaceChildren(...lines.map((t) => el('li', { text: t })));
 }
 

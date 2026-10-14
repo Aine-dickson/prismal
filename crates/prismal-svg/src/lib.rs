@@ -151,7 +151,7 @@ pub fn render(layout: &Json, frame: &Json, opts: &Options) -> String {
     let (w, h) = (body.w + 2.0 * pad, body.h + 2.0 * pad);
     let mut out = String::new();
     let title = format!("{}: {} run, simulation time {} s", s(&layout["presentation"]), s(&frame["run"]), fmt(f(&frame["t"])));
-    let desc: Vec<String> = all_reps(frame).into_iter().filter(|r| r["shape"] != "axes" && r["shape"] != "grid").map(|r| s(&r["text"]).to_string()).collect();
+    let desc: Vec<String> = all_reps(frame).into_iter().filter(|r| r["kind"] != "axes" && r["kind"] != "grid").map(|r| s(&r["text"]).to_string()).collect();
     let _ = writeln!(
         out,
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\" role=\"img\" aria-labelledby=\"title desc\">\
@@ -307,7 +307,7 @@ impl Map {
     }
 }
 
-const DRAWN: [&str; 9] = ["point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note", "raster"];
+const DRAWN: [&str; 10] = ["lines", "point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note", "raster"];
 
 fn view_block(vl: &Json, vf: &Json, clip: usize, opts: &Options) -> Block {
     let th = &opts.theme;
@@ -406,7 +406,8 @@ fn spatial_chrome(out: &mut String, vl: &Json, reps: &[Json], bx: [f64; 4], u: f
     let ppm = f(&vl["px_per_m"]);
     let step = nice_step((60.0 * u) / ppm) * ppm;
     let metres = step / ppm;
-    let has = |k: &str| reps.iter().any(|r| r["kind"] == k);
+    // In a view of three dimensions the axes and grid come drawn as projected lines (D-100).
+    let has = |k: &str| reps.iter().any(|r| r["shape"] == k);
     let line = |out: &mut String, cls: &str, a: [f64; 2], b: [f64; 2]| {
         let color = if cls == "axis" { th.muted } else { th.faint };
         let _ = write!(
@@ -620,6 +621,18 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
     };
     let pts = |k: &str| arr(&r[k]).iter().map(|p| map.to(pt(p))).map(|p| format!("{},{}", n(p[0]), n(p[1]))).collect::<Vec<_>>().join(" ");
     match shape {
+        // Axes and grid of a view of three dimensions, projected by the engine (D-100).
+        "lines" => {
+            let (cls, color) = if r["kind"] == "axes" { ("axis", th.muted) } else { ("gridline", th.faint) };
+            for l in arr(&r["lines"]) {
+                let (a, b) = (map.to(pt(&l[0])), map.to(pt(&l[1])));
+                let _ = write!(out, "<line class=\"{cls}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{color}\" stroke-width=\"{}\"/>", n(a[0]), n(a[1]), n(b[0]), n(b[1]), n(u));
+            }
+            for l in arr(&r["labels"]) {
+                let p = map.to(pt(&l["at"]));
+                *out += &text(p[0], p[1], s(&l["text"]), 10.0 * u, false, th.muted, " text-anchor=\"middle\" class=\"tick\"");
+            }
+        }
         "point" => {
             let p = map.to(pt(&r["at"]));
             ring(out, p);

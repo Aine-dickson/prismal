@@ -593,10 +593,12 @@ impl<'a, 'b> Tc<'a, 'b> {
     }
 
     fn call(&mut self, f: Func, args: &[Expr]) -> Typed {
-        // D-093: `dot(a, b)` of two vectors of one space, or of two quantities.
-        if f == Func::Dot {
+        // D-093: `dot(a, b)` of two vectors of one space, or of two quantities. D-100:
+        // `cross(a, b)` of two vectors of one space of three dimensions.
+        if f == Func::Dot || f == Func::Cross {
+            let word = if f == Func::Dot { "dot" } else { "cross" };
             if args.len() != 2 {
-                return self.err("MK-E01", "dot takes 2 arguments".into());
+                return self.err("MK-E01", format!("{word} takes 2 arguments"));
             }
             let (mut a, mut at) = self.expr(&args[0], None)?;
             let (mut b, mut bt) = self.expr(&args[1], None)?;
@@ -613,6 +615,15 @@ impl<'a, 'b> Tc<'a, 'b> {
                 (b, bt) = self.expr(&args[1], Some(&want))?;
             } else if let Some(want) = as_vector(&at, &bt) {
                 (a, at) = self.expr(&args[0], Some(&want))?;
+            }
+            if f == Func::Cross {
+                return match (&at, &bt) {
+                    (Type::Vector { space: s, dim: x }, Type::Vector { space: t, dim: y }) if s == t && self.space_dim(s) == Some(3) => {
+                        let ty = Type::Vector { space: s.clone(), dim: x.mul(y) };
+                        Some((CExpr::Call(f, vec![a, b]), ty))
+                    }
+                    _ => self.err("MK-E01", format!("cross of {} and {}: two vectors of one space of three dimensions (MK-10.7a)", show(&at), show(&bt))),
+                };
             }
             let dim = match (&at, &bt) {
                 (Type::Quantity { dim: x }, Type::Quantity { dim: y }) => x.mul(y),
@@ -672,7 +683,7 @@ impl<'a, 'b> Tc<'a, 'b> {
                 let rt = if f == Func::Atan2 { Type::real() } else { Type::Quantity { dim } };
                 Some((CExpr::Call(f, vec![a, bc]), rt))
             }
-            Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean | Func::Dot => unreachable!(),
+            Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean | Func::Dot | Func::Cross => unreachable!(),
         }
     }
 

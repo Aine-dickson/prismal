@@ -62,7 +62,7 @@ fn ease_of(word: &str) -> Option<prismal_ir::present::Ease> {
 /// The named options of each view kind (D-081).
 fn view_options(kind: &str) -> &'static [&'static str] {
     match kind {
-        "spatial" => &["scale", "y"],
+        "spatial" => &["scale", "y", "azimuth", "elevation"],
         "plot" => &["x", "y", "follow", "x_unit", "y_unit", "window"],
         _ => &[],
     }
@@ -434,7 +434,26 @@ impl PresCx<'_, '_> {
                         true
                     }
                 };
-                ViewKind::Spatial { space, scale, y_up }
+                // D-100: a view of a space of three dimensions has `z` up and looks from an
+                // azimuth and an elevation.
+                let three = self.cx.space_dimension(&space) == Some(3);
+                let (az, el) = (named("azimuth"), named("elevation"));
+                if three && named("y").is_some() {
+                    self.err("SX-E08", "a view of a space of three dimensions has `z` up; turn it with `azimuth:` and `elevation:` (PK-7.2a)", named("y").unwrap().span);
+                }
+                if !three {
+                    if let Some(e) = az.or(el) {
+                        self.err("SX-E08", "`azimuth` and `elevation` turn a view of a space of three dimensions (PK-7.2a)", e.span);
+                    }
+                }
+                let look = (three && (az.is_some() || el.is_some())).then(|| {
+                    let deg = |cx: &mut Self, e: Option<&ast::Expr>, d: f64| match e {
+                        Some(e) => cx.cx.expr(e, &[]),
+                        None => Expr::Num { num: d, unit: prismal_ir::Unit::parse("deg").ok() },
+                    };
+                    [deg(self, az, 30.0), deg(self, el, 20.0)]
+                });
+                ViewKind::Spatial { space, scale, y_up, look }
             }
             "plot" => {
                 let (x, y) = match (named("x"), named("y")) {

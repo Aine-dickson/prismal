@@ -229,10 +229,13 @@ impl Instance {
                     v["title"] = json!(t);
                 }
                 match ctx {
-                    ViewCtx::Spatial { space, px_per_m, y_up } => {
+                    ViewCtx::Spatial { space, px_per_m, y_up, look } => {
                         let axes = cm.spaces.iter().find(|s| &s.id == space).map(|s| s.axes.clone()).unwrap_or_default();
                         v["px_per_m"] = json!(px_per_m);
                         v["y_up"] = json!(y_up);
+                        // A view of three dimensions (D-100): its axes and grid are drawn as
+                        // projected lines in its frames, not by the renderer.
+                        v["three_d"] = json!(look.is_some());
                         v["axes"] = json!(axes);
                         v["extent"] = json!(extent(frames.iter().flat_map(|f| f.views.iter().filter(|x| &x.id == id)).flat_map(|x| x.reps.iter()).map(|r| &r.shape)));
                     }
@@ -1122,6 +1125,10 @@ fn extent<'a>(shapes: impl Iterator<Item = &'a Shape>) -> [f64; 4] {
                 add(to);
             }
             Shape::Group { members } => members.iter().for_each(|m| walk(&m.shape, add)),
+            Shape::Lines { lines, labels } => {
+                lines.iter().flatten().for_each(&mut *add);
+                labels.iter().for_each(|l| add(&l.at));
+            }
             _ => {}
         }
     }

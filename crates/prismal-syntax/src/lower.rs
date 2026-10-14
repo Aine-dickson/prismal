@@ -53,7 +53,7 @@ pub fn named_dim(name: &str) -> Option<Dim> {
     })
 }
 
-const FUNCS: [(&str, Func, usize); 15] = [
+const FUNCS: [(&str, Func, usize); 16] = [
     ("sin", Func::Sin, 1),
     ("cos", Func::Cos, 1),
     ("tan", Func::Tan, 1),
@@ -65,6 +65,7 @@ const FUNCS: [(&str, Func, usize); 15] = [
     ("max", Func::Max, 2),
     ("atan2", Func::Atan2, 2),
     ("dot", Func::Dot, 2),
+    ("cross", Func::Cross, 2),
     // Of fields (D-091); `min` and `max` of one field are its smallest and largest value.
     ("laplacian", Func::Laplacian, 1),
     ("gradient", Func::Gradient, 1),
@@ -411,6 +412,11 @@ impl<'a> ModelCx<'a> {
             shared: Default::default(),
             library: false,
         }
+    }
+
+    /// The dimension of a space of the document (D-100).
+    pub(crate) fn space_dimension(&self, id: &str) -> Option<u32> {
+        self.spaces.iter().find(|s| s.id == id).map(|s| s.dimension)
     }
 
     pub(crate) fn space_by_name(&self, name: &str) -> Option<Id> {

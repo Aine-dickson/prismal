@@ -31,6 +31,7 @@ A guide to writing Prismal programs in the working syntax (D-028), from a first 
 | [17. Solving equations](17-solving-equations.md) | unknowns found from equations: circuits, equilibria, equations that give rates |
 | [18. Constrained motion](18-constraints.md) | constraints the runtime enforces: a bob on a rod, a bead on a wire, a double pendulum, a point held on a curve, contact with a floor, a slack rope |
 | [19. Shared definitions and modules](19-modules.md) | definitions outside models, for models of any space; `use` and the first-party `mechanics` module |
+| [20. Three dimensions](20-three-dimensions.md) | spaces of three dimensions, `cross`, views turned by azimuth and elevation: a charge spiralling in a magnetic field |
 
 ## Running a program
 

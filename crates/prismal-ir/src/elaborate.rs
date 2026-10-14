@@ -1387,7 +1387,12 @@ fn presentation<'a>(cx: &mut Cx<'a>, root: &'a Model, p: &Presentation) -> Prese
     for v in &mut out.views {
         pc.cx.element = v.id.clone();
         v.kind = match &v.kind {
-            ViewKind::Spatial { space, scale, y_up } => ViewKind::Spatial { space: space.clone(), scale: crate::present::Scale { quantity: pc.e(&s, &scale.quantity), px: scale.px }, y_up: *y_up },
+            ViewKind::Spatial { space, scale, y_up, look } => ViewKind::Spatial {
+                space: space.clone(),
+                scale: crate::present::Scale { quantity: pc.e(&s, &scale.quantity), px: scale.px },
+                y_up: *y_up,
+                look: look.as_ref().map(|[a, b]| [pc.e(&s, a), pc.e(&s, b)]),
+            },
             ViewKind::Plot { x, y, follow, units, window } => ViewKind::Plot { x: [pc.e(&s, &x[0]), pc.e(&s, &x[1])], y: [pc.e(&s, &y[0]), pc.e(&s, &y[1])], follow: *follow, units: units.clone(), window: window.as_ref().map(|w| pc.e(&s, w)) },
             ViewKind::Panel => ViewKind::Panel,
         };

@@ -556,6 +556,17 @@ impl CExpr {
                 b.write_to(&mut y[..n]);
                 finite(x[..n].iter().zip(&y[..n]).map(|(p, q)| p * q).sum(), "dot product")
             }
+            CExpr::Call(F::Cross, args) => {
+                let (a, b) = (args[0].eval(c)?, args[1].eval(c)?);
+                let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
+                a.write_to(&mut x);
+                b.write_to(&mut y);
+                let z = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+                if z.iter().any(|v| !v.is_finite()) {
+                    return Err(Status::invalid("cross product is not finite"));
+                }
+                Ok(Value::Vec(Arr::from_slice(&z)))
+            }
             CExpr::Call(f, args) => {
                 let x = args[0].eval(c)?.num();
                 let y = if args.len() > 1 { args[1].eval(c)?.num() } else { 0.0 };
@@ -580,7 +591,7 @@ impl CExpr {
                     F::Min => x.min(y),
                     F::Max => x.max(y),
                     F::Atan2 => x.atan2(y),
-                    F::Dot => unreachable!(),
+                    F::Dot | F::Cross => unreachable!(),
                     F::Laplacian | F::Gradient | F::Integral | F::Mean => return Err(Status::invalid("a field operation compiled as a call")),
                 };
                 finite(r, "function")
@@ -695,6 +706,10 @@ impl CExpr {
                 let ((a, sa), (_, sb)) = (args[0].eval_sized(c, 3)?, args[1].eval_sized(c, 3)?);
                 let n = a.width().min(3);
                 (self.eval(c)?, [(0..n).map(|k| sa[k] * sb[k]).sum(), 0.0, 0.0])
+            }
+            CExpr::Call(F::Cross, args) => {
+                let ((_, a), (_, b)) = (args[0].eval_sized(c, 3)?, args[1].eval_sized(c, 3)?);
+                (self.eval(c)?, [a[1] * b[2] + a[2] * b[1], a[2] * b[0] + a[0] * b[2], a[0] * b[1] + a[1] * b[0]])
             }
             CExpr::Comp(e, k) => {
                 let (_, s) = e.eval_sized(c, 3)?;
