@@ -118,6 +118,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-096 | Release 0.2.0 and the scope of 0.3 | Accepted |
 | D-097 | Vector and point unknowns | Accepted |
 | D-098 | Enforced inequalities: contact, release and slack ropes | Accepted |
+| D-099 | Shared definitions, modules and the first-party library | Accepted |
 
 ---
 
@@ -1953,5 +1954,35 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Version 1 (D-081):** additions. `with` after a constraint was SX-E02; `policy enforce` on an inequality was MK-E36. No valid program changes meaning.
 - **Not yet:** friction (a cone of forces, a second complementarity at the contact); many simultaneous contacts that switch at one instant in ways that depend on each other (a stack of blocks); impacts other than inelastic, except through an author's event.
 - **Consequences:** IR `Constraint.force`; parser clause `with`, lowering, formatter; `enforce::inequality`, `contact_id`, rates of inequalities, hidden contact bindings and events; kernel `CConstraint.contact`, `CEquation.contact`, the solve's `N == 0` out of contact, `project` skips constraints out of contact, `CModel::separate`, `CModel::holds_as_declared`; runtime separation in transitions and the two checks; MK-12.6, MK-12.11, MK-E36, RC-5.11, 04-ir, working syntax; guide chapter 18 (Contact: a ball on a floor, a particle leaving a dome, a slack rope), the reference; `prismal-present/tests/inequality.rs` (landing time against `sqrt(2 h / g)` and the resting push `m g`, a throw from the floor and its landing at `2 v / g`, the release from a hemisphere at `cos θ = 2/3 cos θ0`, a rope taut after a free fall of 0.8 m with the velocity along it removed, never stretched, never pushing, a wrong-signed force, the canonical text, diagnostics).
+- **History:**
+  - 2026-10-14 accepted under the owner's standing delegation and implemented.
+
+## D-099: Shared definitions, modules and the first-party library
+
+- **Status:** Accepted; implemented on branch `modules`.
+- **Original position:** R-55 (adopted): extensions add vocabulary, never redefine core semantics; user extensions are first-class; first-party libraries use the same mechanism. The exploration record sketched `use physics.mechanics` and namespaces (09.9 sections 25 to 27, 09.6 section 40) but no module was specified. Object types, enumerations and functions could be declared only inside a model (D-048, D-049, D-055), so a description of a body or a formula was copied into every model and every file that needed it.
+- **Raised by:** D-096, third item of the 0.3 headline.
+- **Builds on:** D-036, D-044, D-048, D-049, D-055, D-081; R-55; MK sections 7 and 10; 04-ir.
+- **Question:** How is a definition written once and used by several models, several files and several authors, and what does a document that uses a library carry with it?
+- **Content it serves:** a point mass, a spring or a charge described once and used in a plane and in a room; formulas (kinetic energy, a pendulum's period) used across lessons; domain libraries (mechanics now; optics, circuits, chemistry later) written in the language by the project and by authors.
+- **Options considered:**
+  1. **Textual inclusion** (`include "file"`): the included text is pasted. Simple, but names collide silently, a file cannot select what it takes, and the formatter cannot print the program back as written.
+  2. **Modules of shared definitions, imported by name** (taken): object types, enumerations and functions written outside models are a document's **shared definitions**; `use M` imports a module's, `use M.{A, B}` the ones named. Collisions are errors at the `use`; a model's own definition hides a shared one.
+  3. **Qualified names** (`mechanics.Body` everywhere, aliases): the namespace isolation of 09.9 section 27. Not needed while names are few; `use M.{A}` already resolves a collision. Kept for when libraries grow (Not yet).
+  For space: **definitions per space** (a library for planes, another for rooms) doubles every library and blocks 3D (D-096 item 4). **Definitions for any space** (taken): a shared definition's points and vectors are of the space `@space`, replaced by the using model's space when it is linked, so one `Body` works in a plane and in a room.
+  For what a document holds: **references to module files** would make a compiled lesson depend on the library's files at run time, against the host interface's self-contained IR (D-044) and the provenance of a run (09.9 section 28). **The used definitions inside the document** (taken): the IR carries a library per module used, so it runs anywhere without the files, and the run is a function of the document.
+- **Accepted position:** option 2, under the standing delegation of 2026-09-30.
+  - Syntax: `object`, `enum` and `fn` at the top level of a file; `use name` or `use a.b.{X, Y}` at the top level, `use` contextual (D-040). A module's name is its path: `a/b.prismal` or `a/b.md` is `a.b`.
+  - MK-7.1a: shared definitions, visibility, hiding by a model's own definition, SX-E09 for a name two sources give, SX-E03 for a name a module does not define or a module that does not exist, SX-E08 for modules that use each other in a cycle; shared object types are not relation types.
+  - IR: `Document.uses`, `Document.libraries` (the document's own as `shared`, every module used directly or through another); identities `shared.Body`, `mechanics.fn.kinetic_energy`; space `@space`. `prismal_ir::link` copies into each model the definitions it reads, transitively, before elaboration and checking; the kernel is unchanged.
+  - Compiling: `prismal_syntax::compile_with(src, modules)` with a `Modules` source (`DirModules` for folders, `MapModules` in memory, `NoModules`); `compile` uses the **first-party library**, so every host finds it. The `prismal` command and the formatter look beside the file, then in the first-party library.
+  - First-party library: `lib/mechanics.prismal` (`Body`, `kinetic_energy`, `spring_force`, `pendulum_period`), written in Prismal, built into the compiler.
+- **Findings while building it:**
+  1. **Object bodies saw no shared names.** An object type's body was lowered in a fresh scope that did not receive the imported functions and enumerations; a shared `Body` calling a shared `kinetic` failed. Object bodies now receive the shared definitions, and in a library its own functions and enumerations.
+  2. **Calls renamed per member.** Elaboration renamed every function a member's body calls as if the member's type declared it (`shared.fn.kinetic@ball`). It now renames only the functions of the member's own type.
+- **Reason:** the vocabulary a domain needs is written in the language and imported, not built into the core (R-55); a document stays complete and reproducible; collisions are reported where they arise; nothing of the kernel or runtime changes, so every model behaves as it did.
+- **Version 1 (D-081):** additions. `object`, `enum`, `fn` and `use` at the top level were SX-E02. `use` becomes a contextual word; a model named `use` is unaffected. No valid program changes meaning.
+- **Not yet:** qualified names and aliases (`mechanics.Body`, `use m as n`); spaces and relation types in modules; module versions recorded with a document (09.9 section 28); modules supplied through the host protocol (a host now passes text that uses only the first-party library, or the self-contained IR); more first-party modules, written when content calls for them.
+- **Consequences:** IR `Use`, `Library`, `SHARED`, `ANY_SPACE`, `link`; elaboration keeps shared function identities; syntax `Item::Use`, `Item::Shared`, `modules` (`Modules`, `FirstParty`, `DirModules`, `MapModules`, `NoModules`, `Visible`), `compile_with`, `lower_with`, the formatter prints `use` lines and shared definitions; `prismal-present` links before elaborating; guide splitting starts a program at `use`; the `prismal` command and `fmt`; MK-7.1a, 04-ir section 2, working syntax, the reference and its glossary; guide chapter 19 (Shared definitions and modules); `lib/mechanics.prismal`; `prismal-present/tests/modules.rs` (one object type in a plane and a room, a shared function and enumeration, the canonical text, a module by name, a document without its modules' files, a module that uses a module, the first-party library, diagnostics).
 - **History:**
   - 2026-10-14 accepted under the owner's standing delegation and implemented.

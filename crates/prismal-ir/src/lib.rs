@@ -12,6 +12,7 @@ pub mod units;
 pub use dim::{Dim, Ratio};
 pub mod elaborate;
 pub mod enforce;
+pub mod link;
 
 pub use expr::{Agg, Arm, BinOp, Builtin, Constant, Dist, Expr, Func, Guarded, Lambda};
 pub use units::Unit;
@@ -36,11 +37,48 @@ pub struct Document {
     pub presentations: Vec<present::Presentation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runs: Vec<present::RunCase>,
+    /// The modules the document uses, `use name` or `use name.{A, B}` (D-099).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uses: Vec<Use>,
+    /// Definitions written outside models (D-099): the document's own, as the library named
+    /// `SHARED`, and those of every module it uses, directly or through another module, so
+    /// that the document is complete without its modules' files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<Library>,
 }
+
+/// `use module` or `use module.{A, B}` (D-099): the module's shared definitions, or the named
+/// ones, become visible to the document's models by name.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Use {
+    pub module: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub names: Option<Vec<String>>,
+}
+
+/// Object types, enumerations and functions written outside any model (MK-7.1a, D-099). They
+/// are written once for every space: their points and vectors are of the space `ANY_SPACE`,
+/// which becomes the space of the model that uses them (`link`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Library {
+    /// The module's name, or `SHARED` for the document's own definitions.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enums: Vec<EnumDecl>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub functions: Vec<FunctionDecl>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<Model>,
+}
+
+/// The library of a document's own shared definitions (D-099).
+pub const SHARED: &str = "shared";
+/// The space of shared definitions: the space of the model that uses them (D-099).
+pub const ANY_SPACE: &str = "@space";
 
 impl Document {
     pub fn new(spaces: Vec<Space>, models: Vec<Model>) -> Document {
-        Document { format: FORMAT.into(), version: VERSION.into(), spaces, models, presentations: vec![], runs: vec![] }
+        Document { format: FORMAT.into(), version: VERSION.into(), spaces, models, presentations: vec![], runs: vec![], uses: vec![], libraries: vec![] }
     }
     pub fn model(&self, id: &str) -> Option<&Model> {
         self.models.iter().find(|m| m.id == id)

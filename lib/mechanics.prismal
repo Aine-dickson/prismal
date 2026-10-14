@@ -1,0 +1,32 @@
+/// Mechanics of point masses: a first-party library (D-099), written in Prismal as any
+/// author's library is. `use mechanics` makes its definitions visible; they work in a model
+/// of any space.
+
+/// A point mass moved by the force on it, `der(vel) = force / m`. Connect `force` to the
+/// sum of the forces acting on it.
+object Body {
+  param { m: Mass = 1 kg }
+  input { force: Vector<Force> = 0 }
+  state {
+    pos: Point            = origin
+    vel: Vector<Velocity> = 0
+  }
+  derived {
+    kinetic: Energy             = kinetic_energy(m, |vel|)
+    momentum: Vector<Momentum> = m * vel
+  }
+  flow {
+    der(pos) = vel
+    der(vel) = force / m
+  }
+}
+
+/// The kinetic energy of a mass `m` moving at speed `v`: `m v² / 2`.
+fn kinetic_energy(m: Mass, v: Velocity): Energy = m * v^2 / 2
+
+/// The force of a spring of stiffness `k` stretched by `x` beyond its rest length: `-k x`,
+/// toward its rest length.
+fn spring_force(k: Quantity<M/T^2>, x: Length): Force = -k * x
+
+/// The period of small swings of a pendulum of length `L` where gravity is `g`.
+fn pendulum_period(L: Length, g: Acceleration): Time = 2 * π * sqrt(L / g)

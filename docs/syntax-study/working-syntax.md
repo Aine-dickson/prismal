@@ -20,14 +20,15 @@ Candidate A amended as accepted in D-028: A's keyword-led statements, with group
 | `discrete { x: T = e ... }` | discrete state |
 | `derived { x: T = e; f(x: A): B = e ... }` | derived bindings, including function-valued ones |
 | `unknown { x: T [= guess] ... }` | unknowns (MK-11.6, D-092, D-097): numbers, quantities, vectors or points that the equations reading them determine together; the value is the solver's starting guess, 0 when omitted |
-| `enum Phase { a, b, c }` | enumeration (MK-2.2a, D-049); cases by name (`a`) or qualified (`Phase.a`) |
-| `fn f(x: A): B = e` | declared function (MK-10.3a, D-048): reads only its parameters, constants and other functions |
+| `enum Phase { a, b, c }` | enumeration (MK-2.2a, D-049); cases by name (`a`) or qualified (`Phase.a`); in a model, or outside models, shared (D-099) |
+| `fn f(x: A): B = e` | declared function (MK-10.3a, D-048): reads only its parameters, constants and other functions; in a model, or outside models, shared (D-099) |
 | `flow { der(x) = e; der(y) += e ... }` | defining flows and contributions (MK-14.7) |
 | `process P { flow ...; event ... }` | named process (MK-14.1), optional |
 | `event E on <trigger> [if cond] [{ ops }] [zeno stop \| zeno settle { ops }]` | event (MK-15) |
 | `equation N: lhs == rhs [checked within tol]` | equation (MK-11); without `checked`, an equation that reads an unknown is solved (MK-11.7), and one that reads `der(x)` of a state without a flow gives that state its rate (MK-11.9) |
 | `constraint [N:] cond [within tol] [policy p] [with F]` | constraint (MK-12); `p` is `reject`, `report` (the default), `stop` or `enforce`: an enforced constraint is an equation `a == b`, without `within`, kept true by the runtime (MK-12.6, D-093), or an inequality `a >= b`, `a <= b` held by the unknown `F` it names with `with`, in contact or not (MK-12.11, D-098) |
-| `object Name { ... }` | object type (MK-7.13, D-055), declared in a model, with the body of a model |
+| `object Name { ... }` | object type (MK-7.13, D-055), declared in a model, with the body of a model; or outside models, shared (MK-7.1a, D-099) |
+| `use M`, `use M.{A, B}` | at the top of a file: the shared definitions of module `M` (object types, enumerations and functions written outside models), or those named (MK-7.1a, D-099); `use` is a word only there |
 | `parts { a: T [{ x = e ... }]  c: T[n] [{ x = e ... }] }` | a contained object, or a collection of `n` members; overrides and input connections, with `index` the member's number (MK-8.3a) |
 | `flow { for b in c { der(b.x) = e ... } }` | flows written by the container for each member (MK-8.8) |
 | `parts { c: T[max m]  d: T[n, max m] { ... } }` | a collection whose membership changes (MK-8.2a, D-057): none or `n` members at the start, at most `m` made in a run |

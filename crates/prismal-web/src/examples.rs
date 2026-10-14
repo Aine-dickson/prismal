@@ -135,7 +135,7 @@ pub fn split_guide(md: &str) -> (Vec<GuideProgram>, Vec<GuideError>) {
                 match lang.as_str() {
                     "text" | "cases" => {
                         let first = text.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with("//")).unwrap_or("");
-                        let begins = lang == "text" && (first.starts_with("model ") || first.starts_with("space "));
+                        let begins = lang == "text" && (first.starts_with("model ") || first.starts_with("space ") || first.starts_with("use "));
                         // A space declared on its own belongs with the model that follows it.
                         let current_has_model = programs.last().is_some_and(|p| !p.title.is_empty());
                         if programs.is_empty() || (begins && current_has_model) {

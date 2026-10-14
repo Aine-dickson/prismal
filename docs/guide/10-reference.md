@@ -30,7 +30,8 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `constraint N: c [within tol] [policy reject \| report \| stop]` | a checked condition (`within` for `==` only) | 6 |
 | `constraint N: a == b policy enforce` | a condition the runtime keeps true: the state is moved onto it, and the unknown force that holds it is solved for | 18 |
 | `constraint N: a >= b policy enforce with F` | a constraint on one side, held by the unknown `F` while in contact: contact with a floor, a slack rope | 18 |
-| `object Name { ... }` | an object type, with the body of a model; declared in a model | 9 |
+| `object Name { ... }` | an object type, with the body of a model; declared in a model, or outside models for every model of the file | 9, 19 |
+| `use mechanics`, `use mechanics.{Body}` | at the top of a file: the shared definitions of a module, or the ones named | 19 |
 | `parts { a: T { x = e }  c: T[n] { x = e } }` | one object, or a collection of `n` members; overrides and input connections, with `index` the member's number | 9 |
 | `flow { for b in c { der(b.x) = e } }` | flows the model writes for each member | 9 |
 | `grid g(x: [a, b], cells: n)`, `grid g(x: [a, b], y: [c, d], cells: (n, m))` | a grid: a line, or a rectangle of the model's plane, cut into equal cells | 16 |
@@ -234,6 +235,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `undo`, `redo` | in `button(...)`, a lab's runtime controls, with `reset` | 7, 8 |
 | `reseed` | in `button(...)`, a lab's runtime control: start again with the next seed, keeping the learner's settings | 15 |
 | `unknown` | in a model, a block of unknowns that the equations reading them determine: `unknown { I: Current }` | 17 |
+| `use` | at the top of a file, imports the shared definitions of a module: `use mechanics`, `use mechanics.{Body}` | 19 |
 | `grid` | in a model, a grid of cells for fields: `grid rod(x: [0 m, 1 m], cells: 50)` | 16 |
 | `boundary` | in a model, a field's boundary conditions: `boundary T { left = 100 }` | 16 |
 | `periodic` | `boundary T periodic`: the field's grid wraps around | 16 |
@@ -256,7 +258,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce use`.
 
 ## Diagnostics
 
