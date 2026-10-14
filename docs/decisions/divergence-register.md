@@ -105,6 +105,17 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-083 | The stochastic slice: random events, draws and seeds | Accepted |
 | D-084 | Many runs: another seed in labs, ensembles, histograms, statistics, staircases | Accepted |
 | D-085 | Findings from the reaction example: `restart`, histogram bars on the values' grid | Accepted |
+| D-086 | Rates that vary between events | Accepted |
+| D-087 | Instruments: readings with resolution, range and noise | Accepted |
+| D-088 | `restart` and `reseed` in explore beats | Accepted |
+| D-089 | Histograms of one run: values at events and sampled values | Accepted |
+| D-090 | Noise in flows: stochastic differential equations | Accepted |
+| D-091 | Fields on grids | Accepted |
+| D-092 | Solved equations: unknowns and equations that give rates | Accepted |
+| D-093 | Enforced constraints and constrained mechanics | Accepted |
+| D-094 | Findings from the spoon example: a control for a choice, and what the browser check found | Accepted |
+| D-095 | Leftovers closed: easing, line width, text alignment, narration speed, flows' derived values, goal notes | Accepted |
+| D-096 | Release 0.2.0 and the scope of 0.3 | Accepted |
 
 ---
 
@@ -1871,3 +1882,22 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-10-14 accepted under the owner's standing delegation of 2026-09-30 and implemented.
 
+## D-096: Release 0.2.0 and the scope of 0.3
+
+- **Status:** Accepted
+- **Original position:** D-082 opened 0.2 on the branch `v0.2` with the stochastic slice (D-083) and left its end open. D-001 named the first slice only; the case catalogue (01) stands as the scope horizon (D-017), and the order of later slices is chosen as work proceeds. The handover of 2026-10-14 put to the owner whether to close 0.2 or take another capability first, and listed the candidates: 3D spaces and frames (D-014, D-022), modules and libraries (R-55), inequality constraints (D-093, "Not yet"), vector unknowns (D-092).
+- **Raised by:** the owner, 2026-10-14: "close 0.2 then add those stated capabilities as 0.3 headline".
+- **Builds on:** D-001, D-014, D-017, D-022, D-082, D-092, D-093; R-55.
+- **Accepted position,** chosen by the owner, with the order of the work under the standing delegation of 2026-09-30:
+  1. **0.2 is closed.** `v0.2` is merged into `main` without fast-forward and `main` is tagged `v0.2.0`. Version 0.2 holds the stochastic slice (D-083 to D-090), fields on grids (D-091), solved equations (D-092), enforced constraints and constrained mechanics (D-093), the fifth complete example and `select` (D-094), and the leftovers of D-095. Working syntax is still version 1 (D-081): every 0.1 program compiles with the same meaning.
+  2. **0.3 opens on the branch `v0.3`**, workspace version `0.3.0`, with feature branches merged into it as before. `main` receives only fixes to 0.2 until 0.3 is merged.
+  3. **The headline of 0.3 is five capabilities**, each a decision of its own when built, taken in this order:
+     1. **Vector unknowns.** Unknowns of vector type in solved equations (D-092) and enforced constraints (D-093): a contact force or a rod's pull as one vector, not two components. Smallest step; it extends machinery that exists.
+     2. **Inequality constraints.** Constraints that hold one side only: contact with a floor or wall, a rope that goes slack, a block that stops on friction (complementarity). Builds on D-093 and serves content of the first slice that is now written with events.
+     3. **Modules and libraries** (R-55). Programs split across files, definitions imported by name, first-party libraries written in Prismal through the same mechanism as user libraries. Needed before the larger vocabularies of 3D and later slices are written as libraries rather than built into the core.
+     4. **3D spaces and frames** (D-014, D-022). Spaces of dimension 3, frames with rotations, projections of a 3D scene onto a 2D view with a camera, and drawing in both renderers. Opens rigid bodies, electromagnetism in space and molecular structure in the catalogue.
+     5. **Algorithmic and discrete processes.** Step-by-step processes over collections (sorting, searching, graph traversal), with each step a state a lesson can show (catalogue section 11). The core already has discrete events (D-004); this is the authoring form for algorithms.
+- **Reason for the order:** each step uses what the one before builds. Vector unknowns make inequality constraints shorter to write; modules let 3D geometry and algorithm vocabularies live in libraries (R-55: extensions add vocabulary, never redefine core semantics) instead of the core. 3D is the largest step and comes after the library mechanism that keeps it from growing the core.
+- **Consequences:** merge and tag `v0.2.0`; branch `v0.3`; workspace version `0.3.0`; PROJECT-STATE next steps and conventions name `v0.3`.
+- **History:**
+  - 2026-10-14 closing of 0.2 and the 0.3 headline chosen by the owner; order recorded under the standing delegation.
