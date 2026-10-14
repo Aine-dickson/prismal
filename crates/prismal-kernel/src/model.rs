@@ -123,6 +123,9 @@ pub struct CEquation {
     pub field: Option<crate::eval::CGrid>,
     /// Components of the equation: 1, or the axes of its vectors' space (D-092).
     pub width: usize,
+    /// The solved rate of an enforced inequality (D-098): the contact binding and the holding
+    /// unknown. Out of contact the equation is `force == 0` instead.
+    pub contact: Option<(usize, usize)>,
 }
 
 /// The unknowns of a model and the equations that determine them (MK-11.6, D-092).
@@ -154,6 +157,10 @@ pub struct CConstraint {
     /// An enforced constraint (D-093) and its rates that read no unknown, from the
     /// constraint itself: the state is projected onto each in turn (MK-12.8).
     pub levels: Vec<CLevel>,
+    /// An enforced inequality (D-098): the binding that says whether it is in contact, and
+    /// the side of the boundary it holds (1 for `a >= b`, -1 for `a <= b`); out of contact it
+    /// is not projected onto.
+    pub contact: Option<(usize, f64)>,
 }
 
 /// One rate of an enforced constraint, `lhs == rhs`, and the bindings the projection onto it
@@ -276,6 +283,7 @@ impl CModel {
             vals[i] = v;
         }
         // RC-5.10 (D-093): the starting state satisfies the enforced constraints.
+        self.separate(&mut vals, t0, t0).map_err(|s| Status { kind: s.kind, cause: format!("initializing: {}", s.cause) })?;
         if self.project(&mut vals, t0, t0, &[]).map_err(|s| Status { kind: s.kind, cause: format!("initializing: {}", s.cause) })? {
             self.update_derived(&mut vals, t0, t0)?;
         }
@@ -293,7 +301,13 @@ impl CModel {
         let depth = self.constraints.iter().map(|k| k.levels.len()).max().unwrap_or(0);
         let mut moved = false;
         for p in 0..depth {
-            let rows: Vec<(&CConstraint, &CLevel)> = self.constraints.iter().filter_map(|k| k.levels.get(p).map(|l| (k, l))).collect();
+            // An inequality out of contact holds by itself (D-098).
+            let rows: Vec<(&CConstraint, &CLevel)> = self
+                .constraints
+                .iter()
+                .filter(|k| k.contact.is_none_or(|(c, _)| vals[c].boolean()))
+                .filter_map(|k| k.levels.get(p).map(|l| (k, l)))
+                .collect();
             let mut vars: Vec<usize> = rows.iter().flat_map(|(_, l)| l.vars.iter().chain(&l.params).copied()).filter(|i| set.contains(i)).collect();
             if vars.is_empty() {
                 vars = rows.iter().flat_map(|(_, l)| l.vars.iter().copied()).collect();
@@ -460,6 +474,56 @@ impl CModel {
         Ok(())
     }
 
+    /// RC-5.11 (D-098): whether the holding force of the inequality in contact `on` acts as
+    /// declared: a positive force opens its gap. Measured as the change of the gap's solved
+    /// rate when the force alone changes; `None` when the model has no such equation.
+    pub fn holds_as_declared(&self, vals: &[Value], on: usize, side: f64, t: f64, t0: f64) -> Result<Option<bool>, Status> {
+        let (Some(s), Some(q)) = (&self.solve, self.equations.iter().find(|q| q.contact.is_some_and(|(c, _)| c == on))) else { return Ok(None) };
+        let (_, force) = q.contact.expect("found");
+        let rate = |vals: &mut Vec<Value>| -> Result<f64, Status> {
+            for &i in &s.inner {
+                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                let v = self.bindings[i].def.as_ref().expect("checked").eval(&c)?;
+                vals[i] = v;
+            }
+            let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            Ok(q.lhs.eval(&c)?.num() - q.rhs.eval(&c)?.num())
+        };
+        let mut scratch = vals.to_vec();
+        let r0 = rate(&mut scratch)?;
+        let n = vals[force].num();
+        let h = 1e-6 * (n.abs() + 1.0);
+        scratch[force] = Value::Num(n + h);
+        let r1 = rate(&mut scratch)?;
+        Ok(Some(side * (r1 - r0) > 0.0))
+    }
+
+    /// RC-5.11 (D-098): an inequality in contact whose gap is opening (a ball on a floor
+    /// thrown up, or one that starts on it moving away) leaves contact before the state is
+    /// projected, so its motion away is kept. Called at initialization and in transitions,
+    /// never at the end of a step: contact changes only where discrete state may.
+    pub fn separate(&self, vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
+        for k in &self.constraints {
+            let (Some((on, side)), Some(rate)) = (k.contact, k.levels.get(1)) else { continue };
+            if !vals[on].boolean() {
+                continue;
+            }
+            let mut scratch = vals.to_vec();
+            for &i in &rate.derived {
+                let c = Ctx { vals: &scratch, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                let v = self.bindings[i].def.as_ref().expect("checked").eval(&c)?;
+                scratch[i] = v;
+            }
+            let c = Ctx { vals: &scratch, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            let ((a, sa), (b, sb)) = (rate.lhs.eval_sized(&c, 1)?, rate.rhs.eval_sized(&c, 1)?);
+            let opening = side * (a.num() - b.num());
+            if opening > 1e-9 * (sa[0] + sb[0]) + 1e-12 {
+                vals[on] = Value::Bool(false);
+            }
+        }
+        Ok(())
+    }
+
     /// RC-5.6 (D-092): the unknowns at one instant, from their equations, by Newton's
     /// method started at the guesses every time, with a Jacobian of finite differences and
     /// a backtracking line search. The result depends only on the other values at that
@@ -498,6 +562,11 @@ impl CModel {
             let (mut r, mut size) = (vec![], vec![]);
             for &k in &s.equations {
                 let q = &self.equations[k];
+                if let Some((_, force)) = q.contact.filter(|(on, _)| !vals[*on].boolean()) {
+                    r.push(vals[force].num());
+                    size.push(1.0);
+                    continue;
+                }
                 let ((a, sa), (b, sb)) = (q.lhs.eval_sized(&c, q.width)?, q.rhs.eval_sized(&c, q.width)?);
                 let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
                 a.write_to(&mut x[..q.width]);

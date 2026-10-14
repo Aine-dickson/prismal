@@ -33,8 +33,9 @@ pub fn equation_id(id: &str) -> String {
 /// The constraint `cond` (an equation `a == b`) and its rates; an error says why it cannot be
 /// enforced.
 pub fn rates(m: &Model, cond: &Expr) -> Result<Rates, String> {
-    let Expr::Bin { bin: BinOp::Eq, l, r } = cond else {
-        return Err("an enforced constraint is an equation, `a == b`".into());
+    // An inequality is differentiated as its boundary, `a == b` (D-098).
+    let Expr::Bin { bin: BinOp::Eq | BinOp::Ge | BinOp::Le, l, r } = cond else {
+        return Err("an enforced constraint is an equation `a == b` or an inequality `a >= b`, `a <= b`".into());
     };
     let mut cur = ((**l).clone(), (**r).clone());
     let mut levels = vec![];
@@ -104,7 +105,71 @@ pub fn elaborate(mut m: Model) -> Model {
         }
     }
     m.equations.extend(extra);
+    // D-098: an enforced inequality is in contact or not, a hidden discrete state switched by
+    // hidden events: it comes into contact when its gap closes, and leaves contact when the
+    // force that holds it would pull.
+    let mut bindings = vec![];
+    let mut events = vec![];
+    for k in m.constraints.iter().filter(|k| k.policy == Policy::Enforce) {
+        let (Some((l, r)), Some(force)) = (inequality(&k.cond), &k.force) else { continue };
+        let gap = bin(BinOp::Sub, l.clone(), r.clone());
+        let contact = contact_id(&k.id);
+        let at = |x: &str| Expr::Ref { r#ref: x.to_string() };
+        bindings.push(crate::Binding {
+            id: contact.clone(),
+            name: format!("contact of {}", k.name),
+            role: Role::Discrete,
+            ty: crate::Type::Boolean,
+            // In contact from the start when the gap is closed or closing past the boundary.
+            init: Some(bin(BinOp::Le, gap.clone(), zero())),
+            def: None,
+            intervenable: None,
+            private: true,
+            display: Default::default(),
+            notes: vec![],
+            when: None,
+            combine: None,
+            boundary: None,
+        });
+        let set = |v: bool| crate::Op::Set { target: crate::Target { binding: contact.clone(), component: None, member: None }, value: Expr::Bool { bool: v } };
+        let pulls = bin(BinOp::Lt, at(force), zero());
+        let event = |id: &str, name: &str, trigger: crate::Trigger, enable: Expr, value: bool| crate::Event {
+            id: format!("{}@{id}", k.id),
+            name: format!("{name} {}", k.name),
+            trigger,
+            enable: Some(enable),
+            handler: vec![set(value)],
+            zeno: None,
+            process: None,
+            payload: None,
+            each: None,
+            notes: vec![],
+        };
+        let not = |e: Expr| Expr::Not { not: Box::new(e) };
+        events.push(event("touch", "touch of", crate::Trigger::Falling { guard: gap }, not(at(&contact)), true));
+        events.push(event("release", "release of", crate::Trigger::Falling { guard: at(force) }, at(&contact), false));
+        // A contact that pulls as soon as it is made, or from the start, ends at once.
+        events.push(event("settle", "settling of", crate::Trigger::On { event: format!("{}@touch", k.id) }, pulls.clone(), false));
+        events.push(event("start", "start of", crate::Trigger::Start, bin(BinOp::And, at(&contact), pulls), false));
+    }
+    m.bindings.extend(bindings);
+    m.events.extend(events);
     m
+}
+
+/// An inequality `a >= b` or `a <= b` as the two sides of its gap, `a - b >= 0` or
+/// `b - a >= 0`.
+pub fn inequality(cond: &Expr) -> Option<(Expr, Expr)> {
+    match cond {
+        Expr::Bin { bin: BinOp::Ge, l, r } => Some(((**l).clone(), (**r).clone())),
+        Expr::Bin { bin: BinOp::Le, l, r } => Some(((**r).clone(), (**l).clone())),
+        _ => None,
+    }
+}
+
+/// The identity of the hidden discrete state that says whether inequality `id` is in contact.
+pub fn contact_id(id: &str) -> String {
+    format!("{id}@contact")
 }
 
 /// The identity of the hidden derived binding that holds the rate of state `id`.

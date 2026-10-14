@@ -515,6 +515,10 @@ pub struct Constraint {
     /// Printing hint only (04-ir section 5.4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attached_to: Option<Id>,
+    /// The unknown that holds an enforced inequality constraint, `with N` (MK-12.11, D-098):
+    /// positive while it acts, zero while the constraint is not in contact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<Id>,
 }
 
 /// A model: the root object type (MK-7.2).

@@ -516,15 +516,15 @@ impl<'a> Parser<'a> {
                 None
             };
             let cond = self.expr()?;
-            let (mut within, mut policy, mut seen) = (None, None, vec![]);
-            while let Some(w) = self.clause(&["within", "policy"], &mut seen)? {
-                if w == "within" {
-                    within = Some(self.expr()?);
-                } else {
-                    policy = Some(self.any_name("a policy")?);
+            let (mut within, mut policy, mut force, mut seen) = (None, None, None, vec![]);
+            while let Some(w) = self.clause(&["within", "policy", "with"], &mut seen)? {
+                match w {
+                    "within" => within = Some(self.expr()?),
+                    "policy" => policy = Some(self.any_name("a policy")?),
+                    _ => force = Some(self.name("the unknown that holds the constraint")?),
                 }
             }
-            return Ok(vec![Member::Constraint(ConstraintDecl { name, cond, within, policy, span: self.since(start) })]);
+            return Ok(vec![Member::Constraint(ConstraintDecl { name, cond, within, policy, force, span: self.since(start) })]);
         }
         if self.eat_word("object") {
             let notes = self.notes_before(start.line);

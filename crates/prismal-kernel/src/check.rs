@@ -1265,7 +1265,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             Type::Vector { space, .. } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(1),
             _ => 1,
         };
-        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field, width });
+        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field, width, contact: None });
     }
 
     // Constraints (MK section 12).
@@ -1343,7 +1343,43 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
                 }
             }
         }
-        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy, levels });
+        // D-098: an enforced inequality is held by the unknown it names, `with N`, which its
+        // solved rate reads; out of contact that unknown is zero.
+        let mut contact = None;
+        let inequality = prismal_ir::enforce::inequality(&k.cond).is_some();
+        match (&k.force, inequality && k.policy == Policy::Enforce) {
+            (Some(_), false) => {
+                tc.err("MK-E36", format!("constraint `{}`: `with` names the unknown that holds an enforced inequality, `a >= b policy enforce with N` (MK-12.11)", k.name));
+                continue;
+            }
+            (None, true) => {
+                tc.err("MK-E36", format!("constraint `{}` is an enforced inequality: name the unknown that holds it, `with N`, positive while it pushes or pulls (MK-12.11)", k.name));
+                continue;
+            }
+            (Some(f), true) => {
+                let fi = index.get(f).copied().filter(|&i| model.bindings[i].role == Role::Unknown && matches!(model.bindings[i].ty, Type::Quantity { .. }));
+                let Some(fi) = fi else {
+                    tc.err("MK-E36", format!("constraint `{}`: `with` names a number or quantity declared in an `unknown` block (MK-12.11)", k.name));
+                    continue;
+                };
+                let solved = model.equations.iter().find(|q| q.id == prismal_ir::enforce::equation_id(&k.id));
+                let reads = solved.is_some_and(|q| {
+                    let refs: Vec<Id> = q.lhs.refs().into_iter().chain(q.rhs.refs()).collect();
+                    closure_derived(model, &index, &refs).contains(&fi)
+                });
+                if !reads {
+                    tc.err("MK-E36", format!("constraint `{}` is held by `{}`, but no rate of it reads `{}`: read it in the flows, in the direction it acts (MK-12.11)", k.name, model.bindings[fi].name, model.bindings[fi].name));
+                    continue;
+                }
+                let side = if matches!(k.cond, Expr::Bin { bin: BinOp::Ge, .. }) { 1.0 } else { -1.0 };
+                contact = index.get(&prismal_ir::enforce::contact_id(&k.id)).copied().map(|on| (on, side));
+                if let (Some((on, _)), Some(q)) = (contact, cequations.iter_mut().find(|q| q.id == prismal_ir::enforce::equation_id(&k.id))) {
+                    q.contact = Some((on, fi));
+                }
+            }
+            (None, false) => {}
+        }
+        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy, levels, contact });
     }
 
     // Solved equations (MK-11.6 to MK-11.9, D-092).

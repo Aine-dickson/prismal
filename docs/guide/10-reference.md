@@ -29,6 +29,7 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `equation N: a == b [checked within tol]` | a stated relation, shown and optionally checked; an equation that reads an unknown is solved for it | 6, 17 |
 | `constraint N: c [within tol] [policy reject \| report \| stop]` | a checked condition (`within` for `==` only) | 6 |
 | `constraint N: a == b policy enforce` | a condition the runtime keeps true: the state is moved onto it, and the unknown force that holds it is solved for | 18 |
+| `constraint N: a >= b policy enforce with F` | a constraint on one side, held by the unknown `F` while in contact: contact with a floor, a slack rope | 18 |
 | `object Name { ... }` | an object type, with the body of a model; declared in a model | 9 |
 | `parts { a: T { x = e }  c: T[n] { x = e } }` | one object, or a collection of `n` members; overrides and input connections, with `index` the member's number | 9 |
 | `flow { for b in c { der(b.x) = e } }` | flows the model writes for each member | 9 |
@@ -299,7 +300,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E33 | a boundary on something that is not a field, an unknown or repeated edge, or periodic with held edges |
 | MK-E34 | unknowns and the equations that read them do not match: an unknown no equation reads, more or fewer equations than unknowns, or equations that cannot determine their unknowns separately |
 | MK-E35 | an equation solved for an unknown reads a rate (`der`) or a field |
-| MK-E36 | an enforced constraint that cannot be enforced: no rate of it reads an unknown, it has a form without a rate (`if`, `match`, `min`, `max`), or it reads nothing the runtime can move |
+| MK-E36 | an enforced constraint that cannot be enforced: no rate of it reads an unknown, it has a form without a rate (`if`, `match`, `min`, `max`), or it reads nothing the runtime can move; an enforced inequality without `with F`, or `with` where it does not apply |
 
 **Presentation** (`PK`): E01 broken reference, E02 expression does not check (the kernel's message is quoted), E03 control or action targets something the learner may not change, E04 missing or wrong scale or axis dimension, E05 representation unsuited to its sources or view, E06 representation kind not implemented.
 
