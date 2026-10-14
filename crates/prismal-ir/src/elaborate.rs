@@ -1606,9 +1606,9 @@ fn rates(m: &mut Model) {
         for side in [&q.lhs, &q.rhs] {
             side.walk(&mut |x| {
                 if let Expr::Der { der } = x {
-                    // Unknowns are numbers or quantities: rates of vectors and points are
-                    // left to the check (MK-E35).
-                    let stateful = m.binding(der).is_some_and(|b| b.role == Role::Continuous && matches!(b.ty, Type::Quantity { .. }));
+                    // The rate of a number, quantity, vector or point (D-097); rates of
+                    // fields are left to the check (MK-E35).
+                    let stateful = m.binding(der).is_some_and(|b| b.role == Role::Continuous && matches!(b.ty, Type::Quantity { .. } | Type::Vector { .. } | Type::Point { .. }));
                     if stateful && !flowing.contains(der) && !found.contains(der) {
                         found.push(der.clone());
                     }
@@ -1618,9 +1618,7 @@ fn rates(m: &mut Model) {
     }
     for x in found {
         let b = m.binding(&x).expect("found").clone();
-        let per_t = crate::Dim::time().inv();
-        let Type::Quantity { dim } = &b.ty else { continue };
-        let ty = Type::Quantity { dim: dim.mul(&per_t) };
+        let Some(ty) = crate::enforce::rate_type(&b.ty) else { continue };
         let rate = format!("{x}@rate");
         m.bindings.push(Binding {
             id: rate.clone(),

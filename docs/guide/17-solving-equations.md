@@ -185,10 +185,61 @@ run conducts of DiodeCircuit with DiodeLab {
 - Whatever the battery, the diode takes about 0.6 V and the resistor the rest: the learner sees `Vd` hardly move while `I` follows `V0`.
 - Equations of the first degree are solved exactly whatever the guess. Others are solved by improving the guess step by step (Newton's method), and an equation with several solutions gives the one the guess leads to: a guess is part of the problem's statement, as it is on paper.
 
+## Vectors and points as unknowns
+
+**Goal.** A weight hung between two springs: where does it settle? And a throw written as Newton's second law in vector form, `m a = F`, instead of a formula for each component.
+**How it is built.** The resting place `P` is an unknown of type `Point`: the equation `balance` is a vector equation, two components in a plane, so it determines both coordinates of `P`. In `Thrown`, `vel` has no flow, so `m * der(vel) == (0 N, -m * g)` gives its rate, a vector.
+
+```text
+space Plane = euclidean(2)
+
+model Hanger in Plane {
+  param {
+    g: Acceleration    = 9.81 m/s^2
+    m: Mass            = 1 kg      in [0.1 kg, 3 kg]
+    k: Quantity<M/T^2> = 10 N/m
+    A: Point           = origin + (-1 m, 0 m)
+    B: Point           = origin + (1 m, 0 m)
+  }
+  unknown { P: Point }
+  equation balance: k * (A - P) + k * (B - P) + (0 N, -m * g) == (0 N, 0 N)
+}
+
+model Thrown in Plane {
+  param {
+    g: Acceleration = 9.81 m/s^2
+    m: Mass         = 0.5 kg
+  }
+  state {
+    pos: Point            = origin
+    vel: Vector<Velocity> = (3 m/s, 4 m/s)
+  }
+  flow der(pos) = vel
+  equation newton: m * der(vel) == (0 N, -m * g)
+}
+
+presentation HangerLab for Hanger {
+  panel controls { slider(m, range: [0.1 kg, 3 kg]) }
+  panel results { label(P) }
+  observe { sag = P.y at t0 }
+}
+```
+
+```cases
+run hangs of Hanger with HangerLab {
+  expect { sag == -0.4905 m within 1e-9 m }
+}
+```
+
+- An unknown may be a number, a quantity, a vector or a point. A vector or point unknown counts once per axis of its space: here `P` is two unknowns and `balance` two equations.
+- Each spring pulls toward its anchor in proportion to its stretch, so the weight hangs midway, `m g / 2k` below the anchors. With springs that have a rest length the balance is no longer of the first degree, and a guess (`unknown { P: Point = origin + (0 m, -1 m) }`) says which of its solutions is meant.
+- Two scalar equations can also determine a vector: `dot(F, (1, 0)) == 1 N` and `dot(F, (0, 1)) == 2 N`. A tuple beside a vector in `dot` is a vector of the same space.
+- `m * der(vel) == F` is the form physics texts write; it gives the same motion as `flow der(vel) = F / m`.
+
 ## How equations are solved
 
 - Each instant the runtime needs a value, it solves all the unknowns together, by Newton's method from the guesses (0 where none is given), with the equations' derivatives estimated by small changes of each unknown. It starts from the guesses every time, so a run is the same however often it is computed.
-- The equations solved are those that read an unknown, directly or through derived values, and are not checks. There must be as many of them as unknowns (a vector equation counts once per axis), and each unknown must be determined by an equation of its own (MK-E34): `x + y == 1` and `2 x + 2 y == 2` are two equations but say one thing, and the run cannot start ("dependent").
+- The equations solved are those that read an unknown, directly or through derived values, and are not checks. There must be as many of them as unknowns (a vector equation, like a vector or point unknown, counts once per axis), and each unknown must be determined by an equation of its own (MK-E34): `x + y == 1` and `2 x + 2 y == 2` are two equations but say one thing, and the run cannot start ("dependent").
 - If no solution is found from the guesses, the value is not available and the run stops with a message naming the unknowns; better guesses usually help.
 
 ## Exercises

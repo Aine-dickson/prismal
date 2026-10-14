@@ -114,7 +114,7 @@ pub fn flow_id(id: &str) -> String {
 
 /// The type of the rate of a value of type `t`: a quantity or vector per time, a point's
 /// velocity; `None` for other types.
-fn rate_type(t: &crate::Type) -> Option<crate::Type> {
+pub(crate) fn rate_type(t: &crate::Type) -> Option<crate::Type> {
     let per_t = crate::Dim::time().inv();
     Some(match t {
         crate::Type::Quantity { dim } => crate::Type::Quantity { dim: dim.mul(&per_t) },

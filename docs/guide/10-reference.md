@@ -20,7 +20,7 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `state { x: T = e [intervenable] }` | continuous state, with its initial value | 4 |
 | `discrete { x: T = e }` | discrete state: changed only by events | 5 |
 | `derived { x: T = e; f(x: A): B = e }` | derived values and functions, always current | 1 |
-| `unknown { x: T [= guess] }` | unknowns: found at every instant from the equations that read them (the value is the solver's starting guess) | 17 |
+| `unknown { x: T [= guess] }` | unknowns (numbers, quantities, vectors or points): found at every instant from the equations that read them (the value is the solver's starting guess) | 17 |
 | `fn f(x: A, y: B): R = e` | a declared function: reads only its parameters, constants and other functions | 2 |
 | `enum Phase { a, b, c }` | an enumeration: a type whose values are its cases | 5 |
 | `flow { der(x) = e; der(y) += e }` | rate of change: one definition, or summed contributions | 4 |

@@ -598,8 +598,22 @@ impl<'a, 'b> Tc<'a, 'b> {
             if args.len() != 2 {
                 return self.err("MK-E01", "dot takes 2 arguments".into());
             }
-            let (a, at) = self.expr(&args[0], None)?;
-            let (b, bt) = self.expr(&args[1], None)?;
+            let (mut a, mut at) = self.expr(&args[0], None)?;
+            let (mut b, mut bt) = self.expr(&args[1], None)?;
+            // A tuple beside a vector is a vector of its space (D-032, D-097):
+            // `dot(N, (cos(α), -sin(α)))`.
+            let as_vector = |t: &Type, other: &Type| match (t, other) {
+                (Type::Tuple { items }, Type::Vector { space, .. }) => match items.first() {
+                    Some(Type::Quantity { dim }) if items.iter().all(|i| i == &items[0]) => Some(Type::Vector { space: space.clone(), dim: *dim }),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(want) = as_vector(&bt, &at) {
+                (b, bt) = self.expr(&args[1], Some(&want))?;
+            } else if let Some(want) = as_vector(&at, &bt) {
+                (a, at) = self.expr(&args[0], Some(&want))?;
+            }
             let dim = match (&at, &bt) {
                 (Type::Quantity { dim: x }, Type::Quantity { dim: y }) => x.mul(y),
                 (Type::Vector { space: s, dim: x }, Type::Vector { space: t, dim: y }) if s == t => x.mul(y),
@@ -986,10 +1000,10 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             },
             _ => None,
         };
-        // D-092: an unknown is a number or quantity; its value, if given, is the solver's
-        // starting guess.
-        if b.role == Role::Unknown && !matches!(b.ty, Type::Quantity { .. }) {
-            tc.err("MK-E01", format!("the unknown `{}` is a number or a quantity (MK-11.6)", b.name));
+        // D-092, D-097: an unknown is a number, a quantity, a vector or a point; its value, if
+        // given, is the solver's starting guess.
+        if b.role == Role::Unknown && !matches!(b.ty, Type::Quantity { .. } | Type::Vector { .. } | Type::Point { .. }) {
+            tc.err("MK-E01", format!("the unknown `{}` is a number, a quantity, a vector or a point (MK-11.6)", b.name));
         }
         let init = match (&b.init, b.role, &field) {
             (Some(e), Role::Unknown, _) => tc.expect(e, &b.ty),
@@ -1336,6 +1350,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     let plan = plan_solve(model, &index, &cequations, spaces, &mut diags);
     let solve = plan.as_ref().map(|p| CSolve {
         unknowns: p.unknowns.clone(),
+        widths: p.widths.clone(),
         guess: p.unknowns.iter().map(|&i| cbindings[i].init.clone()).collect(),
         inner: p.inner.clone(),
         equations: p.equations.clone(),
@@ -1378,6 +1393,8 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
 /// Which bindings and equations a solve involves (D-092).
 struct SolvePlan {
     unknowns: Vec<usize>,
+    /// The number of components of each unknown: 1, or the dimension of its space.
+    widths: Vec<usize>,
     /// Derived bindings the solving equations read that depend on unknowns, in order: they
     /// are computed inside the solve.
     inner: Vec<usize>,
@@ -1389,34 +1406,20 @@ struct SolvePlan {
 /// directly or through derived values, determine the unknowns. There are as many of their
 /// components as unknowns, and each unknown can be matched to an equation that reads it.
 fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CEquation], spaces: &[Space], diags: &mut Vec<Diagnostic>) -> Option<SolvePlan> {
-    // MK-11.9: elaboration has given every state of numbers or quantities whose rate an
-    // equation reads a hidden unknown and its flow. A rate still without a flow is of a vector
-    // or a point, whose unknowns are a later extension.
-    for q in model.equations.iter().filter(|q| q.role != EquationRole::Check) {
-        let mut rates = BTreeSet::new();
-        for side in [&q.lhs, &q.rhs] {
-            side.walk(&mut |x| {
-                if let Expr::Der { der } = x {
-                    rates.insert(der.clone());
-                }
-            });
-        }
-        for x in rates {
-            let Some(b) = index.get(&x).map(|&i| &model.bindings[i]) else { continue };
-            if b.role == Role::Continuous && !matches!(b.ty, Type::Field { .. }) && !model.flows.iter().any(|f| f.target == x) {
-                diags.push(Diagnostic {
-                    code: "MK-E35",
-                    message: format!("equation `{}` gives the rate of `{}`, a vector or point: rates of vectors given by equations are a later extension; write its flow, `flow der({}) = ...` (MK-11.9)", q.name, b.name, b.name),
-                    element: q.id.clone(),
-                });
-            }
-        }
-    }
+    // MK-11.9: elaboration has given every state whose rate a solved equation reads a hidden
+    // unknown and its flow (D-092, D-097).
     let unknowns: Vec<usize> = model.bindings.iter().enumerate().filter(|(_, b)| b.role == Role::Unknown).map(|(i, _)| i).collect();
     if unknowns.is_empty() {
         return None;
     }
     let is_u = |i: &usize| model.bindings[*i].role == Role::Unknown;
+    // D-097: a vector or point unknown has one component per axis of its space.
+    let width_of = |i: usize| match &model.bindings[i].ty {
+        Type::Vector { space, .. } | Type::Point { space } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(2),
+        _ => 1,
+    };
+    let widths: Vec<usize> = unknowns.iter().map(|&i| width_of(i)).collect();
+    let total: usize = widths.iter().sum();
     let mut err = |code: &'static str, m: String| diags.push(Diagnostic { code, message: m, element: model.id.clone() });
     // Derived bindings that depend on an unknown.
     let reads_u = |i: usize| closure_derived(model, index, &model.bindings[i].def.as_ref().map(|d| d.refs()).unwrap_or_default()).iter().any(is_u);
@@ -1449,7 +1452,6 @@ fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CE
     }
     // An equation of vectors has one component per axis of its space.
     let comps = |k: usize| -> usize { eqs.get(k).map(|c| c.width).unwrap_or(1) };
-    let _ = spaces;
     let rows: Vec<(usize, &BTreeSet<usize>)> = sets.iter().flat_map(|(k, us)| std::iter::repeat_n((*k, us), comps(*k))).collect();
     let names = |is: &[usize]| is.iter().map(|&i| format!("`{}`", model.bindings[i].name)).collect::<Vec<_>>().join(", ");
     let eq_names = |ks: &[usize]| ks.iter().map(|&k| format!("`{}`", model.equations[k].name)).collect::<Vec<_>>().join(", ");
@@ -1458,15 +1460,26 @@ fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CE
         err("MK-E34", format!("no equation determines {}: write an equation that reads it (MK-11.7)", names(&unused)));
         return None;
     }
-    if rows.len() != unknowns.len() {
-        let which = if rows.len() < unknowns.len() { "fewer" } else { "more" };
-        err("MK-E34", format!("{} unknowns ({}) and {} equation components ({}): {which} equations than unknowns (MK-11.7)", unknowns.len(), names(&unknowns), rows.len(), eq_names(&equations)));
+    if rows.len() != total {
+        let which = if rows.len() < total { "fewer" } else { "more" };
+        let count = if total == unknowns.len() { format!("{total} unknowns ({})", names(&unknowns)) } else { format!("{total} unknown components ({})", names(&unknowns)) };
+        err("MK-E34", format!("{count} and {} equation components ({}): {which} equations than unknowns (MK-11.7)", rows.len(), eq_names(&equations)));
         return None;
     }
-    // A matching of equation components to unknowns (augmenting paths).
+    // A matching of equation components to unknown components (augmenting paths). A
+    // component of an equation may determine any component of an unknown it reads.
+    let mut cols: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut col_of: Vec<usize> = vec![];
+    for (&u, &w) in unknowns.iter().zip(&widths) {
+        for _ in 0..w {
+            cols.entry(u).or_default().push(col_of.len());
+            col_of.push(u);
+        }
+    }
+    let row_cols: Vec<Vec<usize>> = rows.iter().map(|(_, us)| us.iter().flat_map(|u| cols[u].iter().copied()).collect()).collect();
     let mut owner: HashMap<usize, usize> = HashMap::new();
-    fn augment(r: usize, rows: &[(usize, &BTreeSet<usize>)], owner: &mut HashMap<usize, usize>, seen: &mut BTreeSet<usize>) -> bool {
-        for &u in rows[r].1 {
+    fn augment(r: usize, rows: &[Vec<usize>], owner: &mut HashMap<usize, usize>, seen: &mut BTreeSet<usize>) -> bool {
+        for &u in &rows[r] {
             if !seen.insert(u) {
                 continue;
             }
@@ -1481,16 +1494,17 @@ fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CE
         }
         false
     }
-    for r in 0..rows.len() {
-        if !augment(r, &rows, &mut owner, &mut BTreeSet::new()) {
-            let lone: Vec<usize> = unknowns.iter().copied().filter(|u| !owner.contains_key(u)).collect();
+    for r in 0..row_cols.len() {
+        if !augment(r, &row_cols, &mut owner, &mut BTreeSet::new()) {
+            let mut lone: Vec<usize> = (0..col_of.len()).filter(|c| !owner.contains_key(c)).map(|c| col_of[c]).collect();
+            lone.dedup();
             err("MK-E34", format!("the equations {} do not determine {} separately: some of them read the same unknowns only (MK-11.7)", eq_names(&equations), names(&lone)));
             return None;
         }
     }
     // The derived values inside the solve, in dependency order.
     let inner: Vec<usize> = order_derived(model, index, None, &mut vec![]).into_iter().filter(|i| inner.contains(i)).collect();
-    Some(SolvePlan { unknowns, inner, equations })
+    Some(SolvePlan { unknowns, widths, inner, equations })
 }
 
 

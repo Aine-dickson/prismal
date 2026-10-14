@@ -116,6 +116,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-094 | Findings from the spoon example: a control for a choice, and what the browser check found | Accepted |
 | D-095 | Leftovers closed: easing, line width, text alignment, narration speed, flows' derived values, goal notes | Accepted |
 | D-096 | Release 0.2.0 and the scope of 0.3 | Accepted |
+| D-097 | Vector and point unknowns | Accepted |
 
 ---
 
@@ -1901,3 +1902,27 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** merge and tag `v0.2.0`; branch `v0.3`; workspace version `0.3.0`; PROJECT-STATE next steps and conventions name `v0.3`.
 - **History:**
   - 2026-10-14 closing of 0.2 and the 0.3 headline chosen by the owner; order recorded under the standing delegation.
+
+## D-097: Vector and point unknowns
+
+- **Status:** Accepted; implemented on branch `vector-unknowns`.
+- **Original position:** D-092: an unknown is a number or a quantity (MK-11.6); vector unknowns "not yet". MK-11.9 gave rates from equations to states of numbers and quantities only; an equation that read `der(v)` of a vector state without a flow was MK-E35 ("write its flow"). D-093 wrote a holding force as an unknown size times a direction stated in the flow.
+- **Raised by:** D-096, first item of the 0.3 headline.
+- **Builds on:** D-014, D-032, D-092, D-093; MK-11.6 to MK-11.9, MK-10.7a; RC-5.6.
+- **Question:** How does a model state an unknown that is a vector or a place (a contact force whose direction is not known in advance, the point where a body comes to rest), and Newton's second law as the vector equation `m a = F`?
+- **Content it serves:** equilibria of points (a weight between springs, a node of a truss, a charge between other charges), holding and contact forces as vectors, `m * der(vel) == F` as physics texts write it, and later inequality constraints, whose contact forces are vectors (D-096 item 2).
+- **Options considered:**
+  1. **Components as separate unknowns** (`Fx: Force; Fy: Force`, then `(Fx, Fy)` in the equations): what authors had to write until now. It works in 2D only by repeating every formula per axis, and the vector is not one value that a label, a plot or a later 3D model can take.
+  2. **Vector and point unknowns in the existing `unknown` block** (taken): the declaration takes the types every other block takes; a vector or point counts once per axis of its space, as a vector equation already did (MK-11.7).
+- **Accepted position:** option 2, under the standing delegation of 2026-09-30.
+  - MK-11.6: an unknown is of type `Real`, `Quantity<D>`, `Vector<D>` or `Point`, a vector or point having one component per axis of its space. The guess is of the unknown's type; without one it is the zero vector or the origin.
+  - MK-11.7: the count and the matching are by component: as many equation components as unknown components; each unknown component is matched to an equation component that reads its unknown. MK-E34 names the count of unknown components when a vector or point is among them.
+  - MK-11.9: `der(x)` of a vector or point state without a flow, read by a solved equation, is a hidden unknown of the rate's type (a vector of dimension `D / T`; for a point a velocity), so `m * der(vel) == (0 N, -m * g)` gives a body its acceleration. The MK-E35 case for rates of vectors is removed.
+  - RC-5.6 is unchanged: Newton's method works on all unknown components laid out one after another, with the same scales, tolerances and line search.
+  - `dot(a, b)` with a vector and a tuple of quantities of one dimension reads the tuple as a vector of the vector's space (D-032): `dot(N, (cos(α), -sin(α))) == 0 N`, the statement that a wire is smooth.
+- **Reason:** the vector is the quantity the content names (a force, a place), so it is one value of the model, shown and read as a whole; the counting rule is the one vector equations already followed, so nothing new is learned beyond "a vector is as many unknowns as its space has axes".
+- **No new syntax.** `unknown` blocks already declared names with types; only the types allowed change.
+- **Version 1 (D-081):** additions. A vector or point unknown was MK-E01; a rate of a vector given by an equation was MK-E35; `dot` of a vector and a tuple was MK-E01. No valid program changes meaning.
+- **Consequences:** kernel `CSolve.widths`, `SolvePlan.widths`, matching of components (`plan_solve`), `solve_unknowns` reads and writes vectors and points; `elaborate::rates` uses `enforce::rate_type` for every state type; the obsolete MK-E35 loop in `plan_solve` removed; `dot` typing; MK-10.7a, MK-11.6, MK-11.7, MK-11.9, MK-E35 in 01-model-kernel; working syntax; guide chapter 17 (Vectors and points as unknowns: a weight between two springs, a throw as `m a = F`), chapter 18 (the bead's push as a vector), the reference; `prismal-present/tests/vector_unknowns.rs` (a point at an equilibrium against `m g / 2k`, a nonlinear balance with rest lengths, a holding force, a throw against its closed form, a bead's vector push against `m g cos α` at right angles to the wire, the canonical text, component counts and the type diagnostic).
+- **History:**
+  - 2026-10-14 accepted under the owner's standing delegation and implemented.
