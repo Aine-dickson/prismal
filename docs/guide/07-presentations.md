@@ -60,6 +60,7 @@ A marker, an arrow or a graph is labelled with its name (`as ball`) or its sourc
 | `slider(p, range: [a, b] [, step: s] [, ends: ("low", "high")])` | a control for a parameter; `ends` puts a word at each end | any |
 | `number_input(p [, range: [a, b]])` | a typed value for a parameter | any |
 | `toggle(p)` | a switch for a Boolean parameter | any |
+| `select(p)` | a choice of one case of an enumeration parameter (`material: Material = copper`), listed by name | any |
 | `group(at: P, rotate: θ, scale: k) { ... }` | its members, placed, turned and scaled together (see Groups) | spatial |
 
 `as name` after a representation names it (`marker(pos) as ball`), for timelines and for readers.

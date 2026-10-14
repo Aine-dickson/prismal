@@ -1978,7 +1978,7 @@ fn belongs(word: &str) -> Option<&'static str> {
         "set" | "create" | "destroy" | "connect" | "disconnect" => {
             "An operation like this happens at an instant: it belongs in an event's braces, `event name on falling(...) { set x = 1 }`"
         }
-        "slider" | "number_input" | "toggle" | "button" | "label" => {
+        "slider" | "number_input" | "toggle" | "select" | "button" | "label" => {
             "A control belongs in a presentation, inside `panel name { ... }` (or inside a view's braces)"
         }
         "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" | "heatmap" | "axes" | "grid"

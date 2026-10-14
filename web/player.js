@@ -736,6 +736,7 @@ function renderItem(host, r) {
 
 function controlDisplay(r, value) {
   if (r.control === 'toggle') return value ? 'true' : 'false';
+  if (r.options) return r.options[value] ?? '';
   if (r.display_unit) return `${fmt(value / r.display_unit.scale)} ${r.display_unit.text}`;
   return r.unit ? `${fmt(value)} ${r.unit}` : fmt(value);
 }
@@ -755,6 +756,10 @@ function renderControl(it, r) {
       input.addEventListener('keydown', (e) => onControlKey(e, r, it));
     } else if (r.control === 'toggle') {
       input = el('input', { type: 'checkbox' });
+    } else if (r.control === 'select') {
+      // The cases of an enumeration (D-094); the value is the chosen case's number.
+      input = el('select');
+      r.options.forEach((o, k) => input.append(el('option', { value: String(k), text: o })));
     } else {
       input = el('input', { type: 'number', step: r.step ?? 'any' });
       if (r.min != null) input.min = r.min;

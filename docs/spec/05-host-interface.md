@@ -98,7 +98,7 @@
 | `open` | `document`, `presentation`, `medium`? | `instance`, `layout` |
 | `layout`, `frame` | `instance`, `time`?, `dt`? | the layout, the frame |
 | `seek`, `reset`, `restart` | `instance`, `time`? | the clock or the layout |
-| `set_control`, `press`, `click`, `key`, `pointer_down`, `pointer_move`, `pointer_up`, `cancel`, `undo`, `redo`, `continue` | `instance`, `rep`, value, `time` in a lesson | the outcome |
+| `set_control`, `press`, `click`, `key`, `pointer_down`, `pointer_move`, `pointer_up`, `cancel`, `undo`, `redo`, `continue` | `instance`, `rep`, value (a number in coherent SI units; 0 or 1 for a toggle; for a `select`, the number of the case from 0, as its frame's `options` list them, D-094), `time` in a lesson | the outcome |
 | `set_input` | `instance`, `input`, `value` | the outcome |
 | `request` | `instance`, `event`, `payload`? | the outcome |
 | `pointer` | `instance`, `phase`, `view`, `x`, `y`, `width`?, `height`?, `pointer`?, `time` in a lesson | `handled`, `action`, `target` or `hover`, the outcome |

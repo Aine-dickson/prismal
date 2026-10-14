@@ -149,7 +149,7 @@ The presentation kernel has these concepts:
 | `equation` | a typeset model equation, with symbols linked to bindings | equation (MK section 11) |
 | `formula` | a typeset expression, a definition, or a labeled expression (`R = ...`), with symbols linked to bindings | expression, derived binding, derived function value (D-034) |
 | `table` | rows of values | data |
-| `slider`, `number_input`, `toggle`, `button` | a control | intervenable binding; for `button`, a requestable event (D-027) or a runtime control |
+| `slider`, `number_input`, `toggle`, `select`, `button` | a control | intervenable binding (a `select`'s is of an enumeration, its choices the cases; D-094); for `button`, a requestable event (D-027) or a runtime control |
 | `group` | a set of representations with a shared transform | representations |
 
 - **PK-6.3a** A `trace` or `series_plot` takes a **sampled source**, `expr every Δ` with `Δ` a positive duration: the source is evaluated at `t0`, `t0 + Δ`, `t0 + 2Δ`, ... up to the instant shown, and at that instant, so the drawing ends where the other representations are (PK-7.5). A `trace` samples a point of the view's space and draws its path. A `series_plot` samples a number or quantity and draws it against elapsed time in a plot view whose `x` axis is a time range; read through an instrument (PK-3.7), it draws each reading as a separate point, not joined to the others (D-087). A `table` of readings writes `out of range` where an instrument has no reading. A source that is not sampled, an interval that is not a duration, or a series whose dimension differs from the plot's `y` axis is a static error (PK-E04, PK-E05).

@@ -149,6 +149,22 @@ for (const [key, pres] of [['g18-doublependulum', 'DoubleLab@6'], ['g18-bead', '
   await shot(key);
 }
 
+// The spoon example (D-094): a select chooses the material; the choice survives a restart.
+const md = readFileSync(join(web, '..', 'examples', 'heat.md'), 'utf8');
+const spoon = [...md.matchAll(/```text\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
+await open('rp01');
+await ev(`document.querySelector('#source').value = ${JSON.stringify(spoon)}; document.querySelector('#compile').click(); true`);
+for (let i = 0; i < 50 && !(await ev(`!!document.querySelector('#views select')`)); i++) await sleep(200);
+const choices = await ev(`[...document.querySelectorAll('#views select option')].map((o) => o.textContent)`);
+check('a select lists the cases', JSON.stringify(choices) === '["copper","steel","glass"]', JSON.stringify(choices));
+await ev(`(() => { const s = document.querySelector('#views select'); s.value = '1'; s.dispatchEvent(new Event('change')); return true; })()`);
+await sleep(300);
+await ev(`[...document.querySelectorAll('#views button')].find((b) => b.textContent === 'Into the water again').click(); true`);
+await sleep(300);
+const chosen = await ev(`document.querySelector('#views select').getAttribute('aria-label')`);
+check('the choice is kept by a restart', chosen.startsWith('select for material = steel'), chosen);
+await shot('heat');
+
 ws.close();
 edge.kill();
 server.close();

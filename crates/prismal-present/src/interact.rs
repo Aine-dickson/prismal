@@ -369,6 +369,13 @@ impl Interactive {
         let Some((ctx, r, groups)) = self.rep_in(rep) else { return self.report(Why::Refused, format!("nothing named `{rep}`")) };
         let sign = if matches!(key, Key::Right | Key::Up) { 1.0 } else { -1.0 };
         match &r.kind {
+            // A select moves to the next or the previous case, and stays at the ends.
+            CKind::Control { options: Some(cases), idx, .. } => {
+                let Value::Case(now) = self.current_value(*idx) else { return self.report(Why::Refused, "not a choice".into()) };
+                let k = now as i64 + sign as i64;
+                let k = k.clamp(0, cases.len() as i64 - 1) as usize;
+                self.set_control(rep, Expr::Case { case: cases[k].clone() })
+            }
             CKind::Control { idx, min, max, step, .. } => {
                 let step = step.or(min.zip(*max).map(|(a, b)| (b - a) / 100.0)).unwrap_or(1.0);
                 let Value::Num(v) = self.current_value(*idx) else { return self.report(Why::Refused, "not a numeric control".into()) };

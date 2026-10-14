@@ -213,6 +213,10 @@ pub enum Shape {
         /// Words at a slider's low and high ends (D-077).
         #[serde(skip_serializing_if = "Option::is_none")]
         ends: Option<[String; 2]>,
+        /// A select's choices, the cases of its enumeration in order; `value` is the number
+        /// of the chosen one, from 0 (D-094).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        options: Option<Vec<String>>,
     },
     /// The source has no value at this instant (PK-3.3).
     Status { status: String },
@@ -479,7 +483,7 @@ pub enum CKind {
     Text { pieces: Vec<String>, values: Vec<(CExpr, Type, Option<usize>)>, places: Vec<Option<usize>>, at: Option<CExpr> },
     Title { value: String },
     Formula { lhs: String, rhs: Expr, params: Vec<String>, refs: Vec<(Id, usize)>, live: bool },
-    Control { control: String, binding: Id, idx: usize, min: Option<f64>, max: Option<f64>, step: Option<f64>, ends: Option<[String; 2]> },
+    Control { control: String, binding: Id, idx: usize, min: Option<f64>, max: Option<f64>, step: Option<f64>, ends: Option<[String; 2]>, options: Option<Vec<String>> },
     Poly { points: Vec<CExpr>, closed: bool },
     /// `circle`, `ellipse` and `arc` (PK-6.3c): radii are lengths, angles numbers (radians);
     /// `ry` absent for a circle or an arc, `from` and `to` present for an arc only.
@@ -908,7 +912,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
                 .collect();
             CKind::Formula { lhs, rhs, params, refs, live }
         }
-        "slider" | "number_input" | "toggle" => {
+        "slider" | "number_input" | "toggle" | "select" => {
             let Some(Expr::Ref { r#ref }) = source(rep, 0) else { return Err(needs("the binding it controls")) };
             let idx = *cm.index.get(r#ref).ok_or_else(|| d("PK-E01", format!("unknown binding `{ref}`", ref = r#ref)))?;
             if !cm.bindings[idx].intervenable {
@@ -928,7 +932,15 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
                 Some(_) if rep.kind != "slider" => return Err(d("PK-E05", format!("a {} has no ends; `ends` names a slider's two ends (D-077)", rep.kind))),
                 Some(_) => return Err(needs("two words for its ends")),
             };
-            CKind::Control { control: rep.kind.clone(), binding: r#ref.clone(), idx, min, max, step, ends }
+            // D-094: a select offers the cases of an enumeration; the other controls take
+            // numbers, quantities or (a toggle) a Boolean.
+            let options = match (&cm.bindings[idx].ty, rep.kind.as_str()) {
+                (Type::Enum { cases, .. }, "select") => Some(cases.clone()),
+                (_, "select") => return Err(d("PK-E05", format!("a select chooses one case of an enumeration; `{}` is not one (D-094)", cm.bindings[idx].name))),
+                (Type::Enum { .. }, kind) => return Err(d("PK-E05", format!("`{}` is an enumeration: choose its case with `select({})`, not a {kind} (D-094)", cm.bindings[idx].name, cm.bindings[idx].name))),
+                _ => None,
+            };
+            CKind::Control { control: rep.kind.clone(), binding: r#ref.clone(), idx, min, max, step, ends, options }
         }
         "polyline" | "polygon" => {
             let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", format!("a {} belongs in a spatial view", rep.kind))) };
@@ -1466,10 +1478,11 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             let layout = math::layout(&math::formula(lhs, rhs, cm, params));
             (Shape::Formula { lhs: lhs.clone(), rhs: rhs.clone(), symbols, layout }, text)
         }
-        CKind::Control { control, binding, idx, min, max, step, ends } => {
+        CKind::Control { control, binding, idx, min, max, step, ends, options } => {
             let v = match &vals[*idx] {
                 Value::Num(x) => *x,
                 Value::Bool(b) => *b as u8 as f64,
+                Value::Case(c) => *c as f64,
                 _ => f64::NAN,
             };
             let range = match (min, max) {
@@ -1477,13 +1490,18 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 _ => String::new(),
             };
             let words = ends.as_ref().map(|[a, b]| format!(", from {a} to {b}")).unwrap_or_default();
-            let text = format!("{control} for {} = {}{range}{words}", symbol(cm, binding), fmt_binding(cm, *idx, &vals[*idx]));
+            let choices = options.as_ref().map(|o| format!(", one of {}", o.join(", "))).unwrap_or_default();
+            let shown = match &vals[*idx] {
+                Value::Case(c) => options.as_ref().and_then(|o| o.get(*c as usize)).cloned().unwrap_or_default(),
+                v => fmt_binding(cm, *idx, v),
+            };
+            let text = format!("{control} for {} = {shown}{range}{words}{choices}", symbol(cm, binding));
             let display_unit = cm.ir.binding(binding).and_then(|b| b.display.unit.as_ref()).and_then(|u| prismal_ir::Unit::parse(u).ok()).map(|u| DisplayUnit { text: u.text, scale: u.scale });
             let unit = match (&display_unit, &cm.bindings[*idx].ty) {
                 (None, Type::Quantity { dim }) if !dim.is_none() => Some(unit_text(dim)),
                 _ => None,
             };
-            let shape = Shape::Control { control: control.clone(), binding: binding.clone(), value: v, min: *min, max: *max, step: *step, symbol: symbol(cm, binding), display_unit, unit, ends: ends.clone() };
+            let shape = Shape::Control { control: control.clone(), binding: binding.clone(), value: v, min: *min, max: *max, step: *step, symbol: symbol(cm, binding), display_unit, unit, ends: ends.clone(), options: options.clone() };
             (shape, text)
         }
         CKind::Poly { points, closed } => {

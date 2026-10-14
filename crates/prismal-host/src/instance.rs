@@ -1032,6 +1032,8 @@ impl Instance {
 fn literal(value: f64, ty: &prismal_ir::Type) -> prismal_ir::Expr {
     match ty {
         prismal_ir::Type::Boolean => prismal_ir::Expr::Bool { bool: value != 0.0 },
+        // A select's value is the number of a case, from 0 (D-094).
+        prismal_ir::Type::Enum { cases, .. } => prismal_ir::Expr::Case { case: cases.get(value.max(0.0) as usize).or(cases.last()).cloned().unwrap_or_default() },
         _ => si_literal(value, ty),
     }
 }

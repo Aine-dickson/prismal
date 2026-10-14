@@ -19,6 +19,23 @@ slider(k, range: [1 N/m, 20 N/m])
 
 The slider names the parameter it moves. The `in [...]` range stops any value outside it, from a slider or a test. See [chapter 1](01-first-program.md).
 
+### Let the learner choose one of a few kinds (a material, a planet)
+
+Combine an **enumeration**, a **parameter** of it, a **derived** value by **match**, and **select**.
+
+```prismal
+// model
+enum Material { copper, steel, glass }
+// model / param
+material: Material = copper
+// model / derived
+alpha: Quantity<L^2/T> = match material { copper => 1.1e-4 m^2/s, steel => 4e-6 m^2/s, glass => 3.4e-7 m^2/s }
+// presentation / panel
+select(material)
+```
+
+The learner picks a case by name. As a parameter, the choice is kept by `button(restart)` and set in a case with `param { material = steel }` or in a lesson with `intervene { set material = steel }`. See the spoon example (`examples/heat.md`).
+
 ### Make a value change over time
 
 Combine a **state** value (its start) with a **flow** (its rate of change).

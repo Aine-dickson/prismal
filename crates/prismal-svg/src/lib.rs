@@ -916,6 +916,9 @@ fn control_display(r: &Json, value: f64) -> String {
     if r["control"] == "toggle" {
         return if value != 0.0 { "true" } else { "false" }.into();
     }
+    if let Some(options) = r["options"].as_array() {
+        return options.get(value as usize).and_then(|o| o.as_str()).unwrap_or("").into();
+    }
     if r["display_unit"].is_object() {
         return format!("{} {}", fmt(value / f(&r["display_unit"]["scale"])), s(&r["display_unit"]["text"]));
     }
@@ -973,6 +976,21 @@ fn control_block(r: &Json, disabled: bool, th: &Theme) -> Block {
                 let _ = write!(body, "<polyline points=\"{},12 {},15 {},8\" fill=\"none\" stroke=\"{}\" stroke-width=\"2\"/>", n(x + 3.0), n(x + 6.0), n(x + 11.0), th.accent_ink);
             }
             x += 22.0;
+        }
+        // A select (D-094): a box with a caret; its value is printed after it.
+        "select" => {
+            let _ = write!(
+                body,
+                "<rect x=\"{}\" y=\"1.5\" width=\"24\" height=\"21\" rx=\"4\" fill=\"{}\" stroke=\"{}\"/><polyline points=\"{},10 {},15 {},10\" fill=\"none\" stroke=\"{}\" stroke-width=\"1.5\"/>",
+                n(x),
+                th.bg,
+                th.line,
+                n(x + 7.0),
+                n(x + 12.0),
+                n(x + 17.0),
+                th.ink
+            );
+            x += 32.0;
         }
         _ => {
             let v = fmt(value);
