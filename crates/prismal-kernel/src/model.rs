@@ -129,6 +129,9 @@ pub struct CEquation {
 #[derive(Clone, Debug)]
 pub struct CSolve {
     pub unknowns: Vec<usize>,
+    /// The number of components of each unknown (D-097): 1 for a number or quantity, the
+    /// dimension of its space for a vector or point.
+    pub widths: Vec<usize>,
     /// The starting guess of each unknown; none is 0.
     pub guess: Vec<Option<CExpr>>,
     /// Derived bindings computed inside the solve, in order.
@@ -463,21 +466,28 @@ impl CModel {
     /// instant, never on earlier solves, so runs stay reproducible.
     pub fn solve_unknowns(&self, vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
         let Some(s) = &self.solve else { return Ok(()) };
-        let n = s.unknowns.len();
+        // The unknowns' components, laid out one after another (D-097).
+        let offsets: Vec<usize> = s.widths.iter().scan(0, |o, w| { let a = *o; *o += w; Some(a) }).collect();
+        let n: usize = s.widths.iter().sum();
         let names = || s.unknowns.iter().map(|&i| format!("`{}`", self.bindings[i].name)).collect::<Vec<_>>().join(", ");
         let mut u = vec![0.0; n];
         for (k, g) in s.guess.iter().enumerate() {
             if let Some(g) = g {
                 let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
-                u[k] = g.eval(&c)?.num();
+                g.eval(&c)?.write_to(&mut u[offsets[k]..offsets[k] + s.widths[k]]);
             }
         }
         // The scale of each unknown: its guess, or 1 in coherent SI units.
         let scale: Vec<f64> = u.iter().map(|x| if *x != 0.0 { x.abs() } else { 1.0 }).collect();
         // Residuals, and the size of the sides each is measured against.
         let residuals = |vals: &mut [Value], u: &[f64]| -> Result<(Vec<f64>, Vec<f64>), Status> {
-            for (&i, x) in s.unknowns.iter().zip(u) {
-                vals[i] = Value::Num(*x);
+            for (k, &i) in s.unknowns.iter().enumerate() {
+                let c = &u[offsets[k]..offsets[k] + s.widths[k]];
+                vals[i] = match self.bindings[i].ty {
+                    Type::Point { .. } => Value::Point(Arr::from_slice(c)),
+                    Type::Vector { .. } => Value::Vec(Arr::from_slice(c)),
+                    _ => Value::Num(c[0]),
+                };
             }
             for &i in &s.inner {
                 let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };

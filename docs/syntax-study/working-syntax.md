@@ -19,7 +19,7 @@ Candidate A amended as accepted in D-028: A's keyword-led statements, with group
 | `state { x: T = e ... }` | continuous state with initial definitions |
 | `discrete { x: T = e ... }` | discrete state |
 | `derived { x: T = e; f(x: A): B = e ... }` | derived bindings, including function-valued ones |
-| `unknown { x: T [= guess] ... }` | unknowns (MK-11.6, D-092): numbers or quantities that the equations reading them determine together; the value is the solver's starting guess, 0 when omitted |
+| `unknown { x: T [= guess] ... }` | unknowns (MK-11.6, D-092, D-097): numbers, quantities, vectors or points that the equations reading them determine together; the value is the solver's starting guess, 0 when omitted |
 | `enum Phase { a, b, c }` | enumeration (MK-2.2a, D-049); cases by name (`a`) or qualified (`Phase.a`) |
 | `fn f(x: A): B = e` | declared function (MK-10.3a, D-048): reads only its parameters, constants and other functions |
 | `flow { der(x) = e; der(y) += e ... }` | defining flows and contributions (MK-14.7) |

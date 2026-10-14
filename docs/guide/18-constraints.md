@@ -133,6 +133,7 @@ run slide of Bead with BeadLab {
 
 - Along the wire the bead accelerates at `g sin α`, half of `g` at 30 degrees: in 2 s it travels 9.81 m instead of the 19.62 m of a free fall.
 - The wire's push `N = m g cos α` is constant here; on a curved wire it would change along the way.
+- The push can also be one vector unknown, `unknown { N: Vector<Force> }` with `der(vel) = (0 m/s^2, -g) + N / m`. A vector in a plane is two unknowns and the constraint gives one equation, so a second equation says the wire is smooth, pushing at right angles to itself: `equation smooth: dot(N, (cos(α), -sin(α))) == 0 N`. Friction along the wire would be a different second equation.
 
 ## Two rods
 
@@ -248,7 +249,7 @@ run held of UnitCircle with CircleLab {
 ## How constraints are enforced
 
 - `constraint N: a == b policy enforce`: an equation of the model's values, kept true at every instant. `within` is not allowed: an enforced constraint holds exactly.
-- **The force that holds it.** The runtime differentiates the constraint along the flows: `|bob - pivot| == L` gives "the bob moves along the circle" (its rate), and then "the bob's acceleration turns it along the circle" (its second rate). The first rate that reads an unknown is solved with the model's other equations, as in chapter 17: for the rod, the second rate reads `tension` through `der(vel)`. So the constraint needs an unknown that the flows read, one for each constraint, and the flows must say in which direction it acts.
+- **The force that holds it.** The runtime differentiates the constraint along the flows: `|bob - pivot| == L` gives "the bob moves along the circle" (its rate), and then "the bob's acceleration turns it along the circle" (its second rate). The first rate that reads an unknown is solved with the model's other equations, as in chapter 17: for the rod, the second rate reads `tension` through `der(vel)`. So the constraint needs an unknown that the flows read, one component for each constraint, and the flows must say in which direction it acts; a vector unknown needs further equations for its other components (chapter 17, Vectors and points as unknowns).
 - **Staying on the constraint.** After every step, at the start and after every event or change, the runtime moves the state back onto the constraint and its rates, by the smallest change: positions first, then velocities. The solver's small errors therefore never add up into a rod that stretches.
 - **What moves.** State moves, never parameters, unless a change sets them (a drag, a slider, an event's `set`). When a change sets some of the values a constraint reads, only those move: a dragged lower bob moves, the upper bob stays.
 - **What can be differentiated.** Arithmetic, powers by numbers, `sqrt`, `sin`, `cos`, `tan`, `exp`, `log`, `abs`, `atan2`, `dot`, components (`p.x`) and norms (`|v|`). A constraint with `if`, `match`, `min` or `max` cannot be enforced (MK-E36).

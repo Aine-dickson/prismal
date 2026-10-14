@@ -335,7 +335,7 @@ The energy drifts agree with the predictions of `tools/refvals.py` (RP-04: 7.8e-
 | Failure policies chosen per category in a run's configuration (D-071) | RC-10.3 |
 | Frames of spaces (D-022), affine temperature units | MK sections 3.4, 4 |
 | Fields: noise and draws per cell, fields of vectors, fields in object types, meshes, implicit solvers for stiff fields on fine grids, computing a lab's run as it is shown (heavy fields now shorten the default horizon instead) | MK-9.4 to MK-9.8, RC-6.2a, HI-5.1a (D-091) |
-| Solved equations and constraints: vector unknowns, solved equations over fields, inequality constraints (contact, a slack rope), enforced constraints whose rates read `der` | MK-11.6 to MK-11.9, MK-12.6 to MK-12.10 (D-092, D-093) |
+| Solved equations and constraints: solved equations over fields, inequality constraints (contact, a slack rope), enforced constraints whose rates read `der` | MK-11.6 to MK-11.9, MK-12.6 to MK-12.10 (D-092, D-093) |
 
 ## History
 
