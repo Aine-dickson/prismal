@@ -94,7 +94,7 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms
 
 **Observation schedules:** `live`, `every Δ`, `at τ`, `on E [microstep n]`, `over [a, b]`. **Sources:** any expression, `event_log [of E] [where zeno_applied]`, `diagnostics [of element]`, `intervention_log`.
 
-**Timeline actions:** `narrate "..." [for d]`, `run rate r [until E]`, `hold`, `seek τ`, `reset`, `restart` (a new run from `t0` with the parameters as they are, chapter 15), `branch`, `highlight name`, `hide name [for d]`, `reveal fade|draw [for d] [in view] { reps }`, `camera view [to P] [zoom z] [for d]`, `in view { reps }`, `show rep`, `intervene { set p = e }`, `request E`, `request E(v)`, `request E(c[k], v)`, `wait d`, `wait learner [limit L] [fallback { actions }]`, `animate name opacity|offset|scale to v [for d] [ease e]`, `animate name color|line to word [for d] [ease e]`, `animate name morph to other [for d] [ease e]`, `release name`, `bind name [for d]`, `sequence { ... }`, `explore [limit L] [keep p, ...] { controls } [fallback { actions }]` (chapter 8).
+**Timeline actions:** `narrate "..." [for d]`, `run rate r [until E]`, `hold`, `seek τ`, `reset`, `restart` (a new run from `t0` with the parameters as they are, chapter 15), `branch`, `highlight name`, `hide name [for d] [ease e]`, `reveal fade|draw [for d] [in view] [ease e] { reps }`, `camera view [to P] [zoom z] [for d] [ease e]`, `in view { reps }`, `show rep`, `intervene { set p = e }`, `request E`, `request E(v)`, `request E(c[k], v)`, `wait d`, `wait learner [limit L] [fallback { actions }]`, `animate name opacity|offset|scale to v [for d] [ease e]`, `animate name color|line to word [for d] [ease e]`, `animate name morph to other [for d] [ease e]`, `release name`, `bind name [for d] [ease e]`, `sequence { ... }`, `explore [limit L] [keep p, ...] { controls } [fallback { actions }]` (chapter 8).
 
 ## Options and clauses
 
@@ -130,10 +130,11 @@ Two forms add details to a form, one for each place they appear (D-081):
 | `equation` | `checked within tol` |
 | `constraint` | `within tol`, `policy p` |
 | `event` | `on trigger` first, then `if c`, the block, `zeno ...` |
-| `narrate "..."`, `hide`, `bind` | `for d` |
+| `narrate "..."` | `for d` |
+| `hide`, `bind` | `for d`, `ease e` |
 | `run rate r` | `until E` |
-| `reveal fade\|draw` | `for d`, `in view` |
-| `camera view` | `to P`, `zoom z`, `for d` |
+| `reveal fade\|draw` | `for d`, `in view`, `ease e` |
+| `camera view` | `to P`, `zoom z`, `for d`, `ease e` |
 | `animate name property to v` | `for d`, `ease e` |
 | `explore` | `limit L`, `keep p, ...` |
 | `wait learner` | `limit L` |
@@ -181,7 +182,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `emit` | an operation that makes another event happen | 5 |
 | `enum`, `match` | enumerations and a choice by case | 5 |
 | `combine` | how contributions combine into discrete state: `combine sum`, `product`, `min`, `max`, `any`, `all` | 5 |
-| `ease` | the easing of an animation: `animate R scale to 2 for 1 s ease linear` (`linear`, `smooth`, `in`, `out`) | 8 |
+| `ease` | the easing of an animation, a reveal, a hide, a camera move or a bind: `animate R scale to 2 for 1 s ease linear` (`linear`, `smooth`, `in`, `out`) | 8 |
 | `title` | a presentation's title, `title "..."`; a view's or panel's, `title("...")` | 7 |
 | `connect`, `disconnect` | operations that make a relation between members and remove one | 9 |
 | `contribute` | an operation adding to discrete state by its combination: `contribute total += 1` | 5 |

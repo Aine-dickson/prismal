@@ -348,6 +348,9 @@ pub enum Action {
         target: Id,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Expr>,
+        /// The easing function; absent is `smooth` (D-095).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ease: Option<Ease>,
     },
     /// Shows representations with an animation (PK-9.2, PK-8.4, D-042).
     Reveal {
@@ -356,6 +359,9 @@ pub enum Action {
         style: RevealStyle,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Expr>,
+        /// The easing function; absent is `smooth` (D-095).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ease: Option<Ease>,
         reps: Vec<Rep>,
     },
     /// Moves a view's camera (PK-9.2, D-042): its centre follows `center`, evaluated at every
@@ -368,6 +374,9 @@ pub enum Action {
         zoom: Option<Expr>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Expr>,
+        /// The easing function; absent is `smooth` (D-095).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ease: Option<Ease>,
     },
     Narrate {
         text: String,
@@ -433,6 +442,9 @@ pub enum Action {
         target: Id,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Expr>,
+        /// The easing function; absent is `smooth` (D-095).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ease: Option<Ease>,
     },
 }
 

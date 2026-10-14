@@ -1731,26 +1731,37 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("hide") {
             let n = self.name("a representation name")?;
-            let d = if self.eat_word("for") { Some(self.expr()?) } else { None };
-            return Ok(Action::Hide(n, d));
+            let (mut d, mut ease, mut seen) = (None, None, vec![]);
+            while let Some(w) = self.clause(&["for", "ease"], &mut seen)? {
+                if w == "for" {
+                    d = Some(self.expr()?);
+                } else {
+                    ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?);
+                }
+            }
+            return Ok(Action::Hide(n, d, ease));
         }
         if self.eat_word("reveal") {
             let style = self.any_name("`fade` or `draw`")?;
-            let (mut duration, mut view, mut seen) = (None, None, vec![]);
-            while let Some(w) = self.clause(&["for", "in"], &mut seen)? {
-                if w == "for" {
-                    duration = Some(self.expr_no_in()?);
-                } else {
-                    view = Some(self.name("a view name")?);
+            let (mut duration, mut view, mut ease, mut seen) = (None, None, None, vec![]);
+            while let Some(w) = self.clause(&["for", "in", "ease"], &mut seen)? {
+                match w {
+                    "for" => duration = Some(self.expr_no_in()?),
+                    "in" => view = Some(self.name("a view name")?),
+                    _ => ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?),
                 }
             }
             let reps = self.block(|p| p.rep_item())?;
-            return Ok(Action::Reveal { style, duration, view, reps });
+            return Ok(Action::Reveal { style, duration, view, ease, reps });
         }
         if self.eat_word("camera") {
             let view = self.name("a view name")?;
-            let (mut center, mut zoom, mut duration, mut seen) = (None, None, None, vec![]);
-            while let Some(w) = self.clause(&["to", "zoom", "for"], &mut seen)? {
+            let (mut center, mut zoom, mut duration, mut ease, mut seen) = (None, None, None, None, vec![]);
+            while let Some(w) = self.clause(&["to", "zoom", "for", "ease"], &mut seen)? {
+                if w == "ease" {
+                    ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?);
+                    continue;
+                }
                 let e = Some(self.expr()?);
                 match w {
                     "to" => center = e,
@@ -1758,7 +1769,7 @@ impl<'a> Parser<'a> {
                     _ => duration = e,
                 }
             }
-            return Ok(Action::Camera { view, center, zoom, duration });
+            return Ok(Action::Camera { view, center, zoom, duration, ease });
         }
         if self.eat_word("seek") {
             return Ok(Action::Seek(self.expr()?));
@@ -1825,8 +1836,15 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("bind") {
             let n = self.name("a representation name")?;
-            let d = if self.eat_word("for") { Some(self.expr()?) } else { None };
-            return Ok(Action::Bind(n, d));
+            let (mut d, mut ease, mut seen) = (None, None, vec![]);
+            while let Some(w) = self.clause(&["for", "ease"], &mut seen)? {
+                if w == "for" {
+                    d = Some(self.expr()?);
+                } else {
+                    ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?);
+                }
+            }
+            return Ok(Action::Bind(n, d, ease));
         }
         Err(self.unexpected("a timeline action"))
     }

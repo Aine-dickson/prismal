@@ -584,3 +584,4 @@ run A_keep of Projectile with ProjectileLesson {
 - 2026-10-13 `unknown { ... }` blocks, solved equations and rates from equations (D-092); electrical named dimensions; the contextual keyword list brought up to date with the parser (`layout`, `row`, `column`, `instrument`, `grid`, `boundary`, `periodic`, `unknown`).
 - 2026-10-14 `policy enforce` and the built-in function `dot` (D-093); `enforce` added to the contextual keywords. Additions under section 1.7: `enforce` was not a policy before, and a declared name `dot` wins over the function.
 - 2026-10-14 `select(p)`, a control choosing one case of an enumeration parameter (D-094); an addition under section 1.7 (a new representation kind).
+- 2026-10-14 `ease e` after `reveal`, `hide ... for`, `camera` and `bind` (D-095), as after `animate`; additions under section 1.7.

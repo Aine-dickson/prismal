@@ -170,7 +170,7 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                     with_members(r, reps);
                 }
             }
-            Action::Camera { view, center, zoom, duration: d } => {
+            Action::Camera { view, center, zoom, duration: d, .. } => {
                 match pr.views.iter().find(|x| &x.0 == view) {
                     Some((_, ViewCtx::Spatial { space, .. }, _)) => {
                         if let Some(c) = center {
@@ -323,10 +323,10 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                     },
                 }
             }
-            Action::Release { target } | Action::Bind { target, duration: None } => {
+            Action::Release { target } | Action::Bind { target, duration: None, .. } => {
                 known(reps, target, beat, out);
             }
-            Action::Bind { target, duration: Some(d) } => {
+            Action::Bind { target, duration: Some(d), .. } => {
                 known(reps, target, beat, out);
                 expr(cm, d, Some(duration), beat, out);
             }

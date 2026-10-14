@@ -1248,14 +1248,18 @@ impl<'a> Printer<'a> {
             }
             Action::Show { view: None, reps } => reps.iter().map(|r| format!("show {}", self.rep(r, depth))).collect::<Vec<_>>().join("; "),
             Action::Highlight { target } => format!("highlight {}", self.rep_names.get(target).cloned().unwrap_or_else(|| target.clone())),
-            Action::Hide { target, duration } => {
+            Action::Hide { target, duration, ease } => {
                 let name = self.rep_names.get(target).cloned().unwrap_or_else(|| target.clone());
-                match duration {
-                    Some(d) => format!("hide {name} for {}", self.expr(d)),
-                    None => format!("hide {name}"),
+                let mut s = format!("hide {name}");
+                if let Some(d) = duration {
+                    let _ = write!(s, " for {}", self.expr(d));
                 }
+                if let Some(e) = ease {
+                    let _ = write!(s, " ease {}", e.word());
+                }
+                s
             }
-            Action::Reveal { view, style, duration, reps } => {
+            Action::Reveal { view, style, duration, ease, reps } => {
                 let mut s = format!("reveal {}", if *style == RevealStyle::Fade { "fade" } else { "draw" });
                 if let Some(d) = duration {
                     let _ = write!(s, " for {}", self.expr(d));
@@ -1264,10 +1268,13 @@ impl<'a> Printer<'a> {
                     let name = p.views.iter().find(|x| &x.id == v).map(|x| x.name.clone()).unwrap_or_else(|| v.clone());
                     let _ = write!(s, " in {name}");
                 }
+                if let Some(e) = ease {
+                    let _ = write!(s, " ease {}", e.word());
+                }
                 let _ = write!(s, " {}", block(reps.iter().map(|r| self.rep(r, depth + 1)).collect()));
                 s
             }
-            Action::Camera { view, center, zoom, duration } => {
+            Action::Camera { view, center, zoom, duration, ease } => {
                 let name = p.views.iter().find(|x| &x.id == view).map(|x| x.name.clone()).unwrap_or_else(|| view.clone());
                 let mut s = format!("camera {name}");
                 if let Some(c) = center {
@@ -1278,6 +1285,9 @@ impl<'a> Printer<'a> {
                 }
                 if let Some(d) = duration {
                     let _ = write!(s, " for {}", self.expr(d));
+                }
+                if let Some(e) = ease {
+                    let _ = write!(s, " ease {}", e.word());
                 }
                 s
             }
@@ -1349,12 +1359,16 @@ impl<'a> Printer<'a> {
                 s
             }
             Action::Release { target } => format!("release {}", self.rep_names.get(target).cloned().unwrap_or_else(|| target.clone())),
-            Action::Bind { target, duration } => {
+            Action::Bind { target, duration, ease } => {
                 let name = self.rep_names.get(target).cloned().unwrap_or_else(|| target.clone());
-                match duration {
-                    Some(d) => format!("bind {name} for {}", self.expr(d)),
-                    None => format!("bind {name}"),
+                let mut s = format!("bind {name}");
+                if let Some(d) = duration {
+                    let _ = write!(s, " for {}", self.expr(d));
                 }
+                if let Some(e) = ease {
+                    let _ = write!(s, " ease {}", e.word());
+                }
+                s
             }
         }
     }

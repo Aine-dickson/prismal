@@ -47,6 +47,18 @@ fn options(kind: &str) -> &'static [&'static str] {
     }
 }
 
+/// An easing word of a timeline animation (D-075, D-095).
+fn ease_of(word: &str) -> Option<prismal_ir::present::Ease> {
+    use prismal_ir::present::Ease;
+    Some(match word {
+        "linear" => Ease::Linear,
+        "smooth" => Ease::Smooth,
+        "in" => Ease::In,
+        "out" => Ease::Out,
+        _ => return None,
+    })
+}
+
 /// The named options of each view kind (D-081).
 fn view_options(kind: &str) -> &'static [&'static str] {
     match kind {
@@ -132,6 +144,16 @@ impl PresCx<'_, '_> {
             ast::LayoutNode::Row(_, xs) => Some(Layout::Row(xs.iter().filter_map(|x| self.layout(x, placed)).collect())),
             ast::LayoutNode::Column(_, xs) => Some(Layout::Column(xs.iter().filter_map(|x| self.layout(x, placed)).collect())),
         }
+    }
+
+    /// The easing a clause `ease e` names; an unknown word is SX-E02.
+    fn ease(&mut self, e: Option<&ast::Name>) -> Option<prismal_ir::present::Ease> {
+        let e = e?;
+        let found = ease_of(&e.text);
+        if found.is_none() {
+            self.err("SX-E02", format!("unknown easing `{}`: `linear`, `smooth`, `in` or `out` (D-075)", e.text), e.span);
+        }
+        found
     }
 
     fn err(&mut self, code: &'static str, msg: impl Into<String>, span: Span) {
@@ -634,14 +656,16 @@ impl PresCx<'_, '_> {
                     Some(id) => out.push(Action::Highlight { target: id.clone() }),
                     None => self.err("SX-E03", format!("no representation named `{}` before this beat", n.text), n.span),
                 },
-                ast::Action::Hide(n, d) => match self.aliases.get(&n.text).cloned() {
+                ast::Action::Hide(n, d, e) => match self.aliases.get(&n.text).cloned() {
                     Some(id) => {
                         let duration = d.as_ref().map(|d| self.expr(d));
-                        out.push(Action::Hide { target: id, duration })
+                        let ease = self.ease(e.as_ref());
+                        out.push(Action::Hide { target: id, duration, ease })
                     }
                     None => self.err("SX-E03", format!("no representation named `{}` before this beat", n.text), n.span),
                 },
-                ast::Action::Reveal { style, duration, view, reps } => {
+                ast::Action::Reveal { style, duration, view, ease, reps } => {
+                    let ease = self.ease(ease.as_ref());
                     let style = match style.text.as_str() {
                         "fade" => RevealStyle::Fade,
                         "draw" => RevealStyle::Draw,
@@ -662,14 +686,15 @@ impl PresCx<'_, '_> {
                     };
                     let duration = duration.as_ref().map(|d| self.expr(d));
                     let reps = reps.iter().map(|r| self.rep(r, beat, counts)).collect();
-                    out.push(Action::Reveal { view: v, style, duration, reps });
+                    out.push(Action::Reveal { view: v, style, duration, ease, reps });
                 }
-                ast::Action::Camera { view, center, zoom, duration } => match self.views.get(&view.text).cloned() {
+                ast::Action::Camera { view, center, zoom, duration, ease } => match self.views.get(&view.text).cloned() {
                     Some(v) => {
+                        let ease = self.ease(ease.as_ref());
                         let center = center.as_ref().map(|e| self.expr(e));
                         let zoom = zoom.as_ref().map(|e| self.expr(e));
                         let duration = duration.as_ref().map(|e| self.expr(e));
-                        out.push(Action::Camera { view: v, center, zoom, duration });
+                        out.push(Action::Camera { view: v, center, zoom, duration, ease });
                     }
                     None => self.err("SX-E03", format!("unknown view `{}`", view.text), view.span),
                 },
@@ -713,17 +738,7 @@ impl PresCx<'_, '_> {
                             Animated::Opacity
                         }
                     };
-                    let ease = match ease.as_ref().map(|e| (e.text.as_str(), e.span)) {
-                        None => None,
-                        Some(("linear", _)) => Some(prismal_ir::present::Ease::Linear),
-                        Some(("smooth", _)) => Some(prismal_ir::present::Ease::Smooth),
-                        Some(("in", _)) => Some(prismal_ir::present::Ease::In),
-                        Some(("out", _)) => Some(prismal_ir::present::Ease::Out),
-                        Some((other, span)) => {
-                            self.err("SX-E02", format!("unknown easing `{other}`: `linear`, `smooth`, `in` or `out` (D-075)"), span);
-                            None
-                        }
-                    };
+                    let ease = self.ease(ease.as_ref());
                     match self.aliases.get(&target.text).cloned() {
                         Some(id) => {
                             // A palette word, a line style or a representation's name is a word;
@@ -761,10 +776,11 @@ impl PresCx<'_, '_> {
                     Some(id) => out.push(Action::Release { target: id.clone() }),
                     None => self.err("SX-E03", format!("no representation named `{}` before this beat", n.text), n.span),
                 },
-                ast::Action::Bind(n, d) => match self.aliases.get(&n.text).cloned() {
+                ast::Action::Bind(n, d, e) => match self.aliases.get(&n.text).cloned() {
                     Some(id) => {
                         let duration = d.as_ref().map(|d| self.expr(d));
-                        out.push(Action::Bind { target: id, duration })
+                        let ease = self.ease(e.as_ref());
+                        out.push(Action::Bind { target: id, duration, ease })
                     }
                     None => self.err("SX-E03", format!("no representation named `{}` before this beat", n.text), n.span),
                 },

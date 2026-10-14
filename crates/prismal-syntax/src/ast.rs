@@ -507,11 +507,12 @@ pub enum Action {
     Run { rate: Expr, until: Option<Name> },
     Hold,
     Highlight(Name),
-    Hide(Name, Option<Expr>),
+    /// `hide R [for d] [ease e]`
+    Hide(Name, Option<Expr>, Option<Name>),
     /// `reveal fade|draw [for d] [in view] { reps }`
-    Reveal { style: Name, duration: Option<Expr>, view: Option<Name>, reps: Vec<Rep> },
+    Reveal { style: Name, duration: Option<Expr>, view: Option<Name>, ease: Option<Name>, reps: Vec<Rep> },
     /// `camera view [to P] [zoom z] [for d]`
-    Camera { view: Name, center: Option<Expr>, zoom: Option<Expr>, duration: Option<Expr> },
+    Camera { view: Name, center: Option<Expr>, zoom: Option<Expr>, duration: Option<Expr>, ease: Option<Name> },
     Seek(Expr),
     Show(Rep),
     Explore { limit: Option<Expr>, keep: Vec<Name>, reps: Vec<Rep>, fallback: Vec<Action> },
@@ -532,7 +533,7 @@ pub enum Action {
     /// `release R` (D-068)
     Release(Name),
     /// `bind R [for d]` (D-068)
-    Bind(Name, Option<Expr>),
+    Bind(Name, Option<Expr>, Option<Name>),
 }
 
 // ---------------------------------------------------------------- runs

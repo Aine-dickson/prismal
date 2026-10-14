@@ -88,8 +88,8 @@ pub struct Shown {
     pub until: f64,
     pub view: Option<Id>,
     pub rep: CRep,
-    /// A reveal: its style and duration (D-042).
-    pub reveal: Option<(RevealStyle, f64)>,
+    /// A reveal: its style, duration and easing (D-042, D-095).
+    pub reveal: Option<(RevealStyle, f64, prismal_ir::present::Ease)>,
 }
 
 /// A camera move (D-042): from presentation instant `from`, over `duration`.
@@ -100,6 +100,8 @@ pub struct CameraCue {
     pub duration: f64,
     pub center: Option<prismal_kernel::CExpr>,
     pub zoom: Option<f64>,
+    /// The easing of the move (D-095).
+    pub ease: prismal_ir::present::Ease,
 }
 
 /// The state of a representation `k` of the way through a reveal (D-042): a path is drawn
@@ -342,6 +344,8 @@ pub struct Released {
     pub t: f64,
     pub bind: f64,
     pub blend: f64,
+    /// The easing of the blend back (D-095).
+    pub ease: prismal_ir::present::Ease,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -374,7 +378,7 @@ pub struct Playback {
     pub highlights: Vec<Highlight>,
     /// Representations hidden from a presentation instant on (PK-9.2), fading out over a
     /// duration (0 for at once).
-    pub hidden: Vec<(Id, f64, f64)>,
+    pub hidden: Vec<(Id, f64, f64, prismal_ir::present::Ease)>,
     pub cameras: Vec<CameraCue>,
     pub waits: Vec<WaitPoint>,
     pub animations: Vec<Animation>,
@@ -579,23 +583,24 @@ impl Player {
                 self.pb.highlights.push(Highlight { target: target.clone(), from: p, until: f64::NAN });
                 p
             }
-            TAction::Hide { target, duration } => {
+            TAction::Hide { target, duration, ease } => {
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(0.0);
-                self.pb.hidden.push((target.clone(), p, d));
+                self.pb.hidden.push((target.clone(), p, d, ease.unwrap_or(prismal_ir::present::Ease::Smooth)));
                 p + d
             }
-            TAction::Reveal { view, style, duration, reps } => {
+            TAction::Reveal { view, style, duration, ease, reps } => {
+                let ease = ease.unwrap_or(prismal_ir::present::Ease::Smooth);
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(1.0);
                 let ctx = self.pb.projector.ctx(view.as_deref());
                 for r in reps {
                     match compile_rep(&self.pb.cm, &ctx, r, &self.pb.pres.instruments) {
-                        Ok(c) => self.pb.shown.push(Shown { from: p, until: f64::INFINITY, view: view.clone(), rep: c, reveal: Some((*style, d)) }),
+                        Ok(c) => self.pb.shown.push(Shown { from: p, until: f64::INFINITY, view: view.clone(), rep: c, reveal: Some((*style, d, ease)) }),
                         Err(e) => self.pb.diagnostics.extend(e.into_iter().map(|x| x.to_string())),
                     }
                 }
                 p + d
             }
-            TAction::Camera { view, center, zoom, duration } => {
+            TAction::Camera { view, center, zoom, duration, ease } => {
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(1.0);
                 let z = zoom.as_ref().map(|z| self.num(z));
                 let c = match (center, self.pb.projector.ctx(Some(view))) {
@@ -619,7 +624,7 @@ impl Player {
                     }
                     _ => None,
                 };
-                self.pb.cameras.push(CameraCue { view: view.clone(), from: p, duration: d, center: c, zoom: z });
+                self.pb.cameras.push(CameraCue { view: view.clone(), from: p, duration: d, center: c, zoom: z, ease: ease.unwrap_or(prismal_ir::present::Ease::Smooth) });
                 p + d
             }
             TAction::Narrate { text, duration } => {
@@ -720,15 +725,16 @@ impl Player {
                     return p;
                 }
                 let (run, t) = (self.open.run, self.sim_at(p));
-                self.pb.released.push(Released { target: target.clone(), from: p, run, t, bind: f64::INFINITY, blend: 0.0 });
+                self.pb.released.push(Released { target: target.clone(), from: p, run, t, bind: f64::INFINITY, blend: 0.0, ease: prismal_ir::present::Ease::Smooth });
                 p
             }
-            TAction::Bind { target, duration } => {
+            TAction::Bind { target, duration, ease } => {
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(0.0);
                 match self.pb.released.iter_mut().rev().find(|r| &r.target == target && r.bind.is_infinite()) {
                     Some(r) => {
                         r.bind = p;
                         r.blend = d;
+                        r.ease = ease.unwrap_or(prismal_ir::present::Ease::Smooth);
                         p + d
                     }
                     None => {
@@ -981,7 +987,7 @@ impl Playback {
         // and blend back to their projection while a `bind` hands them back.
         for r in self.released.iter().filter(|r| r.from <= p && p < r.bind + r.blend) {
             let Some(held) = self.held(r) else { continue };
-            let k = if p < r.bind { 0.0 } else { ease((p - r.bind) / r.blend) };
+            let k = if p < r.bind { 0.0 } else { r.ease.apply((p - r.bind) / r.blend) };
             let mut swap = |x: &mut crate::frame::RepFrame| {
                 if x.id == r.target {
                     match lerp_shape(&held.shape, &x.shape, k) {
@@ -1026,11 +1032,11 @@ impl Playback {
         retain_reps(&mut overlay, &keep);
         let mut animate = |r: &mut crate::frame::RepFrame| {
             if let Some(h) = self.hidden.iter().find(|h| h.0 == r.id && h.1 <= p && p < h.1 + h.2) {
-                r.opacity = Some(1.0 - ease((p - h.1) / h.2));
+                r.opacity = Some(1.0 - h.3.apply((p - h.1) / h.2));
             }
             if let Some(s) = self.shown.iter().find(|s| s.rep.rep.id == r.id && s.from <= p) {
-                if let Some((style, d)) = s.reveal {
-                    let k = if d > 0.0 { ease((p - s.from) / d) } else { 1.0 };
+                if let Some((style, d, e)) = s.reveal {
+                    let k = if d > 0.0 { e.apply((p - s.from) / d) } else { 1.0 };
                     if k < 1.0 {
                         match (&mut r.shape, style) {
                             // A group drawn: its paths are drawn, its markers fade in.
@@ -1130,7 +1136,7 @@ impl Playback {
                 any = true;
                 let target = c.center.as_ref().and_then(|ce| v.run.eval_state(ce, &vals, t).ok()).map(|pt| ctx.to_view(&crate::flat(&pt))).or(center);
                 let tz = c.zoom.unwrap_or(zoom);
-                let k = if c.duration > 0.0 { ease((p - c.from) / c.duration) } else { 1.0 };
+                let k = if c.duration > 0.0 { c.ease.apply((p - c.from) / c.duration) } else { 1.0 };
                 zoom += (tz - zoom) * k;
                 match (center, target) {
                     (Some(a), Some(b)) => {

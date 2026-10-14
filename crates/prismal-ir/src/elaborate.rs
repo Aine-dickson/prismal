@@ -1296,8 +1296,8 @@ impl<'a> PCx<'a, '_> {
             let ex = |p: &mut Self, e: &Option<Expr>| e.as_ref().map(|x| p.e(&s, x));
             let na = match a {
                 Action::Show { view, reps } => Action::Show { view: view.clone(), reps: self.reps(&s, reps) },
-                Action::Reveal { view, style, duration, reps } => Action::Reveal { view: view.clone(), style: *style, duration: ex(self, duration), reps: self.reps(&s, reps) },
-                Action::Camera { view, center, zoom, duration } => Action::Camera { view: view.clone(), center: ex(self, center), zoom: ex(self, zoom), duration: ex(self, duration) },
+                Action::Reveal { view, style, duration, ease, reps } => Action::Reveal { view: view.clone(), style: *style, duration: ex(self, duration), ease: *ease, reps: self.reps(&s, reps) },
+                Action::Camera { view, center, zoom, duration, ease } => Action::Camera { view: view.clone(), center: ex(self, center), zoom: ex(self, zoom), duration: ex(self, duration), ease: *ease },
                 Action::Narrate { text, duration } => Action::Narrate { text: text.clone(), duration: ex(self, duration) },
                 Action::Run { rate } => Action::Run { rate: self.e(&s, rate) },
                 Action::Seek { time } => Action::Seek { time: self.e(&s, time) },
@@ -1319,18 +1319,18 @@ impl<'a> PCx<'a, '_> {
                     for id in ids {
                         out.push(match a {
                             Action::Highlight { .. } => Action::Highlight { target: id },
-                            Action::Hide { duration, .. } => Action::Hide { target: id, duration: ex(self, duration) },
+                            Action::Hide { duration, ease, .. } => Action::Hide { target: id, duration: ex(self, duration), ease: *ease },
                             Action::Animate { property, to, word, duration, ease, .. } => Action::Animate { target: id, property: *property, to: ex(self, to), word: word.clone(), duration: ex(self, duration), ease: *ease },
                             Action::Release { .. } => Action::Release { target: id },
-                            Action::Bind { duration, .. } => Action::Bind { target: id, duration: ex(self, duration) },
+                            Action::Bind { duration, ease, .. } => Action::Bind { target: id, duration: ex(self, duration), ease: *ease },
                             _ => unreachable!(),
                         });
                     }
                     continue;
                 }
-                Action::Hide { target, duration } => Action::Hide { target: target.clone(), duration: ex(self, duration) },
+                Action::Hide { target, duration, ease } => Action::Hide { target: target.clone(), duration: ex(self, duration), ease: *ease },
                 Action::Animate { target, property, to, word, duration, ease } => Action::Animate { target: target.clone(), property: *property, to: ex(self, to), word: word.clone(), duration: ex(self, duration), ease: *ease },
-                Action::Bind { target, duration } => Action::Bind { target: target.clone(), duration: ex(self, duration) },
+                Action::Bind { target, duration, ease } => Action::Bind { target: target.clone(), duration: ex(self, duration), ease: *ease },
                 other => other.clone(),
             };
             out.push(na);

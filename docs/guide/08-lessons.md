@@ -576,7 +576,7 @@ The end of `roll` is found by locating the event `done`, so it is checked within
 | `animate name line to dashed [for d]` | changes the line style, halfway through `d` (a style has no values between) |
 | `animate name scale to 2 [for d]` | draws the shape twice as large about its centre (an arrow about its base); a marker's dot and an arrow's head grow too |
 | `animate name morph to other [for d]` | changes the drawn shape into the shape of the representation `other`, point by point |
-| `... ease linear`, `ease in`, `ease out`, `ease smooth` | at a constant rate; starting slowly; ending slowly; both (the default) |
+| `... ease linear`, `ease in`, `ease out`, `ease smooth` | at a constant rate; starting slowly; ending slowly; both (the default). Also after `reveal`, `hide ... for`, `camera` and `bind`: `camera scene zoom 2 for 1 s ease in` |
 
 A morph's target is usually hidden: it is there to give a shape, and `hide` it in the first beat. Between two shapes of one form, corners are matched in the order they are written: list the target's corners in the same order as the source's, or the shape turns inside out on the way (a triangle whose corners are matched in mirrored order flattens into a line halfway). The morph ends with exactly the target's shape, so a square that becomes a circle is a circle afterwards, drawn with the square's own style.
 
