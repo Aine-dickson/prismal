@@ -29,6 +29,7 @@ A guide to writing Prismal programs in the working syntax (D-028), from a first 
 | [15. Chance](15-chance.md) | random events at a rate, distributions, seeds, testing random models |
 | [16. Fields](16-fields.md) | values at every point of a line or a plane: heat, waves, grids, boundaries, heatmaps |
 | [17. Solving equations](17-solving-equations.md) | unknowns found from equations: circuits, equilibria, equations that give rates |
+| [18. Constrained motion](18-constraints.md) | constraints the runtime enforces: a bob on a rod, a bead on a wire, a double pendulum, a point held on a curve |
 
 ## Running a program
 

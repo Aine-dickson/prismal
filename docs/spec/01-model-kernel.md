@@ -341,6 +341,7 @@ The first slice (D-001) exercises neither dynamic collections nor relations. The
 - **MK-10.5** Evaluation that does not terminate within the runtime's evaluation limit yields `invalid` (runtime contract).
 - **MK-10.6** Every expression keeps its symbolic structure in the IR. Its evaluated value is separate from it (R-48: expression is not evaluated value). This lets equations and definitions be displayed, differentiated symbolically by libraries, and consumed by a later acausal solver (D-007).
 - **MK-10.7** A **derived function value** is a derived binding (MK-6.4) of function type whose body MAY read model bindings, for example `f(x) = a * x^2` with `a` a parameter. Like every derived binding it is evaluated at every instant on current values, so an application `f(2)` always uses the current `a`; nothing is captured or stored. Its dependencies (section 13) are the bindings its body reads. A stored binding (constant, parameter, input, state) of function type MUST hold a closed function: one that reads no bindings other than its parameters and constants (D-029).
+- **MK-10.7a** **Built-in functions** (D-093 adds `dot`): `sin`, `cos`, `tan`, `exp`, `log` of dimensionless values; `sqrt` (half the dimension's exponents), `abs`, `min`, `max`, `atan2(y, x)` of quantities; `dot(a, b)` of two vectors of one space, of dimension the product of theirs, or of two quantities, their product. A name the author declares wins over a built-in function.
 - **MK-10.8** The **named constant** `π` (also written `pi`) is a dimensionless literal kept by name in the IR, so that formulas show it (D-039, D-034). MK-3.8 applies to it as to a bare literal.
 
 ---
@@ -356,7 +357,7 @@ The first slice (D-001) exercises neither dynamic collections nor relations. The
   - `display`: shown with its symbols linked to bindings; no runtime effect.
   - `check`: in addition, the runtime evaluates the residual `lhs - rhs` and reports when `|residual|` exceeds the declared tolerance. A violated check produces a diagnostic, never a state change.
 - **MK-11.3** Both sides of an equation MUST have the same dimension; a mismatch is a static error, whatever the role.
-- **MK-11.4** An equation does not define, assign or evolve any binding, except as a solved equation (MK-11.7, MK-11.9). Evolution is written causally with flows and derived bindings (sections 6, 14), and values that only equations determine together are declared as unknowns (D-092). A `constraint` role that a solver enforces is reserved for constraint enforcement (D-020).
+- **MK-11.4** An equation does not define, assign or evolve any binding, except as a solved equation (MK-11.7, MK-11.9). Evolution is written causally with flows and derived bindings (sections 6, 14), and values that only equations determine together are declared as unknowns (D-092). A constraint the runtime enforces is a constraint with the policy `enforce` (MK-12.6, D-093); its rate that reads an unknown is a solved equation (MK-12.7).
 - **MK-11.5** An equation MAY reference `der(x)` for a continuous state `x`; in a check, `der(x)` evaluates to the combined flow of `x` (section 14). This lets `m a = F` be checked against the running model.
 
 **Solved equations (D-092).**
@@ -374,17 +375,27 @@ The first slice (D-001) exercises neither dynamic collections nor relations. The
 ## 12. Constraints
 
 - **Restates:** R-25, R-41, R-50.
-- **Decisions:** D-007, D-020.
-- **Prior art:** departs from constraint-enforcing systems (Modelica constraint equations, physics-engine joints as in Box2D, GeoGebra points constrained to objects), which move state to satisfy a constraint. Follows design-by-contract (Eiffel) and database integrity constraints, which check and reject.
+- **Decisions:** D-007, D-020, D-093.
+- **Prior art:** checked constraints follow design-by-contract (Eiffel) and database integrity constraints, which check and reject. Enforced constraints (MK-12.6 to MK-12.9) follow the index reduction of differential-algebraic equations (Pantelides 1988; Modelica tools), with the constraint differentiated until it determines the multiplier, and the projection of the state onto the constraint manifold after each step (Hairer, Lubich and Wanner, Geometric Numerical Integration, section IV.4; Ascher and Petzold 1998). They depart from physics engines (Box2D joints), which compute constraint forces from masses the model would have to declare, and from Baumgarte stabilization, whose coefficients are tuned per model.
 
 - **MK-12.1** A **constraint** is a Boolean expression over bindings, with an optional tolerance, and a **policy**:
   - `reject`: an intervention or operation whose result violates the constraint is rejected; the state before it stands (R-25, R-41).
   - `report`: a violation produces a diagnostic; execution continues.
   - `stop`: a violation stops the run with an `invalid` status carrying the constraint as cause.
-- **MK-12.2** In v0 constraints are **checked, never enforced**. The runtime never changes state to satisfy a constraint. A system whose motion is constrained (a pendulum bob on a rod) is written in coordinates that satisfy the constraint by construction (the angle), and the constraint MAY be stated as a check.
+  - `enforce` (D-093): the runtime keeps the constraint true (MK-12.6 to MK-12.9); it is never violated, so never reported.
+- **MK-12.2** A constraint with the policy `reject`, `report` or `stop` is **checked, never enforced**: the runtime never changes state to satisfy it. A system whose motion is constrained MAY be written in coordinates that satisfy the constraint by construction (a pendulum in its angle), with the constraint stated as a check; or with the constraint enforced (MK-12.6).
 - **MK-12.3** Constraints are checked at initialization, after every committed transition at an event instant, after every intervention, and on accepted continuous steps. A violation that begins and ends between two accepted steps is not guaranteed to be detected; an author who needs exact detection writes the boundary as an event guard (section 15).
 - **MK-12.4** Value restrictions on parameters (`mass > 0 kg`, R-50) are constraints with default policy `reject`. Other constraints have default policy `report`.
-- **MK-12.5** Constraint enforcement (projection onto a constraint set, constrained dragging) is reserved for a later extension together with acausal solving (D-007).
+- **MK-12.5** Enforced constraints are not checked as in MK-12.3; MK-12.10 says when the runtime projects onto them.
+- **MK-12.6** **Enforced constraints** (D-093). A constraint with the policy `enforce` MUST be an equality `a == b` of numbers, quantities, vectors or points, without a tolerance (MK-E01). It is kept true at every committed state.
+- **MK-12.7** **Rates.** The constraint's **rates** are its time derivatives along the flows: each continuous state is replaced by its rate (its flow, MK-14.5), parameters, constants, inputs and discrete state have rate zero, derived values are differentiated through their definitions, `t` and `elapsed` have rate 1. Differentiation covers `+ - * /`, powers with a number as exponent, `sqrt`, `sin`, `cos`, `tan`, `exp`, `log`, `abs`, `atan2`, `dot`, components and norms; any other form (`if`, `match`, `otherwise`, `min`, `max`, function values, draws, fields, `der`) is MK-E36. The constraint, then its first rate, then its second, up to its third, are taken in turn:
+  - the first that reads an unknown (MK-6.4a), directly or through derived values, is a **solved equation** (MK-11.7) of the model, named after the constraint, and counts in the matching of unknowns with equations (MK-E34). For a body held by a force, the force is the unknown and the second rate reads it through the body's flow: `|bob - pivot| == L` with `der(vel) = g - tension / m * (bob - pivot) / |bob - pivot|`;
+  - the ones before it, which read no unknown, are the constraint's **levels**, onto which the state is projected (MK-12.8);
+  - if a rate is zero (nothing the constraint reads changes along the flows), the constraint is enforced by projection alone, with no solved equation;
+  - if none of the constraint and its first three rates reads an unknown, MK-E36 says so and asks for the force that holds it, as an unknown read by the flows.
+- **MK-12.8** **What moves.** Each level moves the state it reads that the levels before it do not read (velocities after positions), continuous state before discrete state. Parameters move only when the change being committed sets them (MK-12.10), and so does a state that the change sets when the level reads it: the bob a learner drags moves, not the bob it hangs from. A level that reads no state and no parameter is MK-E36.
+- **MK-12.9** A rate read by the solve is computed from the state at that instant; the solve is the one of MK-11.7 with the enforced constraints' solved equations among its equations. Equations of the first degree in the force (every mechanical constraint) are solved exactly from any guess.
+- **MK-12.10** **Projection** (RC-5.10) moves the state onto the levels, in order, by the smallest change: at initialization, at the end of every accepted continuous step, and in every transition (an event's operations, an intervention), before constraints are checked. A projection that fails (dependent levels, no convergence, or levels over parameters alone that the values do not satisfy) makes the state invalid: at initialization the run does not start.
 
 ---
 
@@ -609,6 +620,7 @@ The kernel defines these static errors. They are detected before execution, on t
 | MK-E33 | A boundary of a binding that is not a field, an edge the grid lacks or held twice, or periodic with held edges | MK-9.6 |
 | MK-E34 | Unknowns not determined by the solved equations: an unknown no solved equation reads, more or fewer equation components than unknowns, or no matching of unknowns to components | MK-11.7 |
 | MK-E35 | A solved equation that reads the rate of a state with a flow, or a field; a non-check equation that reads the rate of a vector or point state without a flow | MK-11.9 |
+| MK-E36 | An enforced constraint that cannot be enforced: a form without a rate, no rate up to the third that reads an unknown, or a level that reads nothing the runtime can move | MK-12.7, MK-12.8 |
 | MK-E29 | `noise` outside a flow | MK-14.16 |
 | MK-E30 | A flow that is not linear in each `noise` | MK-14.16 |
 
@@ -689,7 +701,7 @@ model Pendulum in Plane {
 }
 ```
 
-- The rod constraint holds by construction (MK-12.2); the constraint is a check.
+- The rod constraint holds by construction (MK-12.2); the constraint is a check. The same pendulum written as a free bob with an enforced rod is in guide chapter 18 (MK-12.6).
 - `L * (sin(θ), -cos(θ))`: the sum is added to the point `pivot`, so the tuple is expected to be a vector of `Plane` and is `Vector<Plane, 1>` (MK-4.8, D-032); scaling by `L` gives `Vector<Plane, L>`, so `pivot + ...` is a point (MK-4.4).
 - Energy drift is observed through `energy` (a derived binding). Expressible.
 
@@ -799,7 +811,7 @@ Positions that elaborate accepted decisions without changing them are specified 
 | Random rates that depend on continuous state or time | Later extension of D-083 |
 | Algorithmic process mode (RUN-04) | Slice that needs it |
 | Field state evolution (D-010) | Done on grids of one and two axes: MK-9.4 to MK-9.8 (D-091); meshes, vector fields, fields in objects, noise in fields later |
-| Acausal equations, constraint enforcement (D-007, D-020) | Solved equations done: MK-11.6 to MK-11.9, RC-5.5 to RC-5.9 (D-092). Vector unknowns, solved equations over fields, constraint enforcement and constrained mechanics (index reduction or projection) later |
+| Acausal equations, constraint enforcement (D-007, D-020) | Solved equations done: MK-11.6 to MK-11.9, RC-5.5 to RC-5.9 (D-092). Enforced constraints and constrained mechanics done: MK-12.6 to MK-12.10, RC-5.10 (D-093). Vector unknowns, solved equations over fields, inequality constraints (contact, a rope that goes slack), constraints in object types across members (they work as written, untested) later |
 | Quantity kinds of equal dimension (torque and energy) | Open; to be raised when a reference program needs it |
 | Checks and measurements evaluated at event instants (19.1) | Resolved: `03-presentation-kernel.md` PK-3.4 (`on(E)` observations) and section 4 (expectations) |
 | Modules, imports, packaging, versioning of libraries (R-55) | Extension specification |

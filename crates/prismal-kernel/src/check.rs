@@ -461,7 +461,9 @@ impl<'a, 'b> Tc<'a, 'b> {
         other: impl Fn(&Type) -> Option<Type>,
     ) -> Option<((CExpr, Type), (CExpr, Type))> {
         if Self::needs_ctx(l) && !Self::needs_ctx(r) {
-            let rt = self.expr(r, None)?;
+            // A vector expected of the whole is expected of each operand, so a tuple scaled by
+            // a quantity on the right is a vector too (D-032): `(0 m/s^2, -g) + a * (s, c)`.
+            let rt = self.expr(r, exp_l.filter(|t| matches!(t, Type::Vector { .. })))?;
             let want = other(&rt.1).or_else(|| exp_l.cloned());
             let lt = self.expr(l, want.as_ref())?;
             Some((lt, rt))
@@ -591,6 +593,20 @@ impl<'a, 'b> Tc<'a, 'b> {
     }
 
     fn call(&mut self, f: Func, args: &[Expr]) -> Typed {
+        // D-093: `dot(a, b)` of two vectors of one space, or of two quantities.
+        if f == Func::Dot {
+            if args.len() != 2 {
+                return self.err("MK-E01", "dot takes 2 arguments".into());
+            }
+            let (a, at) = self.expr(&args[0], None)?;
+            let (b, bt) = self.expr(&args[1], None)?;
+            let dim = match (&at, &bt) {
+                (Type::Quantity { dim: x }, Type::Quantity { dim: y }) => x.mul(y),
+                (Type::Vector { space: s, dim: x }, Type::Vector { space: t, dim: y }) if s == t => x.mul(y),
+                _ => return self.err("MK-E01", format!("dot of {} and {}: two vectors of one space, or two quantities", show(&at), show(&bt))),
+            };
+            return Some((CExpr::Call(f, vec![a, b]), Type::Quantity { dim }));
+        }
         // D-091: operations on a field take its name.
         let on_field = matches!(f, Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean) || (matches!(f, Func::Min | Func::Max) && args.len() == 1);
         if on_field {
@@ -642,7 +658,7 @@ impl<'a, 'b> Tc<'a, 'b> {
                 let rt = if f == Func::Atan2 { Type::real() } else { Type::Quantity { dim } };
                 Some((CExpr::Call(f, vec![a, bc]), rt))
             }
-            Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean => unreachable!(),
+            Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean | Func::Dot => unreachable!(),
         }
     }
 
@@ -930,6 +946,15 @@ fn check_functions(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, 
 
 /// Checks a model and compiles it (MK section 18). Returns every diagnostic found.
 pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagnostic>> {
+    // D-093: the rate of each enforced constraint that reads an unknown is solved as an
+    // equation (MK-12.7).
+    let elaborated;
+    let model = if model.constraints.iter().any(|k| k.policy == Policy::Enforce && !model.equations.iter().any(|q| q.id == prismal_ir::enforce::equation_id(&k.id))) {
+        elaborated = prismal_ir::enforce::elaborate(model.clone());
+        &elaborated
+    } else {
+        model
+    };
     let mut diags = vec![];
     let mut index = HashMap::new();
     for (i, b) in model.bindings.iter().enumerate() {
@@ -1253,7 +1278,58 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         if cond.is_none() && parts.is_none() {
             continue;
         }
-        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy });
+        let mut levels = vec![];
+        if k.policy == Policy::Enforce {
+            if k.tol.is_some() {
+                tc.err("MK-E01", format!("constraint `{}` is enforced, so it holds exactly: drop `within` (MK-12.6)", k.name));
+                continue;
+            }
+            match prismal_ir::enforce::rates(model, &k.cond) {
+                Err(why) => {
+                    tc.err("MK-E36", format!("constraint `{}` cannot be enforced: {why} (MK-12.7)", k.name));
+                    continue;
+                }
+                Ok(rates) => {
+                    let mut before: BTreeSet<usize> = BTreeSet::new();
+                    for (l, r) in &rates.levels {
+                        let Some((lc, lt)) = tc.expr(l, None) else { break };
+                        let Some(rc) = tc.expect(r, &lt) else { break };
+                        let width = match &lt {
+                            Type::Vector { space, .. } | Type::Point { space } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(1),
+                            _ => 1,
+                        };
+                        let reads: BTreeSet<usize> = prismal_ir::enforce::stored_reads(model, l)
+                            .into_iter()
+                            .chain(prismal_ir::enforce::stored_reads(model, r))
+                            .filter_map(|id| index.get(&id).copied())
+                            .filter(|&i| matches!(model.bindings[i].ty, Type::Quantity { .. } | Type::Vector { .. } | Type::Point { .. }))
+                            .collect();
+                        let fresh: BTreeSet<usize> = reads.difference(&before).copied().collect();
+                        let pool = if fresh.is_empty() { &reads } else { &fresh };
+                        // State moves, continuous before discrete: a bob is moved onto its rod,
+                        // never the pivot. Parameters move only when a change sets them (MK-12.8).
+                        let vars: Vec<usize> = [Role::Continuous, Role::Discrete]
+                            .iter()
+                            .map(|role| pool.iter().copied().filter(|&i| model.bindings[i].role == *role).collect::<Vec<_>>())
+                            .find(|v| !v.is_empty())
+                            .unwrap_or_default();
+                        let params: Vec<usize> = pool.iter().copied().filter(|&i| model.bindings[i].role == Role::Parameter).collect();
+                        if vars.is_empty() && params.is_empty() {
+                            tc.err("MK-E36", format!("constraint `{}` reads nothing the runtime can move: no state or parameter (MK-12.8)", k.name));
+                            break;
+                        }
+                        let refs: Vec<Id> = l.refs().into_iter().chain(r.refs()).collect();
+                        let derived: Vec<usize> = closure_derived(model, &index, &refs).into_iter().filter(|&i| model.bindings[i].role == Role::Derived).collect();
+                        before.extend(reads);
+                        levels.push(CLevel { lhs: lc, rhs: rc, width, vars, params, derived });
+                    }
+                    if levels.len() != rates.levels.len() {
+                        continue;
+                    }
+                }
+            }
+        }
+        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy, levels });
     }
 
     // Solved equations (MK-11.6 to MK-11.9, D-092).
@@ -1268,6 +1344,11 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     // Dependency analysis (MK section 13).
     let derived_order = order_derived(model, &index, plan.as_ref(), &mut diags);
     let init_order = order_init(model, &index, plan.as_ref(), &mut diags);
+    for k in &mut cconstraints {
+        for lv in &mut k.levels {
+            lv.derived = derived_order.iter().copied().filter(|i| lv.derived.contains(i)).collect();
+        }
+    }
 
     if !diags.is_empty() {
         return Err(diags);
@@ -1762,7 +1843,8 @@ fn random_rate_varies(scope: &Scope, rate: &Expr) -> bool {
             reads_time(d);
         }
     }
-    time || reads.iter().any(|i| scope.model.bindings[*i].role == Role::Continuous)
+    // An unknown follows the state its equations read (D-092), so it may vary too.
+    time || reads.iter().any(|i| matches!(scope.model.bindings[*i].role, Role::Continuous | Role::Unknown))
 }
 
 /// MK-14.16 (D-090): whether `e` is linear in each white noise: noise appears only in sums,
@@ -1888,6 +1970,12 @@ fn self_retriggering(model: &Model, index: &HashMap<Id, usize>, guard: &Expr, ha
                 for f in model.flows.iter().filter(|f| f.target == b.id) {
                     let s = specialize(&f.expr, &consts);
                     stack.extend(s.refs().iter().filter_map(|r| index.get(r).copied()));
+                }
+            }
+            // An unknown depends on what the solved equations read (D-092).
+            Role::Unknown => {
+                for q in model.equations.iter().filter(|q| q.role != EquationRole::Check) {
+                    stack.extend(q.lhs.refs().iter().chain(&q.rhs.refs()).filter_map(|r| index.get(r).copied()));
                 }
             }
             _ => {}

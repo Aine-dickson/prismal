@@ -11,6 +11,7 @@ pub mod units;
 
 pub use dim::{Dim, Ratio};
 pub mod elaborate;
+pub mod enforce;
 
 pub use expr::{Agg, Arm, BinOp, Builtin, Constant, Dist, Expr, Func, Guarded, Lambda};
 pub use units::Unit;
@@ -497,6 +498,9 @@ pub enum Policy {
     Reject,
     Report,
     Stop,
+    /// The runtime keeps the constraint satisfied (MK-12.6, D-093): the state is projected
+    /// onto it, and the unknowns that hold it are solved from its rates.
+    Enforce,
 }
 
 /// A constraint (MK section 12).

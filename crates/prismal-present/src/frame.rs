@@ -1699,7 +1699,8 @@ fn piecewise_constant(cm: &CModel, e: &Expr) -> bool {
             }
             let Some(b) = cm.ir.bindings.iter().find(|b| b.id == r) else { return false };
             match b.role {
-                Role::Continuous => return false,
+                // An unknown follows the state its equations read (D-092).
+                Role::Continuous | Role::Unknown => return false,
                 Role::Derived => match &b.def {
                     Some(d) => stack.push(d),
                     None => return false,

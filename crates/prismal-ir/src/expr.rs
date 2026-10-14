@@ -90,6 +90,8 @@ pub enum Func {
     Min,
     Max,
     Atan2,
+    /// The dot product of two vectors of one space, or the product of two quantities (D-093).
+    Dot,
     /// Of a field, at the cell of a pointwise expression (MK-9.7, D-091).
     Laplacian,
     Gradient,

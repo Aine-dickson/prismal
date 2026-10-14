@@ -548,6 +548,14 @@ impl CExpr {
                 binary(*op, a, b)
             }
             CExpr::Powi(e, p) => finite(e.eval(c)?.num().powf(*p), "power"),
+            CExpr::Call(F::Dot, args) => {
+                let (a, b) = (args[0].eval(c)?, args[1].eval(c)?);
+                let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
+                let n = a.width();
+                a.write_to(&mut x[..n]);
+                b.write_to(&mut y[..n]);
+                finite(x[..n].iter().zip(&y[..n]).map(|(p, q)| p * q).sum(), "dot product")
+            }
             CExpr::Call(f, args) => {
                 let x = args[0].eval(c)?.num();
                 let y = if args.len() > 1 { args[1].eval(c)?.num() } else { 0.0 };
@@ -572,6 +580,7 @@ impl CExpr {
                     F::Min => x.min(y),
                     F::Max => x.max(y),
                     F::Atan2 => x.atan2(y),
+                    F::Dot => unreachable!(),
                     F::Laplacian | F::Gradient | F::Integral | F::Mean => return Err(Status::invalid("a field operation compiled as a call")),
                 };
                 finite(r, "function")
@@ -641,6 +650,69 @@ impl CExpr {
                 v => Err(Status::invalid(format!("{v} is not a case"))),
             },
         }
+    }
+}
+
+impl CExpr {
+    /// The value and, per component, the size of the terms it is computed from: `a - b` with
+    /// `a` near `b` has a value near 0 and the size `|a| + |b|`, the scale its rounding is
+    /// measured against (RC-5.6). Sizes multiply through products, quotients and dot
+    /// products, and follow components and vectors; other forms have the size of their value.
+    pub fn eval_sized(&self, c: &Ctx, width: usize) -> Result<(Value, [f64; 3]), Status> {
+        let plain = |v: Value| {
+            let mut x = [0.0; 3];
+            let w = v.width();
+            if w <= 3 && !matches!(v, Value::Field(_)) && w > 0 {
+                v.write_to(&mut x[..w]);
+            }
+            (v, x.map(f64::abs))
+        };
+        let size = |v: &Value| v.width().min(3);
+        Ok(match self {
+            CExpr::Bin(op @ (BinOp::Add | BinOp::Sub), l, r) => {
+                let ((a, sa), (b, sb)) = (l.eval_sized(c, width)?, r.eval_sized(c, width)?);
+                (binary(*op, a, b)?, [sa[0] + sb[0], sa[1] + sb[1], sa[2] + sb[2]])
+            }
+            CExpr::Bin(op @ (BinOp::Mul | BinOp::Div), l, r) => {
+                let ((a, sa), (b, sb)) = (l.eval_sized(c, width)?, r.eval_sized(c, width)?);
+                let (na, nb) = (size(&a), size(&b));
+                // A product's size is the product of its factors' sizes; a quotient's, its
+                // numerator's over the divisor.
+                let divisor = match &b {
+                    Value::Num(x) if *x != 0.0 => x.abs(),
+                    _ => 1.0,
+                };
+                let v = binary(*op, a, b)?;
+                let mut s = [0.0; 3];
+                for (k, x) in s.iter_mut().enumerate() {
+                    let p = if na == 1 { sa[0] } else { sa[k] };
+                    let q = if nb == 1 { sb[0] } else { sb[k] };
+                    *x = if *op == BinOp::Mul { p * q } else { p / divisor };
+                }
+                (v, s)
+            }
+            CExpr::Call(F::Dot, args) => {
+                let ((a, sa), (_, sb)) = (args[0].eval_sized(c, 3)?, args[1].eval_sized(c, 3)?);
+                let n = a.width().min(3);
+                (self.eval(c)?, [(0..n).map(|k| sa[k] * sb[k]).sum(), 0.0, 0.0])
+            }
+            CExpr::Comp(e, k) => {
+                let (_, s) = e.eval_sized(c, 3)?;
+                (self.eval(c)?, [s[(*k).min(2)], 0.0, 0.0])
+            }
+            CExpr::MakeVec(items) => {
+                let mut s = [0.0; 3];
+                for (k, e) in items.iter().take(3).enumerate() {
+                    s[k] = e.eval_sized(c, 1)?.1[0];
+                }
+                (self.eval(c)?, s)
+            }
+            CExpr::Neg(e) => {
+                let (_, s) = e.eval_sized(c, width)?;
+                (self.eval(c)?, s)
+            }
+            _ => plain(self.eval(c)?),
+        })
     }
 }
 

@@ -121,7 +121,7 @@ run two_bounces of Drop with Lab {
 | `flow { }` | a model | rates of change: `der(x) = ...` | `der(x) = v` |
 | `event name on trigger { }` | a model | operations: `set`, `emit` | `set vel = 0` |
 | `process name { }` | a model | flows and events grouped under a name | `flow der(v) += -(k / m) * x` |
-| `equation`, `constraint` | a model | stated relations, solved when they read an unknown; checked conditions | `equation loop: V0 == I * R + Vc` |
+| `equation`, `constraint` | a model | stated relations, solved when they read an unknown; checked conditions, or kept true with `policy enforce` | `constraint rod: \|bob - pivot\| == L policy enforce` |
 | `presentation Name for Model { }` | the top level | the blocks below | |
 | `view name: spatial(...) { }` | a presentation | representations drawn in the plane | `marker(pos) as ball` |
 | `view name: plot(...) { }` | a presentation | representations drawn against axes | `series_plot(x every 0.02 s)` |

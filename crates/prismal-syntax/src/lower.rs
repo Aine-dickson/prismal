@@ -53,7 +53,7 @@ pub fn named_dim(name: &str) -> Option<Dim> {
     })
 }
 
-const FUNCS: [(&str, Func, usize); 14] = [
+const FUNCS: [(&str, Func, usize); 15] = [
     ("sin", Func::Sin, 1),
     ("cos", Func::Cos, 1),
     ("tan", Func::Tan, 1),
@@ -64,6 +64,7 @@ const FUNCS: [(&str, Func, usize); 14] = [
     ("min", Func::Min, 2),
     ("max", Func::Max, 2),
     ("atan2", Func::Atan2, 2),
+    ("dot", Func::Dot, 2),
     // Of fields (D-091); `min` and `max` of one field are its smallest and largest value.
     ("laplacian", Func::Laplacian, 1),
     ("gradient", Func::Gradient, 1),
@@ -717,9 +718,10 @@ impl<'a> ModelCx<'a> {
                         None | Some("report") => Policy::Report,
                         Some("reject") => Policy::Reject,
                         Some("stop") => Policy::Stop,
+                        Some("enforce") => Policy::Enforce,
                         Some(other) => {
                             let span = c.policy.as_ref().unwrap().span;
-                            self.err("SX-E02", format!("unknown policy `{other}`: expected `reject`, `report` or `stop`"), span);
+                            self.err("SX-E02", format!("unknown policy `{other}`: expected `reject`, `report`, `stop` or `enforce`"), span);
                             Policy::Report
                         }
                     };

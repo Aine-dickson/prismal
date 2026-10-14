@@ -825,6 +825,10 @@ impl<'a> Engine<'a> {
     fn check_constraints(&self, vals: &[Value], _initial: bool) -> Result<Vec<RunDiag>, RunDiag> {
         let mut reports = vec![];
         for k in &self.cm.constraints {
+            // An enforced constraint is kept by projection (RC-5.10), not checked.
+            if k.policy == Policy::Enforce {
+                continue;
+            }
             let c = self.ctx(vals);
             let ok = if let Some((l, r, tol)) = &k.within {
                 match (l.eval(&c), r.eval(&c)) {
@@ -852,6 +856,7 @@ impl<'a> Engine<'a> {
             match k.policy {
                 Policy::Report => reports.push(d),
                 Policy::Reject | Policy::Stop => return Err(d),
+                Policy::Enforce => unreachable!("skipped above"),
             }
         }
         Ok(reports)
@@ -1116,6 +1121,7 @@ impl<'a> Engine<'a> {
                 self.t = te;
                 self.n = 0;
                 cm.load_y(&mut self.vals, &ye);
+                cm.project(&mut self.vals, self.t, self.cfg.t0, &[]).map_err(|s| self.diag(Category::Model, s.cause, None))?;
                 cm.update_derived(&mut self.vals, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
                 self.commit();
                 self.after_step_checks()?;
@@ -1134,6 +1140,9 @@ impl<'a> Engine<'a> {
             // whole. The run ends at the last state found valid inside it.
             let mut v1 = self.vals.clone();
             cm.load_y(&mut v1, &y1);
+            // RC-5.10: the end of each step is moved back onto the enforced constraints, so
+            // the solver's error does not accumulate as drift.
+            cm.project(&mut v1, t1, self.cfg.t0, &[]).map_err(|s| self.diag(Category::Model, s.cause, None))?;
             cm.update_derived(&mut v1, t1, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
             if let Err(d) = self.check_constraints(&v1, false) {
                 return Err(self.fail_in_step(step, base, d));
@@ -1466,6 +1475,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        let contributions_set: Vec<usize> = contributions.iter().map(|c| c.0).collect();
         for (b, how, vs) in contributions {
             proposed[b] = combine(&how, &self.vals[b], &vs);
         }
@@ -1479,6 +1489,10 @@ impl<'a> Engine<'a> {
                 return Err(self.diag(Category::Conflict, format!("`{}` is set in the transition that destroys its member", self.cm.bindings[b].name), None));
             }
         }
+        // RC-5.10: a transition's result is moved onto the enforced constraints (a bob dragged
+        // off its circle lands on it).
+        let set: Vec<usize> = targets.iter().map(|(b, _)| *b).chain(contributions_set.iter().copied()).collect();
+        self.cm.project(&mut proposed, self.t, self.cfg.t0, &set).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         self.cm.update_derived(&mut proposed, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         match self.check_constraints(&proposed, false) {
             Ok(reports) => self.run.diagnostics.extend(reports),

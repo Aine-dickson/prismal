@@ -28,6 +28,7 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `event E on trigger [if c] [{ ops }] [zeno settle { ops } \| zeno stop]` | an event | 5 |
 | `equation N: a == b [checked within tol]` | a stated relation, shown and optionally checked; an equation that reads an unknown is solved for it | 6, 17 |
 | `constraint N: c [within tol] [policy reject \| report \| stop]` | a checked condition (`within` for `==` only) | 6 |
+| `constraint N: a == b policy enforce` | a condition the runtime keeps true: the state is moved onto it, and the unknown force that holds it is solved for | 18 |
 | `object Name { ... }` | an object type, with the body of a model; declared in a model | 9 |
 | `parts { a: T { x = e }  c: T[n] { x = e } }` | one object, or a collection of `n` members; overrides and input connections, with `index` the member's number | 9 |
 | `flow { for b in c { der(b.x) = e } }` | flows the model writes for each member | 9 |
@@ -66,6 +67,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `t`, `t0`, `elapsed` | current time, start, time since start | 4 |
 | `noise` | white noise in a flow, `der(x) = a + b * noise`: each occurrence independent, of dimension `T^(-1/2)` | 15 |
 | `sin cos tan sqrt exp log abs min max atan2` | functions | 2 |
+| `dot(a, b)` | the dot product of two vectors of one space (or the product of two quantities) | 18 |
 | `T(x)`, `laplacian(T)`, `gradient(T)`, `integral(T)`, `mean(T)`, `min(T)`, `max(T)` | a field read at a position; its Laplacian and gradient in the cell being computed; over the whole field | 16 |
 | `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
@@ -218,6 +220,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `param` | parameters: changed by cases, controls and lessons | 1 |
 | `permit` | what the learner may do | 7 |
 | `policy`, `reject`, `report`, `stop` | what a failed constraint does; `zeno stop` | 5, 6 |
+| `enforce` | `policy enforce`: the runtime keeps the constraint true instead of checking it | 18 |
 | `presentation` | how a model is shown | 1 |
 | `private` | a binding hidden from outside | 2 |
 | `process` | a named group of flows and events | 4 |
@@ -251,7 +254,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce`.
 
 ## Diagnostics
 
@@ -295,6 +298,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E33 | a boundary on something that is not a field, an unknown or repeated edge, or periodic with held edges |
 | MK-E34 | unknowns and the equations that read them do not match: an unknown no equation reads, more or fewer equations than unknowns, or equations that cannot determine their unknowns separately |
 | MK-E35 | an equation solved for an unknown reads a rate (`der`) or a field |
+| MK-E36 | an enforced constraint that cannot be enforced: no rate of it reads an unknown, it has a form without a rate (`if`, `match`, `min`, `max`), or it reads nothing the runtime can move |
 
 **Presentation** (`PK`): E01 broken reference, E02 expression does not check (the kernel's message is quoted), E03 control or action targets something the learner may not change, E04 missing or wrong scale or axis dimension, E05 representation unsuited to its sources or view, E06 representation kind not implemented.
 
