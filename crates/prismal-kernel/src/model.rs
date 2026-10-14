@@ -148,7 +148,28 @@ pub struct CConstraint {
     /// An equality with tolerance: `|lhs - rhs| <= tol`.
     pub within: Option<(CExpr, CExpr, f64)>,
     pub policy: Policy,
+    /// An enforced constraint (D-093) and its rates that read no unknown, from the
+    /// constraint itself: the state is projected onto each in turn (MK-12.8).
+    pub levels: Vec<CLevel>,
 }
+
+/// One rate of an enforced constraint, `lhs == rhs`, and the bindings the projection onto it
+/// moves: those it reads that the lower rates do not (velocities, after positions).
+#[derive(Clone, Debug)]
+pub struct CLevel {
+    pub lhs: CExpr,
+    pub rhs: CExpr,
+    pub width: usize,
+    /// The state it moves.
+    pub vars: Vec<usize>,
+    /// The parameters it reads, moved only by a change that sets them.
+    pub params: Vec<usize>,
+    /// Derived bindings it reads, in dependency order.
+    pub derived: Vec<usize>,
+}
+
+/// The largest number of Gauss-Newton iterations of a projection (RC-5.10).
+pub const PROJECT_ITERATIONS: usize = 30;
 
 /// A checked model, ready to run.
 #[derive(Clone, Debug)]
@@ -248,7 +269,158 @@ impl CModel {
             };
             vals[i] = v;
         }
+        // RC-5.10 (D-093): the starting state satisfies the enforced constraints.
+        if self.project(&mut vals, t0, t0, &[]).map_err(|s| Status { kind: s.kind, cause: format!("initializing: {}", s.cause) })? {
+            self.update_derived(&mut vals, t0, t0)?;
+        }
         Ok(vals)
+    }
+
+    /// RC-5.10 (D-093): moves the values onto the enforced constraints, the constraints
+    /// themselves first and then each rate in turn, by the smallest change of the bindings each
+    /// moves (Gauss-Newton with the minimum-norm step, each binding measured against its own
+    /// size). `set` are the bindings the change being committed sets: where a rate reads some
+    /// of them, only those move (a dragged bob, not the bob it hangs from); parameters move
+    /// only then. Returns whether anything moved; the derived values are then stale, and the
+    /// caller computes them again.
+    pub fn project(&self, vals: &mut [Value], t: f64, t0: f64, set: &[usize]) -> Result<bool, Status> {
+        let depth = self.constraints.iter().map(|k| k.levels.len()).max().unwrap_or(0);
+        let mut moved = false;
+        for p in 0..depth {
+            let rows: Vec<(&CConstraint, &CLevel)> = self.constraints.iter().filter_map(|k| k.levels.get(p).map(|l| (k, l))).collect();
+            let mut vars: Vec<usize> = rows.iter().flat_map(|(_, l)| l.vars.iter().chain(&l.params).copied()).filter(|i| set.contains(i)).collect();
+            if vars.is_empty() {
+                vars = rows.iter().flat_map(|(_, l)| l.vars.iter().copied()).collect();
+            }
+            vars.sort();
+            vars.dedup();
+            let mut derived: Vec<usize> = rows.iter().flat_map(|(_, l)| l.derived.iter().copied()).collect();
+            derived.sort_by_key(|i| self.derived_order.iter().position(|j| j == i));
+            derived.dedup();
+            // The components moved, as (binding, component).
+            let comps: Vec<(usize, usize)> = vars.iter().flat_map(|&b| (0..vals[b].width()).map(move |c| (b, c))).collect();
+            let read = |vals: &[Value]| -> Vec<f64> {
+                comps
+                    .iter()
+                    .map(|&(b, c)| match &vals[b] {
+                        Value::Num(x) => *x,
+                        v => v.arr().v[c],
+                    })
+                    .collect()
+            };
+            let write = |vals: &mut [Value], x: &[f64]| {
+                for (&(b, c), v) in comps.iter().zip(x) {
+                    vals[b] = match &vals[b] {
+                        Value::Num(_) => Value::Num(*v),
+                        Value::Point(a) => {
+                            let mut a = *a;
+                            a.v[c] = *v;
+                            Value::Point(a)
+                        }
+                        Value::Vec(a) => {
+                            let mut a = *a;
+                            a.v[c] = *v;
+                            Value::Vec(a)
+                        }
+                        other => other.clone(),
+                    };
+                }
+            };
+            let residual = |vals: &mut [Value]| -> Result<(Vec<f64>, Vec<f64>), Status> {
+                for &i in &derived {
+                    let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                    let v = self.bindings[i].def.as_ref().expect("checked").eval(&c)?;
+                    vals[i] = v;
+                }
+                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                let (mut r, mut size) = (vec![], vec![]);
+                for (_, l) in &rows {
+                    let ((a, sa), (b, sb)) = (l.lhs.eval_sized(&c, l.width)?, l.rhs.eval_sized(&c, l.width)?);
+                    let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
+                    a.write_to(&mut x[..l.width]);
+                    b.write_to(&mut y[..l.width]);
+                    for j in 0..l.width {
+                        r.push(x[j] - y[j]);
+                        size.push(sa[j] + sb[j]);
+                    }
+                }
+                Ok((r, size))
+            };
+            let names = || rows.iter().map(|(k, _)| format!("`{}`", k.name)).collect::<Vec<_>>().join(", ");
+            let fail = |why: &str| Status::invalid(format!("the constraints {} cannot be enforced here: {why} (RC-5.10)", names()));
+            // The scale of each moved component: the size of its binding's value, or 1 in
+            // coherent SI units.
+            let scale: Vec<f64> = comps
+                .iter()
+                .map(|&(b, _)| {
+                    let mut x = [0.0; 3];
+                    let w = vals[b].width();
+                    vals[b].write_to(&mut x[..w]);
+                    let n = x[..w].iter().map(|v| v * v).sum::<f64>().sqrt();
+                    if n > 0.0 { n } else { 1.0 }
+                })
+                .collect();
+            let mut x = read(vals);
+            let (mut r, mut size) = residual(vals)?;
+            if comps.is_empty() {
+                // Only parameters, none of them changed: the values must already hold.
+                if r.iter().zip(&size).all(|(e, s)| e.abs() <= 1e-9 * s) {
+                    continue;
+                }
+                return Err(fail("they read only parameters, which move only when a change sets them; give values that satisfy them"));
+            }
+            let mut settled = false;
+            for _ in 0..PROJECT_ITERATIONS {
+                if r.iter().zip(&size).all(|(e, s)| e.abs() <= 1e-15 * s || *e == 0.0) {
+                    settled = true;
+                    break;
+                }
+                // The Jacobian by central differences, column by column.
+                let (m, n) = (r.len(), x.len());
+                let mut jac = vec![vec![0.0; n]; m];
+                for j in 0..n {
+                    let h = 1e-6 * (x[j].abs() + scale[j]);
+                    let mut xp = x.clone();
+                    xp[j] += h;
+                    write(vals, &xp);
+                    let (rp, _) = residual(vals)?;
+                    xp[j] -= 2.0 * h;
+                    write(vals, &xp);
+                    let (rm, _) = residual(vals)?;
+                    for i in 0..m {
+                        jac[i][j] = (rp[i] - rm[i]) / (2.0 * h);
+                    }
+                }
+                // The smallest change of the scaled components: with Js = J S,
+                // dx = -S Js^T (Js Js^T)^-1 r.
+                let js: Vec<Vec<f64>> = jac.iter().map(|row| row.iter().zip(&scale).map(|(a, s)| a * s).collect()).collect();
+                let mut normal = vec![vec![0.0; m]; m];
+                for a in 0..m {
+                    for b in 0..m {
+                        normal[a][b] = js[a].iter().zip(&js[b]).map(|(p, q)| p * q).sum();
+                    }
+                }
+                let Some(z) = gauss(normal, r.clone()) else {
+                    write(vals, &x);
+                    return Err(fail("they are dependent, or do not depend on the values they move"));
+                };
+                let dx: Vec<f64> = (0..n).map(|j| -scale[j] * (0..m).map(|i| js[i][j] * z[i]).sum::<f64>()).collect();
+                for (a, d) in x.iter_mut().zip(&dx) {
+                    *a += d;
+                }
+                write(vals, &x);
+                moved = true;
+                (r, size) = residual(vals)?;
+                if dx.iter().zip(&x).zip(&scale).all(|((d, a), s)| d.abs() <= 1e-15 * (a.abs() + s)) {
+                    settled = true;
+                    break;
+                }
+            }
+            if !settled && !r.iter().zip(&size).all(|(e, s)| e.abs() <= 1e-9 * s) {
+                return Err(fail("the projection does not converge"));
+            }
+        }
+        Ok(moved)
     }
 
     /// Recomputes every derived binding from the stored values (MK-6.4).
@@ -303,13 +475,13 @@ impl CModel {
             let (mut r, mut size) = (vec![], vec![]);
             for &k in &s.equations {
                 let q = &self.equations[k];
-                let (a, b) = (q.lhs.eval(&c)?, q.rhs.eval(&c)?);
+                let ((a, sa), (b, sb)) = (q.lhs.eval_sized(&c, q.width)?, q.rhs.eval_sized(&c, q.width)?);
                 let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
                 a.write_to(&mut x[..q.width]);
                 b.write_to(&mut y[..q.width]);
                 for j in 0..q.width {
                     r.push(x[j] - y[j]);
-                    size.push(x[j].abs() + y[j].abs());
+                    size.push(sa[j] + sb[j]);
                 }
             }
             Ok((r, size))

@@ -433,6 +433,7 @@ impl<'a> Printer<'a> {
                     Func::Min => "min",
                     Func::Max => "max",
                     Func::Atan2 => "atan2",
+                    Func::Dot => "dot",
                     Func::Laplacian => "laplacian",
                     Func::Gradient => "gradient",
                     Func::Integral => "integral",
@@ -880,6 +881,7 @@ impl<'a> Printer<'a> {
             Policy::Report => {}
             Policy::Reject => s.push_str(" policy reject"),
             Policy::Stop => s.push_str(" policy stop"),
+            Policy::Enforce => s.push_str(" policy enforce"),
         }
         s
     }
