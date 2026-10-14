@@ -43,6 +43,9 @@ fn lookup(sym: &str) -> Option<(f64, Dim)> {
         "cm" => (0.01, l),
         "mm" => (0.001, l),
         "km" => (1000.0, l),
+        // Wavelengths (D-103).
+        "μm" | "um" => (1e-6, l),
+        "nm" => (1e-9, l),
         "s" => (1.0, t),
         "ms" => (0.001, t),
         "min" => (60.0, t),

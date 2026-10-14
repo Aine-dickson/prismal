@@ -122,6 +122,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-100 | Spaces of three dimensions and views that look at them | Accepted |
 | D-101 | Algorithms: statements run in order, one step per occurrence | Accepted |
 | D-102 | Friction and restitution: bounded holding forces and impacts that bounce | Accepted |
+| D-103 | Geometric optics as a first-party module | Accepted |
 
 ---
 
@@ -2070,5 +2071,30 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Version 1 (D-081):** additions. `where` and `restitution` after a constraint were SX-E02; `with` on an equality was MK-E36. No valid program changes meaning.
 - **Not yet:** a static coefficient larger than the kinetic one; friction in two directions on a surface (a cone, a slip direction that turns); several contacts that switch together and depend on each other (a stack of blocks, a box on two corners: each switches by its own events, which is right when they do not interact at one instant); collisions between moving bodies (restitution between two members, which needs a gap between them, as `|p - q| >= r1 + r2` now gives, but untested); rolling without slipping as a named form (it is an enforced equality of velocities, writable now).
 - **Consequences:** IR `Constraint.{bound, restitution}`, `Op::Rebound`, `enforce::{hold_id, side_id}`, the hidden friction bindings and events, the rebounding touch event; kernel `CEquation.slip`, `CConstraint.{hold, restitution}`, `COp::Rebound`, `CModel::{rebound, orient_slips, move_onto}`; runtime rebounds in transitions; parser clauses `where` and `restitution`, lowering with SX-E08 for a bound not of the form `|F| <= B`, the formatter; MK-12.12, MK-12.13, RC-5.13, RC-5.14, 04-ir, working syntax, the reference; guide chapter 18 (Friction and bounces); `prismal-present/tests/friction.rs` (a crate held until `mu m g` then sliding with `v = (t - 4.905 s)² / 2`, a sliding crate stopping at `v0² / (2 mu g)`, friction written either way, a ball bouncing to `e² h` and resting at `3 sqrt(2 h / g)`, the canonical texts, diagnostics).
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-103: Geometric optics as a first-party module
+
+- **Status:** Accepted; implemented on branch `optics`.
+- **Original position:** the catalogue (01, section 4.3) lists rays, light sources, reflection, refraction, Snell's law, lenses, mirrors, focal points, image formation, ray diagrams, total internal reflection, dispersion and prisms (interference, diffraction and polarization are wave optics). The exploration record sketched domain libraries (`use physics.optics`, 09.9 sections 25 to 27) without content. D-099 made first-party libraries modules written in Prismal; `mechanics` was the only one.
+- **Raised by:** the owner's order of work of 2026-10-15: optics and ray tracing after the open items of contact.
+- **Builds on:** D-022, D-029, D-048, D-093 (`dot`), D-099, D-100; R-55; MK-7.1a, MK-10.7.
+- **Question:** What does the language need so that an author draws ray diagrams (refraction, total internal reflection, lenses and images, prisms) with exact angles, and which of it belongs in the core?
+- **Content it serves:** Snell's law and the critical angle, a laser in a tank, thin lenses and the lens equation, real and virtual images, mirrors, thick lenses and ball lenses, dispersion in a prism.
+- **Options considered:**
+  1. **A ray tracer in the core** (a `ray` representation that follows a source through declared surfaces, with materials): one word draws a whole path, but the core would gain a scene description (surfaces, materials, a search for the nearest hit) that only optics uses, against R-55 (domains add vocabulary, never core semantics), and the path's points would be hidden inside a drawing, where neither expectations nor other values could read them.
+  2. **Functions in a first-party module** (taken): reflection, Snell's law with total internal reflection, intersections with planes and spheres, the thin lens, image distance, magnification, the lensmaker's equation and Cauchy's dispersion, each a closed-form function of points and directions, written in Prismal (`lib/optics.prismal`). A ray's path is a chain of derived values, one per surface; drawings, observations and expectations read every point and angle. Shared definitions work in any space (D-099), so the same functions serve a plane and a room (D-100).
+  3. **Raw formulas in each program**: nothing to add, but Snell's law in vector form, with its total-reflection branch, would be rewritten in every lesson.
+- **Accepted position:** option 2, under the standing delegation of 2026-09-30.
+  - Module `optics` (D-099 first-party library): `direction`, `facing`, `reflect`, `incidence_cos`, `incidence`, `totally_reflected`, `critical_angle`, `refract`, `hit_plane`, `closest_along`, `half_chord_sq`, `sphere_distance`, `hit_sphere`, `meets_sphere`, `sphere_normal`, `thin_lens`, `image_distance`, `magnification`, `lensmaker`, `cauchy`, `angle_between`.
+  - Core additions found while writing it: the length units `μm` (`um`) and `nm` for wavelengths. Nothing else: directions are `Vector<1>`, `if` evaluates only the branch taken (so the square root of Snell's law past the critical angle is never taken), and a ray that misses a sphere has no point, which drawings show as not available.
+- **Findings while building it:**
+  1. **`unit` is reserved** (the display-unit clause), so the module's normalizing function is `direction`.
+  2. **An `if` cannot be broken before `else`** across lines in a function body; long conditional functions are written on one line. Recorded for the syntax's line rules (D-081) as a possible relaxation, not changed here.
+- **Reason:** optics is vocabulary over the core's geometry, as R-55 asks; every ray point is a model value that lessons can check and draw; the module is written in the language, so authors can read and extend it, and it serves three dimensions as well as two.
+- **Version 1 (D-081):** additions. `use optics` was SX-E03 (no module); `nm`, `μm` and `um` were unknown units. No valid program changes meaning.
+- **Not yet:** a ray that follows an unknown number of surfaces (a search for the nearest of several, which would use an algorithm, D-101, or aggregates over a collection of surfaces); colours from a wavelength; curved mirrors' paraxial form (`thin_mirror`); wave optics (interference, diffraction, polarization), which belong with fields (D-091); a dotted back-extension of rays for virtual images, drawn now as separate segments by the author.
+- **Consequences:** `lib/optics.prismal`, `prismal_syntax::modules::FIRST_PARTY`; units `μm`, `um`, `nm`; guide chapter 22 (Light and rays: refraction and total internal reflection, a thin lens and its image, a prism), chapter 19 and 2 and the reference updated, the goal index; `prismal-present/tests/optics.rs` (Snell's law into and out of water, total internal reflection at 60 degrees, the critical angle, reflection, a ray meeting a line, a thin lens's focus, image distance and magnification, a ray through a glass ball checked against the chord geometry, Cauchy's dispersion, the lensmaker's equation); browser checks of the three labs.
 - **History:**
   - 2026-10-15 accepted under the owner's standing delegation and implemented.

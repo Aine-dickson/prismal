@@ -32,6 +32,7 @@ const GUIDE: &[(&str, &str)] = &[
     ("19", include_str!("../../../docs/guide/19-modules.md")),
     ("20", include_str!("../../../docs/guide/20-three-dimensions.md")),
     ("21", include_str!("../../../docs/guide/21-algorithms.md")),
+    ("22", include_str!("../../../docs/guide/22-light-and-rays.md")),
 ];
 
 /// An example program: a title and its source in the working syntax.

@@ -305,6 +305,20 @@ algorithm sort on every 0.5 s {
 
 See [chapter 21](21-algorithms.md).
 
+### Trace light through a lens, a mirror or a prism
+
+**Use** the first-party module **optics**: each surface a ray meets is one derived value, its new direction another.
+
+```prismal
+// file
+use optics
+// model / derived
+q:   Point     = hit_plane(source, aim, origin, (1, 0))
+out: Vector<1> = thin_lens(aim, q, origin, (1, 0), f)
+```
+
+See [chapter 22](22-light-and-rays.md).
+
 ## Show things
 
 ### Draw a bar chart

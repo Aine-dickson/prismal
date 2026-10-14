@@ -164,6 +164,14 @@ const compared = await ev(`(() => { const c = [...document.querySelectorAll('#vi
 check('a sorting algorithm draws one bar per value', bars === 8 && compared === 2, `${bars} bars, ${compared} in another colour`);
 await shot('g21-sorting');
 
+// Optics (D-103): the rays of the refraction, lens and prism labs are drawn.
+for (const [key, pres, want] of [['g22-refraction', 'RefractionLab', 4], ['g22-lens', 'LensLab', 8], ['g22-prism', 'PrismLab', 6]]) {
+  await open(`${key}/${pres}`);
+  const segs = await count('#views line.segment');
+  check(`${key} draws its rays`, segs >= want, `${segs} segments`);
+  await shot(key);
+}
+
 // The spoon example (D-094): a select chooses the material; the choice survives a restart.
 // Line ends normalized: a checkout on Windows may write \r\n.
 const md = readFileSync(join(web, '..', 'examples', 'heat.md'), 'utf8').replace(/\r\n/g, '\n');

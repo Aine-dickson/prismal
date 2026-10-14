@@ -80,7 +80,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `T(x)`, `laplacian(T)`, `gradient(T)`, `integral(T)`, `mean(T)`, `min(T)`, `max(T)` | a field read at a position; its Laplacian and gradient in the cell being computed; over the whole field | 16 |
 | `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
-Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms min h kg g N J kJ W kW Pa Hz A mA μA K mol cd rad deg rev %`, and the electrical `V mV kV Ω kΩ MΩ C mC μC F mF μF nF pF H mH μH` (`ohm`, `kohm`, `uF`, `uA`... in ASCII); exponents are whole or half numbers, `s^0.5`.
+Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km μm nm s ms min h kg g N J kJ W kW Pa Hz A mA μA K mol cd rad deg rev %`, and the electrical `V mV kV Ω kΩ MΩ C mC μC F mF μF nF pF H mH μH` (`ohm`, `kohm`, `uF`, `uA`... in ASCII); exponents are whole or half numbers, `s^0.5`.
 
 ## Presentation
 
@@ -245,7 +245,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `undo`, `redo` | in `button(...)`, a lab's runtime controls, with `reset` | 7, 8 |
 | `reseed` | in `button(...)`, a lab's runtime control: start again with the next seed, keeping the learner's settings | 15 |
 | `unknown` | in a model, a block of unknowns that the equations reading them determine: `unknown { I: Current }` | 17 |
-| `use` | at the top of a file, imports the shared definitions of a module: `use mechanics`, `use mechanics.{Body}` | 19 |
+| `use` | at the top of a file, imports the shared definitions of a module: `use mechanics`, `use mechanics.{Body}`, `use optics` | 19, 22 |
 | `while`, `step` | in an algorithm: `while c { ... }` repeats while `c` holds; `step` ends one occurrence's work | 21 |
 | `grid` | in a model, a grid of cells for fields: `grid rod(x: [0 m, 1 m], cells: 50)` | 16 |
 | `boundary` | in a model, a field's boundary conditions: `boundary T { left = 100 }` | 16 |
