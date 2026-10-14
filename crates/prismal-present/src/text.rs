@@ -91,6 +91,13 @@ pub fn unit_text(d: &Dim) -> String {
         ("1/T", "1/s"),
         ("1/L", "1/m"),
         ("M L/T", "kg m/s"),
+        // Electrical quantities (D-092).
+        ("M L^2/T^3/I", "V"),
+        ("M L^2/T^3/I^2", "Ω"),
+        ("I T", "C"),
+        ("T^4 I^2/M/L^2", "F"),
+        ("M L^2/T^2/I^2", "H"),
+        ("M/L/T^2", "Pa"),
     ];
     if d.is_none() {
         return String::new();

@@ -12,8 +12,8 @@ Physical values in Prismal carry their dimension. A length cannot be added to a 
 
 A number followed by a unit is a quantity: `120 km`, `1.5 h`, `9.81 m/s^2`, `4 N/m`, `0.01 /m`, `45 deg`.
 
-- Units are written with unit symbols, `*`, `/` and whole powers `^2`. A unit has no spaces inside it: `9.81 m/s^2` is one unit, while `4 / m` divides 4 by a binding named `m`.
-- Unit symbols known to the prototype: `m cm mm km`, `s ms min h`, `kg g`, `N J W Pa Hz`, `A K mol cd`, the angle units `rad deg rev`, and `%` (a hundredth: `25 %` is `0.25`, D-077).
+- Units are written with unit symbols, `*`, `/` and powers `^2` (whole or half numbers, `s^0.5`). A unit has no spaces inside it: `9.81 m/s^2` is one unit, while `4 / m` divides 4 by a binding named `m`.
+- Unit symbols known to the prototype: `m cm mm km`, `s ms min h`, `kg g`, `N J W Pa Hz`, `A mA K mol cd`, the electrical `V mV kV Ω kΩ MΩ C F μF nF H mH` (`ohm`, `kohm`, `uF` in ASCII), the angle units `rad deg rev`, and `%` (a hundredth: `25 %` is `0.25`, D-077).
 - Unit symbols are recognized only directly after a number. Elsewhere `m`, `s` and `g` are ordinary names, so a model may have a parameter `g` or `m`.
 - The value is converted to coherent SI when the program is read: `120 km` is stored as `120000` metres and `1.5 h` as `5400` seconds. Displays and test expectations compare SI values; a test may write its expected value in any unit of the right dimension.
 

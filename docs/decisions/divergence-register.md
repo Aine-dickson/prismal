@@ -254,6 +254,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-09-29 opened by the design audit.
   - 2026-09-29 accepted by the owner: one-way in v1.
+  - 2026-10-13 the later extension taken for declared unknowns: D-092 (MK-11.6 to MK-11.9, RC-5.5 to RC-5.9). Evolution stays causal except for rates that equations give (MK-11.9); constraint enforcement stays with D-020.
 
 ## D-008: Algebraic cycles detected statically
 
@@ -266,6 +267,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-09-29 proposed by the design audit.
   - 2026-09-29 accepted by the owner.
+  - 2026-10-13 the explicit solver declaration is an `unknown` block (D-092, MK-13.4): the solve is one node of the dependency graph; cycles through it are still MK-E14.
 
 ## D-009: Explanatory narrative as a first-class layer
 
@@ -1759,3 +1761,29 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** IR `Grid`, `GridAxis`, `Type::Field`, `Binding.boundary`, `Func::{Laplacian, Gradient, Integral, Mean}`, `Presentation.until`; kernel `CGrid`, `CFieldOp`, `CEdge`, `Value::Field`, `Ctx::point`, `per_cell`, `eval_cells`, `COp::SetField`, MK-E31 to MK-E33; runtime compact steps, equations per cell; presentation `FieldGraph`, `Heatmap`, frame `raster`; host horizons; SVG and web renderers; parser, lowering, formatter; MK-9.4 to MK-9.8, RC-6.2a, PK-6.3f, PK-10.1a, HI-5.1a, 04-ir, working syntax, reference; guide chapter 16 (a heated rod, a vibrating string, a ripple tank); `prismal-present/tests/fields.rs` (heat mode decay and its half-time, insulated conservation, a held steady line and its flux, the string's half period, periodic conservation, a plate's mode, gradients in the plane, equations, heatmaps, a pointwise set by click, diagnostics).
 - **History:**
   - 2026-10-13 accepted (owner's direction and standing delegation) and implemented.
+
+## D-092: Solved equations: unknowns and equations that give rates
+
+- **Status:** Accepted; implemented and specified on branch `acausal`.
+- **Original position:** D-007: v1 is causal; equations are displayed and checked, never solved; acausal solving is "a later, explicit extension" for which the IR keeps equations symbolic. D-008: an algebraic loop is an error unless a solver is declared for it. D-020: constraints are checked, not enforced.
+- **Raised by:** the owner, 2026-10-13: version 0.2 takes another capability after fields; acausal solving chosen as the one that opens the most content (circuits, equilibria, constrained systems).
+- **Builds on:** D-007, D-008, D-015, D-034, D-040, D-081; MK sections 6, 11, 13, 14.
+- **Question:** How does a model state values that only equations determine together (a circuit's currents, an equilibrium's amounts), and rates given by equations (`L der(I) = V - R I`), and how are they computed?
+- **Options considered:**
+  1. **A role keyword on equations** (`equation ohm: V == I * R solve`). Says which equations solve but not for what; unknowns would have to be inferred from what the equations read.
+  2. **Declared unknowns** (taken): `unknown { I: Current; V2: Voltage = 1 V }`, a declaration block like the others, the value an optional starting guess. The equations that read an unknown, directly or through derived values, and are not checks, determine the unknowns. This is the explicit declaration D-008 asks for: no algebraic loop is inferred.
+  3. **Full causalization of every equation** (Modelica): sorting, tearing, index reduction. The subsystem D-007 warned about; not needed for index-1 problems.
+  For computing: **Newton's method at every instant from the guesses** (taken), with a finite-difference Jacobian, Gaussian elimination with pivoting and backtracking, never warm-started from earlier solves, so a run is a pure function of its configuration (D-015).
+- **Accepted position:** option 2, under the owner's direction and the standing delegation of 2026-09-30.
+  - Unknowns are numbers or quantities, read anywhere like derived values; the solve is one node of the dependency order (derived values that the equations read and that depend on unknowns are computed inside it).
+  - As many equation components as unknowns, with a matching of unknowns to equations (MK-E34); a solved equation reads no field and no rate of a state that has a flow (MK-E35).
+  - `der(x)` of a continuous state that no flow defines, read by a solved equation, is an unknown: elaboration adds a hidden unknown `der(x)` and the flow from it, so `m * der(v) == F` gives `v` its rate. The authored IR keeps the equation as written.
+  - Electrical units and types for circuits: `V Ω C F H` with prefixes (`kΩ`, `μF`, `mA`...), `Voltage`, `Charge`, `Resistance`, `Capacitance`, `Inductance`, and `Temperature`.
+  - Not yet: constraint enforcement and constrained mechanics in Cartesian coordinates (index 3, needs index reduction or projection, D-020); vector unknowns; solved equations over fields.
+- **Version 1 (D-081):** `unknown` is contextual (a block or declaration follows). One change of meaning: a display equation that reads `der(x)` of a state without a flow is now solved for that rate; before, such a state stayed constant and the equation could hold only if the rate was zero.
+- **Specification:** MK-3.3, MK-6.2, MK-6.4a, MK-11.4, MK-11.6 to MK-11.9, MK-13.4, MK-E06, MK-E34, MK-E35; RC-5.5 to RC-5.9; 04-ir section 5 (`unknown` role, guesses, hidden rate unknowns); working syntax 1.1 and 1.5.
+- **Consequences:** IR `Role::Unknown`; kernel `CSolve`, `solve_unknowns`, `plan_solve`, `SOLVE` in the orders, `CEquation.width`, MK-E34, MK-E35; `elaborate::solved_rates`; units and named types; reference, guide chapter 17; `prismal-present/tests/solve.rs` (divider, RC charging and its half time, a bridge balanced and not, a diode, an equilibrium, rates from equations for a coil and a spring, diagnostics).
+- **History:**
+  - 2026-10-13 accepted and implemented on `acausal`. Open: the diode circuit is not solved from its default guesses when the battery gives 0 V or -5 V (Newton from 0.6 V diverges through the exponential); MK-11.6 to MK-11.9 and RC-5.6 to be written in the specification.
+  - 2026-10-13 solver robustness: the diode failures were the convergence test, which ignored rounding in residuals; convergence also by Newton correction, equilibrated elimination, an overflow-safe residual norm, step doubling (RC-5.6, RC-5.7). Battery and guess sweeps added as tests.
+  - 2026-10-13 specified (see Specification). Two gaps closed while writing it: an operation that sets an unknown is MK-E06; an equation that gives the rate of a vector or point state is one MK-E35 naming it, instead of errors about a hidden unknown.

@@ -121,7 +121,24 @@ pub struct CEquation {
     pub check_tol: Option<f64>,
     /// An equation over a field holds in each cell of this grid (D-091).
     pub field: Option<crate::eval::CGrid>,
+    /// Components of the equation: 1, or the axes of its vectors' space (D-092).
+    pub width: usize,
 }
+
+/// The unknowns of a model and the equations that determine them (MK-11.6, D-092).
+#[derive(Clone, Debug)]
+pub struct CSolve {
+    pub unknowns: Vec<usize>,
+    /// The starting guess of each unknown; none is 0.
+    pub guess: Vec<Option<CExpr>>,
+    /// Derived bindings computed inside the solve, in order.
+    pub inner: Vec<usize>,
+    /// Indices into the model's equations.
+    pub equations: Vec<usize>,
+}
+
+/// The largest number of Newton iterations of a solve (RC-5.6).
+pub const SOLVE_ITERATIONS: usize = 60;
 
 #[derive(Clone, Debug)]
 pub struct CConstraint {
@@ -155,6 +172,8 @@ pub struct CModel {
     pub noise: Vec<u64>,
     /// The model's grids by identity (MK-9.5, D-091).
     pub grids: HashMap<Id, crate::eval::CGrid>,
+    /// The unknowns and their equations (D-092).
+    pub solve: Option<CSolve>,
 }
 
 impl CModel {
@@ -170,7 +189,7 @@ impl CModel {
     /// declared function may read (MK-10.3), and `NaN` for every other binding.
     pub fn constant_values(&self) -> Vec<Value> {
         let mut vals = vec![Value::Num(f64::NAN); self.bindings.len()];
-        for &i in &self.init_order {
+        for &i in self.init_order.iter().filter(|&&i| i != crate::check::SOLVE) {
             let b = &self.bindings[i];
             if b.role != Role::Constant {
                 continue;
@@ -193,6 +212,10 @@ impl CModel {
     pub fn initial(&self, overrides: &[(usize, Value)], t0: f64) -> Result<Vec<Value>, Status> {
         let mut vals = vec![Value::Num(f64::NAN); self.bindings.len()];
         for &i in &self.init_order {
+            if i == crate::check::SOLVE {
+                self.solve_unknowns(&mut vals, t0, t0).map_err(|s| Status { kind: s.kind, cause: format!("initializing: {}", s.cause) })?;
+                continue;
+            }
             let b = &self.bindings[i];
             if let Some((_, v)) = overrides.iter().find(|(j, _)| *j == i) {
                 vals[i] = v.clone();
@@ -231,6 +254,10 @@ impl CModel {
     /// Recomputes every derived binding from the stored values (MK-6.4).
     pub fn update_derived(&self, vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
         for &i in &self.derived_order {
+            if i == crate::check::SOLVE {
+                self.solve_unknowns(vals, t, t0)?;
+                continue;
+            }
             let v = {
                 let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
                 let b = &self.bindings[i];
@@ -243,6 +270,135 @@ impl CModel {
             vals[i] = v;
         }
         Ok(())
+    }
+
+    /// RC-5.6 (D-092): the unknowns at one instant, from their equations, by Newton's
+    /// method started at the guesses every time, with a Jacobian of finite differences and
+    /// a backtracking line search. The result depends only on the other values at that
+    /// instant, never on earlier solves, so runs stay reproducible.
+    pub fn solve_unknowns(&self, vals: &mut [Value], t: f64, t0: f64) -> Result<(), Status> {
+        let Some(s) = &self.solve else { return Ok(()) };
+        let n = s.unknowns.len();
+        let names = || s.unknowns.iter().map(|&i| format!("`{}`", self.bindings[i].name)).collect::<Vec<_>>().join(", ");
+        let mut u = vec![0.0; n];
+        for (k, g) in s.guess.iter().enumerate() {
+            if let Some(g) = g {
+                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                u[k] = g.eval(&c)?.num();
+            }
+        }
+        // The scale of each unknown: its guess, or 1 in coherent SI units.
+        let scale: Vec<f64> = u.iter().map(|x| if *x != 0.0 { x.abs() } else { 1.0 }).collect();
+        // Residuals, and the size of the sides each is measured against.
+        let residuals = |vals: &mut [Value], u: &[f64]| -> Result<(Vec<f64>, Vec<f64>), Status> {
+            for (&i, x) in s.unknowns.iter().zip(u) {
+                vals[i] = Value::Num(*x);
+            }
+            for &i in &s.inner {
+                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                let v = self.bindings[i].def.as_ref().expect("checked").eval(&c)?;
+                vals[i] = v;
+            }
+            let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            let (mut r, mut size) = (vec![], vec![]);
+            for &k in &s.equations {
+                let q = &self.equations[k];
+                let (a, b) = (q.lhs.eval(&c)?, q.rhs.eval(&c)?);
+                let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
+                a.write_to(&mut x[..q.width]);
+                b.write_to(&mut y[..q.width]);
+                for j in 0..q.width {
+                    r.push(x[j] - y[j]);
+                    size.push(x[j].abs() + y[j].abs());
+                }
+            }
+            Ok((r, size))
+        };
+        // The size of the residuals: their Euclidean norm, scaled by the largest so that
+        // squares of residuals near 1e156 (a diode guessed far above its knee) do not overflow.
+        let merit = |r: &[f64]| {
+            let m = r.iter().fold(0.0f64, |m, x| m.max(x.abs()));
+            if m == 0.0 || !m.is_finite() { m } else { m * r.iter().map(|x| (x / m) * (x / m)).sum::<f64>().sqrt() }
+        };
+        let within = |r: &[f64], size: &[f64], tol: f64| r.iter().zip(size).all(|(x, s)| x.abs() <= tol * s || *x == 0.0);
+        let (mut r, mut size) = residuals(vals, &u).map_err(|e| Status {
+            cause: format!("the equations for {} cannot be evaluated at the guesses: {} (MK-11.8); give guesses nearer the solution", names(), e.cause),
+            ..e
+        })?;
+        for _ in 0..SOLVE_ITERATIONS {
+            if within(&r, &size, 1e-12) {
+                // The values in place may be a rejected trial: evaluate at the solution again.
+                residuals(vals, &u)?;
+                return Ok(());
+            }
+            // The Jacobian by forward differences, column by column.
+            let mut jac = vec![vec![0.0; n]; n];
+            for j in 0..n {
+                let h = 1e-7 * (u[j].abs() + scale[j]);
+                let mut v = u.clone();
+                v[j] += h;
+                let (rj, _) = residuals(vals, &v)?;
+                for i in 0..n {
+                    jac[i][j] = (rj[i] - r[i]) / h;
+                }
+            }
+            let Some(du) = gauss(jac, r.iter().map(|x| -x).collect()) else {
+                return Err(Status::invalid(format!("the equations do not determine {} here: they are dependent (MK-11.8)", names())));
+            };
+            // A residual is computed no more precisely than its terms: in `V0 - Vd == I * R`
+            // with `Vd` near `V0` the left side is a difference of two close numbers and its
+            // rounding can exceed both sides. The Newton correction measures the distance to
+            // the solution instead: when it is at the rounding level of every unknown (relative
+            // to its value, or to its scale near zero), the corrected values are the solution.
+            let settled = du.iter().zip(&u).zip(&scale).all(|((d, a), s)| d.abs() <= 1e-12 * a.abs() + 1e-15 * s);
+            if settled && r.iter().all(|x| x.is_finite()) {
+                let v: Vec<f64> = u.iter().zip(&du).map(|(a, d)| a + d).collect();
+                if residuals(vals, &v).is_ok_and(|(rv, _)| rv.iter().all(|x| x.is_finite())) {
+                    return Ok(());
+                }
+            }
+            // Backtracking: the longest step, halved up to ten times, that lowers the residual.
+            let m0 = merit(&r);
+            let mut lambda = 1.0;
+            let mut next = None;
+            for _ in 0..=10 {
+                let v: Vec<f64> = u.iter().zip(&du).map(|(a, d)| a + lambda * d).collect();
+                if let Ok((rv, sv)) = residuals(vals, &v) {
+                    if merit(&rv) < m0 || lambda < 1e-3 {
+                        next = Some((v, rv, sv));
+                        break;
+                    }
+                }
+                lambda *= 0.5;
+            }
+            let Some((mut v, mut rv, mut sv)) = next else { break };
+            // On the far side of an exponential a full step moves by a fixed amount (about
+            // `Vt` for a diode above its knee) and the solve would take hundreds of steps:
+            // when the full step lowers the residual, longer steps are tried while they lower it
+            // further.
+            if lambda == 1.0 {
+                for _ in 0..30 {
+                    lambda *= 2.0;
+                    let w: Vec<f64> = u.iter().zip(&du).map(|(a, d)| a + lambda * d).collect();
+                    match residuals(vals, &w) {
+                        Ok((rw, sw)) if merit(&rw) < merit(&rv) => (v, rv, sv) = (w, rw, sw),
+                        _ => break,
+                    }
+                }
+            }
+            let small = v.iter().zip(&u).zip(&scale).all(|((a, b), s)| (a - b).abs() <= 1e-14 * (b.abs() + s));
+            (u, r, size) = (v, rv, sv);
+            if small {
+                break;
+            }
+        }
+        // The last values tried may be a rejected step: evaluate at the best values again.
+        let (r, size) = residuals(vals, &u)?;
+        if within(&r, &size, 1e-9) {
+            // Converged to the precision the arithmetic allows; the values are in place.
+            return Ok(());
+        }
+        Err(Status::invalid(format!("no solution of the equations for {} found from the guesses (MK-11.8); give guesses nearer the solution", names())))
     }
 
     /// Writes the continuous state vector `y` into the binding values.
@@ -335,4 +491,52 @@ impl CModel {
         }
         Ok(out)
     }
+}
+
+/// Solves `a x = b` by Gaussian elimination with partial pivoting; `None` when `a` is
+/// singular to working precision. Rows are equations and columns unknowns, each in its own
+/// unit (a diode's row in amperes per volt can hold 1e23 beside a resistor's 1000), so each
+/// row and then each column is first scaled to a largest entry of 1: singularity is judged
+/// in the scaled matrix, where units play no part.
+fn gauss(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+    let n = b.len();
+    for (row, y) in a.iter_mut().zip(b.iter_mut()) {
+        let m = row.iter().fold(0.0f64, |m, x| m.max(x.abs()));
+        if !(m > 0.0 && m.is_finite()) {
+            return None;
+        }
+        row.iter_mut().for_each(|x| *x /= m);
+        *y /= m;
+    }
+    let cols: Vec<f64> = (0..n).map(|j| a.iter().fold(0.0f64, |m, row| m.max(row[j].abs()))).collect();
+    if cols.iter().any(|m| !(*m > 0.0)) {
+        return None;
+    }
+    for row in a.iter_mut() {
+        row.iter_mut().zip(&cols).for_each(|(x, m)| *x /= m);
+    }
+    for c in 0..n {
+        let p = (c..n).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
+        if !(a[p][c].abs() > 1e-13) {
+            return None;
+        }
+        a.swap(c, p);
+        b.swap(c, p);
+        for r in c + 1..n {
+            let f = a[r][c] / a[c][c];
+            if f != 0.0 {
+                for k in c..n {
+                    a[r][k] -= f * a[c][k];
+                }
+                b[r] -= f * b[c];
+            }
+        }
+    }
+    let mut x = vec![0.0; n];
+    for r in (0..n).rev() {
+        let s: f64 = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
+        x[r] = (b[r] - s) / a[r][r];
+    }
+    x.iter_mut().zip(&cols).for_each(|(x, m)| *x /= m);
+    x.iter().all(|v| v.is_finite()).then_some(x)
 }

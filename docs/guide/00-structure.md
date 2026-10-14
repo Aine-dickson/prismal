@@ -117,10 +117,11 @@ run two_bounces of Drop with Lab {
 | `state { }` | a model | values that change over time: `name: Type = start` | `x: Length = 0 m` |
 | `discrete { }` | a model | values changed only by events | `on: Boolean = false` |
 | `derived { }` | a model | values and functions computed from others | `speed: Velocity = \|vel\|` |
+| `unknown { }` | a model | values the equations determine together: `name: Type = guess` | `I: Current = 1 mA` |
 | `flow { }` | a model | rates of change: `der(x) = ...` | `der(x) = v` |
 | `event name on trigger { }` | a model | operations: `set`, `emit` | `set vel = 0` |
 | `process name { }` | a model | flows and events grouped under a name | `flow der(v) += -(k / m) * x` |
-| `equation`, `constraint` | a model | stated relations and checked conditions | `constraint up: h >= 0 m` |
+| `equation`, `constraint` | a model | stated relations, solved when they read an unknown; checked conditions | `equation loop: V0 == I * R + Vc` |
 | `presentation Name for Model { }` | the top level | the blocks below | |
 | `view name: spatial(...) { }` | a presentation | representations drawn in the plane | `marker(pos) as ball` |
 | `view name: plot(...) { }` | a presentation | representations drawn against axes | `series_plot(x every 0.02 s)` |

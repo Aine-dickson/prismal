@@ -42,6 +42,13 @@ pub fn named_dim(name: &str) -> Option<Dim> {
         "Energy" => d("M L^2/T^2"),
         "Power" => d("M L^2/T^3"),
         "Pressure" => d("M/L/T^2"),
+        "Temperature" => d("Th"),
+        // Electrical quantities (D-092).
+        "Charge" => d("I T"),
+        "Voltage" => d("M L^2/T^3/I"),
+        "Resistance" => d("M L^2/T^3/I^2"),
+        "Capacitance" => d("T^4 I^2/M/L^2"),
+        "Inductance" => d("M L^2/T^2/I^2"),
         _ => return None,
     })
 }
@@ -771,6 +778,7 @@ impl<'a> ModelCx<'a> {
             RoleWord::State => Role::Continuous,
             RoleWord::Discrete => Role::Discrete,
             RoleWord::Derived => Role::Derived,
+            RoleWord::Unknown => Role::Unknown,
         };
         let mut ty = self.ty(&d.ty);
         let (mut init, mut def) = (None, None);

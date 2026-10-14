@@ -1588,3 +1588,77 @@ fn with_capacities(d: &Document, caps: &Capacities) -> Document {
     }
     out
 }
+
+/// MK-11.9 (D-092): `der(x)` of a continuous state that no flow defines, read by an
+/// equation that is not a check, is an unknown of the solve: a hidden unknown `der(x)` and
+/// the flow `der(x) = der(x)` stand for it, so `m * der(v) == F - k * v` gives `v` its rate.
+pub fn solved_rates(mut d: Document) -> Document {
+    for m in &mut d.models {
+        rates(m);
+    }
+    d
+}
+
+fn rates(m: &mut Model) {
+    let flowing: Vec<Id> = m.flows.iter().map(|f| f.target.clone()).collect();
+    let mut found: Vec<Id> = vec![];
+    for q in m.equations.iter().filter(|q| q.role != crate::EquationRole::Check) {
+        for side in [&q.lhs, &q.rhs] {
+            side.walk(&mut |x| {
+                if let Expr::Der { der } = x {
+                    // Unknowns are numbers or quantities: rates of vectors and points are
+                    // left to the check (MK-E35).
+                    let stateful = m.binding(der).is_some_and(|b| b.role == Role::Continuous && matches!(b.ty, Type::Quantity { .. }));
+                    if stateful && !flowing.contains(der) && !found.contains(der) {
+                        found.push(der.clone());
+                    }
+                }
+            });
+        }
+    }
+    for x in found {
+        let b = m.binding(&x).expect("found").clone();
+        let per_t = crate::Dim::time().inv();
+        let Type::Quantity { dim } = &b.ty else { continue };
+        let ty = Type::Quantity { dim: dim.mul(&per_t) };
+        let rate = format!("{x}@rate");
+        m.bindings.push(Binding {
+            id: rate.clone(),
+            name: format!("der({})", b.name),
+            role: Role::Unknown,
+            ty,
+            init: None,
+            def: None,
+            intervenable: None,
+            private: true,
+            display: Display::default(),
+            notes: vec![],
+            when: None,
+            combine: None,
+            boundary: None,
+        });
+        m.flows.push(Flow { id: format!("{rate}.flow"), target: x.clone(), kind: crate::FlowKind::Define, expr: Expr::Ref { r#ref: rate.clone() }, process: None, member: None, each: None });
+        // `der(x)` in the solved equations reads the unknown.
+        let from = serde_json::json!({ "der": x });
+        let to = serde_json::json!({ "ref": rate });
+        for q in m.equations.iter_mut().filter(|q| q.role != crate::EquationRole::Check) {
+            for side in [&mut q.lhs, &mut q.rhs] {
+                let mut v = serde_json::to_value(&*side).expect("serializable");
+                replace(&mut v, &from, &to);
+                *side = serde_json::from_value(v).expect("an expression");
+            }
+        }
+    }
+}
+
+fn replace(v: &mut serde_json::Value, from: &serde_json::Value, to: &serde_json::Value) {
+    if v == from {
+        *v = to.clone();
+        return;
+    }
+    match v {
+        serde_json::Value::Array(items) => items.iter_mut().for_each(|x| replace(x, from, to)),
+        serde_json::Value::Object(map) => map.values_mut().for_each(|x| replace(x, from, to)),
+        _ => {}
+    }
+}

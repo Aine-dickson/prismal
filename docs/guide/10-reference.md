@@ -20,12 +20,13 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `state { x: T = e [intervenable] }` | continuous state, with its initial value | 4 |
 | `discrete { x: T = e }` | discrete state: changed only by events | 5 |
 | `derived { x: T = e; f(x: A): B = e }` | derived values and functions, always current | 1 |
+| `unknown { x: T [= guess] }` | unknowns: found at every instant from the equations that read them (the value is the solver's starting guess) | 17 |
 | `fn f(x: A, y: B): R = e` | a declared function: reads only its parameters, constants and other functions | 2 |
 | `enum Phase { a, b, c }` | an enumeration: a type whose values are its cases | 5 |
 | `flow { der(x) = e; der(y) += e }` | rate of change: one definition, or summed contributions | 4 |
 | `process Name { flow ...; event ... }` | a named group of flows and events | 4 |
 | `event E on trigger [if c] [{ ops }] [zeno settle { ops } \| zeno stop]` | an event | 5 |
-| `equation N: a == b [checked within tol]` | a stated relation, shown and optionally checked | 6 |
+| `equation N: a == b [checked within tol]` | a stated relation, shown and optionally checked; an equation that reads an unknown is solved for it | 6, 17 |
 | `constraint N: c [within tol] [policy reject \| report \| stop]` | a checked condition (`within` for `==` only) | 6 |
 | `object Name { ... }` | an object type, with the body of a model; declared in a model | 9 |
 | `parts { a: T { x = e }  c: T[n] { x = e } }` | one object, or a collection of `n` members; overrides and input connections, with `index` the member's number | 9 |
@@ -52,7 +53,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | Form | Meaning | Chapter |
 |---|---|---|
 | `Real`, `Boolean`, `Angle` | numbers, truth values, angles (dimensionless) | 1, 2 |
-| `Length`, `Mass`, `Time`, `Velocity`, `Acceleration`, `Force`, `Energy`, `Power`, `Pressure`, `Frequency`, `Momentum`, `Area`, `Volume`, `Current`, `Amount` | named dimensions | 2 |
+| `Length`, `Mass`, `Time`, `Velocity`, `Acceleration`, `Force`, `Energy`, `Power`, `Pressure`, `Frequency`, `Momentum`, `Area`, `Volume`, `Current`, `Amount`, `Temperature`, `Charge`, `Voltage`, `Resistance`, `Capacitance`, `Inductance` | named dimensions | 2, 17 |
 | `Quantity<M/T^2>` | any dimension from `L M T I Θ N J` | 2 |
 | `Point`, `Vector<Length>`, `Vector<Velocity>` | geometry in the model's space | 3 |
 | `9.81 m/s^2`, `45 deg`, `2π`, `0` | literals; `0` has any dimension and is the zero vector | 2, 3 |
@@ -68,7 +69,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `T(x)`, `laplacian(T)`, `gradient(T)`, `integral(T)`, `mean(T)`, `min(T)`, `max(T)` | a field read at a position; its Laplacian and gradient in the cell being computed; over the whole field | 16 |
 | `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
-Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms min h kg g N J W Pa Hz A K mol cd rad deg rev %`.
+Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms min h kg g N J kJ W kW Pa Hz A mA μA K mol cd rad deg rev %`, and the electrical `V mV kV Ω kΩ MΩ C mC μC F mF μF nF pF H mH μH` (`ohm`, `kohm`, `uF`, `uA`... in ASCII); exponents are whole or half numbers, `s^0.5`.
 
 ## Presentation
 
@@ -227,6 +228,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `request` | an event requested from outside (a button, a lesson) | 5 |
 | `undo`, `redo` | in `button(...)`, a lab's runtime controls, with `reset` | 7, 8 |
 | `reseed` | in `button(...)`, a lab's runtime control: start again with the next seed, keeping the learner's settings | 15 |
+| `unknown` | in a model, a block of unknowns that the equations reading them determine: `unknown { I: Current }` | 17 |
 | `grid` | in a model, a grid of cells for fields: `grid rod(x: [0 m, 1 m], cells: 50)` | 16 |
 | `boundary` | in a model, a field's boundary conditions: `boundary T { left = 100 }` | 16 |
 | `periodic` | `boundary T periodic`: the field's grid wraps around | 16 |
@@ -249,7 +251,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown`.
 
 ## Diagnostics
 
@@ -291,6 +293,8 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E31 | a field of another grid read where a field is computed |
 | MK-E32 | `laplacian` or `gradient` outside a flow or definition of a field of its grid |
 | MK-E33 | a boundary on something that is not a field, an unknown or repeated edge, or periodic with held edges |
+| MK-E34 | unknowns and the equations that read them do not match: an unknown no equation reads, more or fewer equations than unknowns, or equations that cannot determine their unknowns separately |
+| MK-E35 | an equation solved for an unknown reads a rate (`der`) or a field |
 
 **Presentation** (`PK`): E01 broken reference, E02 expression does not check (the kernel's message is quoted), E03 control or action targets something the learner may not change, E04 missing or wrong scale or axis dimension, E05 representation unsuited to its sources or view, E06 representation kind not implemented.
 

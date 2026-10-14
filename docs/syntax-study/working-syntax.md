@@ -19,12 +19,13 @@ Candidate A amended as accepted in D-028: A's keyword-led statements, with group
 | `state { x: T = e ... }` | continuous state with initial definitions |
 | `discrete { x: T = e ... }` | discrete state |
 | `derived { x: T = e; f(x: A): B = e ... }` | derived bindings, including function-valued ones |
+| `unknown { x: T [= guess] ... }` | unknowns (MK-11.6, D-092): numbers or quantities that the equations reading them determine together; the value is the solver's starting guess, 0 when omitted |
 | `enum Phase { a, b, c }` | enumeration (MK-2.2a, D-049); cases by name (`a`) or qualified (`Phase.a`) |
 | `fn f(x: A): B = e` | declared function (MK-10.3a, D-048): reads only its parameters, constants and other functions |
 | `flow { der(x) = e; der(y) += e ... }` | defining flows and contributions (MK-14.7) |
 | `process P { flow ...; event ... }` | named process (MK-14.1), optional |
 | `event E on <trigger> [if cond] [{ ops }] [zeno stop \| zeno settle { ops }]` | event (MK-15) |
-| `equation N: lhs == rhs [checked within tol]` | equation (MK-11) |
+| `equation N: lhs == rhs [checked within tol]` | equation (MK-11); without `checked`, an equation that reads an unknown is solved (MK-11.7), and one that reads `der(x)` of a state without a flow gives that state its rate (MK-11.9) |
 | `constraint [N:] cond [within tol] [policy p]` | constraint (MK-12) |
 | `object Name { ... }` | object type (MK-7.13, D-055), declared in a model, with the body of a model |
 | `parts { a: T [{ x = e ... }]  c: T[n] [{ x = e ... }] }` | a contained object, or a collection of `n` members; overrides and input connections, with `index` the member's number (MK-8.3a) |
@@ -92,8 +93,8 @@ The formatter prints, from the IR: enumerations, then declarations grouped in bl
 - **Statements** end at a newline or `;`. Several statements on one line are separated by `;`. A line ending in an operator (other than a closing `|`), `,`, an open bracket or one of the operator words continues on the next line; so does every line inside `( )` or `[ ]`.
 - **Reserved words** (D-040), never names: `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 - **Representation kinds** are read where a representation is expected; there `equation`, reserved elsewhere, is the representation kind of PK-6.3.
-- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart`.
-- **Built-in names** (not reserved, but predefined): `t`, `t0`, `elapsed`, `origin`, `der`, `π` and `pi` (D-039), `inf` (only as an interval bound), the SI units and named dimensions of MK section 3. Named dimensions: `Length`, `Mass`, `Time`, `Current`, `Amount`, `Area`, `Volume`, `Velocity`, `Acceleration`, `Frequency`, `Momentum`, `Force`, `Energy`, `Power`, `Pressure`, and `Angle` (dimensionless, D-021); base symbols `L M T I Θ N J` inside `Quantity<...>`.
+- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart layout row column instrument grid boundary periodic unknown`.
+- **Built-in names** (not reserved, but predefined): `t`, `t0`, `elapsed`, `origin`, `der`, `π` and `pi` (D-039), `inf` (only as an interval bound), the SI units and named dimensions of MK section 3. Named dimensions: `Length`, `Mass`, `Time`, `Current`, `Amount`, `Area`, `Volume`, `Velocity`, `Acceleration`, `Frequency`, `Momentum`, `Force`, `Energy`, `Power`, `Pressure`, `Temperature`, `Charge`, `Voltage`, `Resistance`, `Capacitance`, `Inductance` (D-092), and `Angle` (dimensionless, D-021); base symbols `L M T I Θ N J` inside `Quantity<...>`.
 
 
 ### 1.6 Options and clauses (D-081)
@@ -580,3 +581,4 @@ run A_keep of Projectile with ProjectileLesson {
 - 2026-10-01 `wait learner` (D-067); `animate`, `release`, `bind` defined (D-068).
 - 2026-10-01 learner step `press E`; runtime-control buttons; `press`, `undo` and `redo` added to the contextual keywords (D-069).
 - 2026-10-12 syntax stability review (D-081): options and clauses (section 1.6), closed option lists per kind, clauses in any order, a message for a line that starts with an operator; marked version 1 (section 1.7).
+- 2026-10-13 `unknown { ... }` blocks, solved equations and rates from equations (D-092); electrical named dimensions; the contextual keyword list brought up to date with the parser (`layout`, `row`, `column`, `instrument`, `grid`, `boundary`, `periodic`, `unknown`).

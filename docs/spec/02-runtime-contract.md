@@ -98,12 +98,30 @@ produce the trajectory S (committed states), the event log E and diagnostics D
 ## 5. Initialization
 
 - **Restates:** R-25.
-- **Decisions:** D-008, D-020.
+- **Decisions:** D-008, D-020, D-092.
+- **Prior art:** the solve (RC-5.6) follows damped Newton methods with finite-difference Jacobians (Dennis and Schnabel; MINPACK's `hybrd` scales unknowns in the same way), and SPICE's convergence test on the Newton correction as well as on the residual.
 
 - **RC-5.1** Initialization evaluates, in dependency order (MK-13.5, MK-13.6): parameter values (defaults with run-configuration overrides applied), then the initial definitions of all stored bindings. The result is the state at `(t0, 0)`.
 - **RC-5.2** Constraints are checked on the initial state (MK-12.3). A violated constraint with policy `reject` or `stop` makes initialization fail: the run does not start, and the diagnostic names the constraint and the values involved. A violated `report` constraint produces a diagnostic and the run starts.
 - **RC-5.3** Events with trigger `on start` are due at `(t0, 0)`. Their transition, if any, commits `(t0, 1)` (section 8). Time events `at(t0)` and `every(Δ, from t0)` are due at the same microstep.
 - **RC-5.4** The sign reference of every crossing guard (section 7) is taken from the final state at `t0`.
+
+**Solved equations (D-092).** The solve below is part of every evaluation of a model's values, at `t0` and at every later instant; it is specified here because initialization is its first use.
+
+- **RC-5.5** Initialization evaluates the solve (RC-5.6) at its place in the dependency order of initial definitions (MK-13.5, MK-11.8): after the values its equations and guesses read, before the initial definitions that read unknowns. If the solve fails at `t0` (RC-5.8), the run does not start, and the diagnostic names the unknowns.
+- **RC-5.6** **The solve.** Whenever the runtime evaluates a model's values (initialization, every evaluation of flows during a step, event guards, transitions and observations), it computes the unknowns by Newton's method on the residuals `lhs - rhs` of the solved equations' components (MK-11.7):
+  - It starts at the guesses, evaluated at that instant, every time. It never starts from an earlier solve, so the unknowns at an instant depend only on the other values at that instant, a run is a function of its configuration (D-015), and an observation between steps gives what a step would.
+  - The **scale** `s_j` of unknown `j` is the magnitude of its guess, or 1 in coherent SI units when the guess is 0.
+  - The Jacobian is estimated by forward differences, changing unknown `j` by `1e-7 (|u_j| + s_j)`.
+  - The linear system is solved by Gaussian elimination with partial pivoting after each row, then each column, is scaled to a largest entry of 1, so that the units of equations and unknowns play no part. A pivot below `1e-13` in the scaled system means the equations are dependent at that instant.
+  - The size of the residuals is their Euclidean norm, computed without overflow. A full Newton step is taken if it lowers that size; if it does not, the step is halved up to ten times, and a step below a thousandth of the full step is taken in any case. If the full step lowers the size, steps of 2, 4, 8 ... times the full step (up to `2^30`) are tried and the last that still lowers it is taken: on an exponential guessed from above, a full step moves only a fixed amount (about `Vt` for a diode).
+  - At most 60 iterations.
+- **RC-5.7** **Convergence.** The solve ends with the unknowns at their current values when, after an iteration:
+  - every component's residual is 0 or at most `1e-12 (|lhs| + |rhs|)`; or
+  - the full Newton correction of every unknown is at most `1e-12 |u_j| + 1e-15 s_j` and the residuals are finite: the corrected values are taken. A residual is computed no more precisely than its terms (in `V0 - Vd == I * R` with `Vd` near `V0`, the rounding of the left side can exceed both sides); the correction measures the distance to the solution instead.
+  - When the iterations run out, a step cannot lower the residuals, or a step changes no unknown by more than `1e-14 (|u_j| + s_j)`, the values reached are taken if every residual is at most `1e-9 (|lhs| + |rhs|)`.
+- **RC-5.8** **Failure.** Otherwise every unknown is `invalid` (MK-11.8), with one of three causes, each naming the unknowns: the equations cannot be evaluated at the guesses (an overflow or an invalid value there); the equations are dependent at that instant; no solution was found from the guesses. During a run, an invalid value in a flow rejects the step (RC-6.8): an adaptive solver retries with smaller steps, and a solve that keeps failing is a `model` failure (section 10).
+- **RC-5.9** The tolerances, limits and step rules of RC-5.6 and RC-5.7 are fixed in v0; they are not part of the run configuration.
 
 ---
 
@@ -409,6 +427,7 @@ Each program (D-012) is checked for whether this contract determines its expecte
 - Step sequence independent of frame rate and observation (RC-6.6); players slow down rather than skip (RC-2.4).
 - Zeno and cascade defaults scaled by a reference time scale `T_ref` (RC-9.2, section 16).
 - Failure policies: `stop` headless, `pause` interactive (RC-10.4).
+- The solve of unknowns (D-092): Newton from the guesses at every instant, never warm-started; equilibrated elimination; halving and doubling of steps; convergence by residual or by Newton correction; fixed tolerances (RC-5.5 to RC-5.9).
 - Counter-based random streams keyed by element identity (RC-13.2).
 - Configuration changes only by `reset` or `branch` (section 12).
 

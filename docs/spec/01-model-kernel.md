@@ -135,7 +135,7 @@ model Ball in Plane {
 
 - **MK-3.1** A dimension is a product of powers of the seven SI base dimensions (length L, mass M, time T, electric current I, thermodynamic temperature Θ, amount of substance N, luminous intensity J) with rational exponents. The dimension with all exponents zero is **dimensionless**.
 - **MK-3.2** `Quantity<1>` (dimensionless) and `Real` are the same type.
-- **MK-3.3** Named dimensions are aliases (R-48): `Velocity = L/T`, `Acceleration = L/T^2`, `Force = M L/T^2`, `Energy = M L^2/T^2`. Libraries MAY define more. Quantities of the same dimension are interchangeable in the kernel; distinguishing quantity kinds of equal dimension (torque and energy) is deferred (section 21).
+- **MK-3.3** Named dimensions are aliases (R-48): `Velocity = L/T`, `Acceleration = L/T^2`, `Force = M L/T^2`, `Energy = M L^2/T^2`; for circuits (D-092) `Voltage = M L^2/(T^3 I)`, `Charge = T I`, `Resistance = M L^2/(T^3 I^2)`, `Capacitance = T^4 I^2/(M L^2)`, `Inductance = M L^2/(T^2 I^2)`, with `Current = I` and `Temperature = Θ`. Libraries MAY define more. Quantities of the same dimension are interchangeable in the kernel; distinguishing quantity kinds of equal dimension (torque and energy) is deferred (section 21).
 
 ### 3.2 Arithmetic
 
@@ -230,8 +230,10 @@ Every binding has exactly one role. The role fixes when the value may change and
 | `discrete state` | only at event instants | operations in event handlers; interventions | yes |
 | `continuous state` | continuously, by flows | flows; replaced only by resets and interventions | yes |
 | `derived` | whenever its sources change | nothing: it is defined by an expression | no |
+| `unknown` | whenever its sources change | nothing: it is determined by the equations that read it (MK-11.6) | no |
 
 - **MK-6.4** A derived binding is a definition, not stored state (R-13). At every instant its value equals its defining expression evaluated on current values. It cannot be the target of any operation.
+- **MK-6.4a** (D-092) An unknown is, like a derived binding, a value at every instant and not stored state; where a derived binding has its own defining expression, an unknown is determined jointly with the other unknowns by equations (section 11). It is read like a derived binding and cannot be the target of any operation (MK-E06).
 - **MK-6.5** Continuous state changes only by flows (section 14). Its value is replaced only by a reset in an event handler or by an intervention (D-004).
 - **MK-6.6** Parameters do not change during continuous evolution. A parameter change is an intervention and happens at an event instant (section 17). Event handlers MUST NOT set parameters; a value that the model itself switches belongs in discrete state.
 - **MK-6.7** Every stored binding except `input` has an **initial definition**: an expression over constants, parameters and other initial definitions. Initial definitions are evaluated once, at run start, in dependency order (section 13). An `input` has no initial definition; until the environment supplies it, it is `unavailable`.
@@ -346,16 +348,26 @@ The first slice (D-001) exercises neither dynamic collections nor relations. The
 ## 11. Equations
 
 - **Restates:** R-18, R-64.
-- **Decisions:** D-007.
-- **Prior art:** departs from Modelica, where equations drive simulation. Follows computer algebra systems (and Desmos and GeoGebra) in keeping equations as displayable, symbolic objects that can be bound to live values.
+- **Decisions:** D-007, D-092.
+- **Prior art:** follows computer algebra systems (and Desmos and GeoGebra) in keeping equations as displayable, symbolic objects that can be bound to live values. Solved equations (MK-11.6 to MK-11.9) follow Modelica in letting equations determine values, but only for declared unknowns: there is no causalization of the whole model, no tearing and no index reduction.
 
 - **MK-11.1** An **equation** is a first-class element with a left side, a right side (expressions), a relation (`=` in v0), and a role (R-18).
 - **MK-11.2** v0 roles (D-007):
   - `display`: shown with its symbols linked to bindings; no runtime effect.
   - `check`: in addition, the runtime evaluates the residual `lhs - rhs` and reports when `|residual|` exceeds the declared tolerance. A violated check produces a diagnostic, never a state change.
 - **MK-11.3** Both sides of an equation MUST have the same dimension; a mismatch is a static error, whatever the role.
-- **MK-11.4** An equation does not define, assign or evolve any binding in v0. Evolution is written causally with flows and derived bindings (sections 6, 14). An `evolution` or `constraint` role that a solver consumes is reserved for the acausal extension (D-007).
+- **MK-11.4** An equation does not define, assign or evolve any binding, except as a solved equation (MK-11.7, MK-11.9). Evolution is written causally with flows and derived bindings (sections 6, 14), and values that only equations determine together are declared as unknowns (D-092). A `constraint` role that a solver enforces is reserved for constraint enforcement (D-020).
 - **MK-11.5** An equation MAY reference `der(x)` for a continuous state `x`; in a check, `der(x)` evaluates to the combined flow of `x` (section 14). This lets `m a = F` be checked against the running model.
+
+**Solved equations (D-092).**
+
+- **MK-11.6** An **unknown** is a binding with role `unknown`, declared in an `unknown` block, of type `Real` or `Quantity<D>` (MK-E01 otherwise; vector and point unknowns are a later extension). Its optional value is its **guess**, an expression of its type that MAY read any binding that does not depend on the unknowns (MK-E14 otherwise); without one the guess is 0. The guess is where the solve starts (RC-5.6) and is never the unknown's value unless it solves the equations.
+- **MK-11.7** An equation that is not a check and reads an unknown, directly or through derived bindings, is a **solved equation**. A solved equation keeps its role and is displayed as written. The solved equations of a model determine all its unknowns together:
+  - each component of a solved equation is one scalar equation, a vector equation counting once per axis of its space;
+  - there MUST be exactly as many components as unknowns, every unknown MUST be read by a solved equation, and the unknowns MUST admit a **matching**: each unknown assigned to a component that reads it, no component assigned twice. A failure of any of these is MK-E34, which names the unknowns and equations involved.
+  - The matching is structural. Equations that pass it can still be dependent at a given instant (`x + y == 1` and `2 * x + 2 * y == 2`); that is found by the solve (MK-11.8).
+- **MK-11.8** At every instant, the unknowns are values for which every solved equation holds, found by the solve of RC-5.6. Derived bindings that depend on unknowns and are read by the solved equations are computed inside the solve. The solve is one node of the dependency graph (section 13): bindings that read an unknown are evaluated after it, and the values the equations and guesses read before it. Where several solutions exist, the value is the one the solve reaches from the guesses; a guess is part of the problem's statement. Where the solve finds no solution, or the equations are dependent at that instant, every unknown is `invalid` (section 5) with a cause naming the unknowns, and the run fails as for any invalid value (RC section 10).
+- **MK-11.9** **Rates from equations.** `der(x)` read by an equation that is not a check, where `x` is a continuous state of type `Real` or `Quantity<D>` that no flow defines, is an unknown of the solve: elaboration adds a hidden unknown for the rate of `x`, of dimension `D / T`, and the flow `der(x)` equal to it, and the equations read that unknown. So `L * der(I) == V0 - R * I` gives the current through a coil its rate, and `m * der(v) == -k * x` a spring its acceleration. The authored IR keeps the equation as written (04-ir). A solved equation MUST NOT read `der(x)` of a state that a flow defines, nor a field (MK-E35); a non-check equation that reads `der(x)` of a vector or point state without a flow is MK-E35 (a later extension: write the flow).
 
 ---
 
@@ -387,7 +399,7 @@ The first slice (D-001) exercises neither dynamic collections nor relations. The
   - **instantaneous**: a derived binding reads its sources; an initial definition reads its sources; a flow right-hand side reads its sources.
   - **through state**: a continuous state depends on its flow only by integration; a discrete state depends on event handlers only across an event instant.
 - **MK-13.3** A cycle that passes through at least one state edge is valid (R-35).
-- **MK-13.4** A cycle consisting only of instantaneous edges is an **algebraic loop** and a static error, unless a solver is declared for it (D-008). v0 defines no such solver.
+- **MK-13.4** A cycle consisting only of instantaneous edges is an **algebraic loop** and a static error, unless a solver is declared for it (D-008). Unknowns are that declaration (D-092): values that determine each other are written as unknowns and solved equations (MK-11.6 to MK-11.8), and the solve is one node of the graph. A cycle that passes through the solve node, for example a guess that reads a value depending on the unknowns, is still MK-E14.
 - **MK-13.5** The graph of initial definitions MUST be acyclic.
 - **MK-13.6** Evaluation order within an instant is a topological order of instantaneous edges, with ties broken by identity order. This order is semantically invisible (results do not depend on it) but it is fixed, so floating-point results are reproducible (D-015).
 
@@ -571,7 +583,7 @@ The kernel defines these static errors. They are detected before execution, on t
 | MK-E03 | Bare non-zero literal combined with a dimensioned quantity | MK-3.8 |
 | MK-E04 | Invalid affine or point operation (instant + instant, point + point) | MK-3.9, MK-4.4 |
 | MK-E05 | Values from different spaces combined | MK-4.5 |
-| MK-E06 | Operation targets a derived binding, constant or input | MK-16.1 |
+| MK-E06 | Operation targets a derived binding, unknown, constant or input | MK-16.1, MK-6.4a |
 | MK-E07 | Continuous state set outside a handler or intervention | MK-6.5 |
 | MK-E08 | Handler sets a parameter | MK-6.6 |
 | MK-E09 | Write from an object that does not own or contain the target | MK-7.10 |
@@ -595,6 +607,8 @@ The kernel defines these static errors. They are detected before execution, on t
 | MK-E31 | A field of another grid read in a pointwise expression | MK-9.7 |
 | MK-E32 | `laplacian` or `gradient` outside a pointwise expression of the field's grid | MK-9.7 |
 | MK-E33 | A boundary of a binding that is not a field, an edge the grid lacks or held twice, or periodic with held edges | MK-9.6 |
+| MK-E34 | Unknowns not determined by the solved equations: an unknown no solved equation reads, more or fewer equation components than unknowns, or no matching of unknowns to components | MK-11.7 |
+| MK-E35 | A solved equation that reads the rate of a state with a flow, or a field; a non-check equation that reads the rate of a vector or point state without a flow | MK-11.9 |
 | MK-E29 | `noise` outside a flow | MK-14.16 |
 | MK-E30 | A flow that is not linear in each `noise` | MK-14.16 |
 
@@ -754,6 +768,7 @@ Positions that elaborate accepted decisions without changing them are specified 
 | D-038 | Self-retriggering decided through flows, specialized on the handler's constant discrete writes (Accepted; raised by the prototype) | 15.4 |
 | D-029 | Derived function values may read bindings; declared and stored functions stay closed (Accepted; raised by syntax study S-1) | 10, 18 |
 | D-039 | Named mathematical constants are kept by name in the IR (Accepted; raised by the text parser) | 10 |
+| D-092 | Solved equations: declared unknowns, determined together by the equations that read them; rates given by equations (Accepted) | 6.2, 11, 13 |
 
 **Elaborations (in this specification only):**
 
@@ -784,7 +799,7 @@ Positions that elaborate accepted decisions without changing them are specified 
 | Random rates that depend on continuous state or time | Later extension of D-083 |
 | Algorithmic process mode (RUN-04) | Slice that needs it |
 | Field state evolution (D-010) | Done on grids of one and two axes: MK-9.4 to MK-9.8 (D-091); meshes, vector fields, fields in objects, noise in fields later |
-| Acausal equations, constraint enforcement (D-007, D-020) | Later extension |
+| Acausal equations, constraint enforcement (D-007, D-020) | Solved equations done: MK-11.6 to MK-11.9, RC-5.5 to RC-5.9 (D-092). Vector unknowns, solved equations over fields, constraint enforcement and constrained mechanics (index reduction or projection) later |
 | Quantity kinds of equal dimension (torque and energy) | Open; to be raised when a reference program needs it |
 | Checks and measurements evaluated at event instants (19.1) | Resolved: `03-presentation-kernel.md` PK-3.4 (`on(E)` observations) and section 4 (expectations) |
 | Modules, imports, packaging, versioning of libraries (R-55) | Extension specification |
