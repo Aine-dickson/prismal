@@ -1299,7 +1299,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             Type::Vector { space, .. } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(1),
             _ => 1,
         };
-        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field, width, contact: None });
+        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field, width, contact: None, slip: None });
     }
 
     // Constraints (MK section 12).
@@ -1380,8 +1380,45 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         // D-098: an enforced inequality is held by the unknown it names, `with N`, which its
         // solved rate reads; out of contact that unknown is zero.
         let mut contact = None;
+        let (mut hold, mut restitution) = (None, None);
         let inequality = prismal_ir::enforce::inequality(&k.cond).is_some();
+        // D-102: an enforced equality held by a bounded force, `with F where |F| <= B`.
+        let bounded = k.bound.is_some() && k.policy == Policy::Enforce && matches!(k.cond, Expr::Bin { bin: BinOp::Eq, .. });
+        if k.bound.is_some() && !bounded {
+            tc.err("MK-E36", format!("constraint `{}`: `where |F| <= B` bounds the force that holds an enforced equality, `a == b policy enforce with F where |F| <= B` (MK-12.12)", k.name));
+            continue;
+        }
+        if k.restitution.is_some() && !(inequality && k.policy == Policy::Enforce) {
+            tc.err("MK-E36", format!("constraint `{}`: `restitution` belongs to an enforced inequality, whose impacts it makes bounce (MK-12.13)", k.name));
+            continue;
+        }
+        if let Some(e) = &k.restitution {
+            restitution = tc.expect(e, &Type::real());
+        }
+        if bounded {
+            let fi = k.force.as_ref().and_then(|f| index.get(f).copied()).filter(|&i| model.bindings[i].role == Role::Unknown && matches!(model.bindings[i].ty, Type::Quantity { .. }));
+            let Some(fi) = fi else {
+                tc.err("MK-E36", format!("constraint `{}`: `with` names a number or quantity declared in an `unknown` block (MK-12.12)", k.name));
+                continue;
+            };
+            let solved = model.equations.iter().find(|q| q.id == prismal_ir::enforce::equation_id(&k.id));
+            let reads = solved.is_some_and(|q| {
+                let refs: Vec<Id> = q.lhs.refs().into_iter().chain(q.rhs.refs()).collect();
+                closure_derived(model, &index, &refs).contains(&fi)
+            });
+            if !reads {
+                tc.err("MK-E36", format!("constraint `{}` is held by `{}`, but no rate of it reads `{}`: read it in the flows, in the direction it acts (MK-12.12)", k.name, model.bindings[fi].name, model.bindings[fi].name));
+                continue;
+            }
+            let Some(b) = tc.expect(k.bound.as_ref().unwrap(), &model.bindings[fi].ty) else { continue };
+            hold = index.get(&prismal_ir::enforce::hold_id(&k.id)).copied();
+            let side = index.get(&prismal_ir::enforce::side_id(&k.id)).copied();
+            if let (Some(h), Some(sd), Some(q)) = (hold, side, cequations.iter_mut().find(|q| q.id == prismal_ir::enforce::equation_id(&k.id))) {
+                q.slip = Some((h, fi, sd, b));
+            }
+        }
         match (&k.force, inequality && k.policy == Policy::Enforce) {
+            _ if bounded => {}
             (Some(_), false) => {
                 tc.err("MK-E36", format!("constraint `{}`: `with` names the unknown that holds an enforced inequality, `a >= b policy enforce with N` (MK-12.11)", k.name));
                 continue;
@@ -1413,7 +1450,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             }
             (None, false) => {}
         }
-        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy, levels, contact });
+        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy, levels, contact, hold, restitution });
     }
 
     // Solved equations (MK-11.6 to MK-11.9, D-092).
@@ -1753,6 +1790,13 @@ fn check_ops(tc: &mut Tc, model: &Model, index: &HashMap<Id, usize>, ops: &[Op],
             Op::Create { .. } | Op::Connect { .. } | Op::Disconnect { .. } | Op::Destroy { member: Expr::Var { .. } | Expr::Part { .. } | Expr::Item { .. } | Expr::End { .. } | Expr::Other { .. } } => {
                 tc.err("MK-E00", "`create`, `destroy`, `connect` or `disconnect` in a model that was not elaborated (D-057, D-058)".into());
             }
+            // D-102: an impact with restitution, made by elaboration.
+            Op::Rebound { constraint } => match model.constraints.iter().position(|k| &k.id == constraint) {
+                Some(k) => out.push(COp::Rebound { constraint: k }),
+                None => {
+                    tc.err("MK-E00", format!("a rebound on an unknown constraint `{constraint}`"));
+                }
+            },
             // After elaboration a destroy names the member's liveness binding (D-057).
             Op::Destroy { member } => match member {
                 Expr::Ref { r#ref } if index.get(r#ref).is_some_and(|&i| model.bindings[i].role == Role::Discrete && model.bindings[i].ty == Type::Boolean) => {

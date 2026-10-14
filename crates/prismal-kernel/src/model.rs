@@ -89,6 +89,8 @@ pub enum COp {
     Destroy { binding: usize },
     /// Operations performed when `cond` holds before the transition (D-057).
     If { cond: CExpr, ops: Vec<COp> },
+    /// An impact with restitution on constraint `constraint` (D-102).
+    Rebound { constraint: usize },
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +153,9 @@ pub struct CEquation {
     /// The solved rate of an enforced inequality (D-098): the contact binding and the holding
     /// unknown. Out of contact the equation is `force == 0` instead.
     pub contact: Option<(usize, usize)>,
+    /// The solved rate of a bounded equality (D-102): its hold binding, the force, the side
+    /// binding and the bound. While it slips the equation is `force == side * bound` instead.
+    pub slip: Option<(usize, usize, usize, CExpr)>,
 }
 
 /// The unknowns of a model and the equations that determine them (MK-11.6, D-092).
@@ -186,6 +191,12 @@ pub struct CConstraint {
     /// the side of the boundary it holds (1 for `a >= b`, -1 for `a <= b`); out of contact it
     /// is not projected onto.
     pub contact: Option<(usize, f64)>,
+    /// A bounded equality (D-102): the binding that says whether it holds; while it slips it
+    /// is not projected onto.
+    pub hold: Option<usize>,
+    /// An enforced inequality's restitution (D-102): its impacts reverse the gap's rate,
+    /// scaled by this, instead of stopping it.
+    pub restitution: Option<CExpr>,
 }
 
 /// One rate of an enforced constraint, `lhs == rhs`, and the bindings the projection onto it
@@ -307,6 +318,11 @@ impl CModel {
             };
             vals[i] = v;
         }
+        // RC-5.13 (D-102): a bounded equality slipping from the start acts against the slip,
+        // whichever way its force is written.
+        if self.orient_slips(&mut vals, t0).map_err(|s| Status { kind: s.kind, cause: format!("initializing: {}", s.cause) })? {
+            self.update_derived(&mut vals, t0, t0)?;
+        }
         // RC-5.10 (D-093): the starting state satisfies the enforced constraints.
         self.separate(&mut vals, t0, t0).map_err(|s| Status { kind: s.kind, cause: format!("initializing: {}", s.cause) })?;
         if self.project(&mut vals, t0, t0, &[]).map_err(|s| Status { kind: s.kind, cause: format!("initializing: {}", s.cause) })? {
@@ -331,6 +347,7 @@ impl CModel {
                 .constraints
                 .iter()
                 .filter(|k| k.contact.is_none_or(|(c, _)| vals[c].boolean()))
+                .filter(|k| k.hold.is_none_or(|h| vals[h].boolean()))
                 .filter_map(|k| k.levels.get(p).map(|l| (k, l)))
                 .collect();
             let mut vars: Vec<usize> = rows.iter().flat_map(|(_, l)| l.vars.iter().chain(&l.params).copied()).filter(|i| set.contains(i)).collect();
@@ -342,128 +359,137 @@ impl CModel {
             let mut derived: Vec<usize> = rows.iter().flat_map(|(_, l)| l.derived.iter().copied()).collect();
             derived.sort_by_key(|i| self.derived_order.iter().position(|j| j == i));
             derived.dedup();
-            // The components moved, as (binding, component).
-            let comps: Vec<(usize, usize)> = vars.iter().flat_map(|&b| (0..vals[b].width()).map(move |c| (b, c))).collect();
-            let read = |vals: &[Value]| -> Vec<f64> {
-                comps
-                    .iter()
-                    .map(|&(b, c)| match &vals[b] {
-                        Value::Num(x) => *x,
-                        v => v.arr().v[c],
-                    })
-                    .collect()
-            };
-            let write = |vals: &mut [Value], x: &[f64]| {
-                for (&(b, c), v) in comps.iter().zip(x) {
-                    vals[b] = match &vals[b] {
-                        Value::Num(_) => Value::Num(*v),
-                        Value::Point(a) => {
-                            let mut a = *a;
-                            a.v[c] = *v;
-                            Value::Point(a)
-                        }
-                        Value::Vec(a) => {
-                            let mut a = *a;
-                            a.v[c] = *v;
-                            Value::Vec(a)
-                        }
-                        other => other.clone(),
-                    };
-                }
-            };
-            let residual = |vals: &mut [Value]| -> Result<(Vec<f64>, Vec<f64>), Status> {
-                for &i in &derived {
-                    let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
-                    let v = self.bindings[i].def.as_ref().expect("checked").eval(&c)?;
-                    vals[i] = v;
-                }
-                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
-                let (mut r, mut size) = (vec![], vec![]);
-                for (_, l) in &rows {
-                    let ((a, sa), (b, sb)) = (l.lhs.eval_sized(&c, l.width)?, l.rhs.eval_sized(&c, l.width)?);
-                    let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
-                    a.write_to(&mut x[..l.width]);
-                    b.write_to(&mut y[..l.width]);
-                    for j in 0..l.width {
-                        r.push(x[j] - y[j]);
-                        size.push(sa[j] + sb[j]);
-                    }
-                }
-                Ok((r, size))
-            };
-            let names = || rows.iter().map(|(k, _)| format!("`{}`", k.name)).collect::<Vec<_>>().join(", ");
-            let fail = |why: &str| Status::invalid(format!("the constraints {} cannot be enforced here: {why} (RC-5.10)", names()));
-            // The scale of each moved component: the size of its binding's value, or 1 in
-            // coherent SI units.
-            let scale: Vec<f64> = comps
+            moved |= self.move_onto(vals, t, t0, &rows, &[], vars, derived)?;
+        }
+        Ok(moved)
+    }
+
+    /// Moves `vars` by the smallest change that makes each row of `rows` hold, row `i` at
+    /// `targets[i]` (zero when absent): one level of RC-5.10, or an impact's rebound (D-102).
+    #[allow(clippy::too_many_arguments)]
+    fn move_onto(&self, vals: &mut [Value], t: f64, t0: f64, rows: &[(&CConstraint, &CLevel)], targets: &[f64], vars: Vec<usize>, derived: Vec<usize>) -> Result<bool, Status> {
+        let mut moved = false;
+        // The components moved, as (binding, component).
+        let comps: Vec<(usize, usize)> = vars.iter().flat_map(|&b| (0..vals[b].width()).map(move |c| (b, c))).collect();
+        let read = |vals: &[Value]| -> Vec<f64> {
+            comps
                 .iter()
-                .map(|&(b, _)| {
-                    let mut x = [0.0; 3];
-                    let w = vals[b].width();
-                    vals[b].write_to(&mut x[..w]);
-                    let n = x[..w].iter().map(|v| v * v).sum::<f64>().sqrt();
-                    if n > 0.0 { n } else { 1.0 }
+                .map(|&(b, c)| match &vals[b] {
+                    Value::Num(x) => *x,
+                    v => v.arr().v[c],
                 })
-                .collect();
-            let mut x = read(vals);
-            let (mut r, mut size) = residual(vals)?;
-            if comps.is_empty() {
-                // Only parameters, none of them changed: the values must already hold.
-                if r.iter().zip(&size).all(|(e, s)| e.abs() <= 1e-9 * s) {
-                    continue;
-                }
-                return Err(fail("they read only parameters, which move only when a change sets them; give values that satisfy them"));
-            }
-            let mut settled = false;
-            for _ in 0..PROJECT_ITERATIONS {
-                if r.iter().zip(&size).all(|(e, s)| e.abs() <= 1e-15 * s || *e == 0.0) {
-                    settled = true;
-                    break;
-                }
-                // The Jacobian by central differences, column by column.
-                let (m, n) = (r.len(), x.len());
-                let mut jac = vec![vec![0.0; n]; m];
-                for j in 0..n {
-                    let h = 1e-6 * (x[j].abs() + scale[j]);
-                    let mut xp = x.clone();
-                    xp[j] += h;
-                    write(vals, &xp);
-                    let (rp, _) = residual(vals)?;
-                    xp[j] -= 2.0 * h;
-                    write(vals, &xp);
-                    let (rm, _) = residual(vals)?;
-                    for i in 0..m {
-                        jac[i][j] = (rp[i] - rm[i]) / (2.0 * h);
+                .collect()
+        };
+        let write = |vals: &mut [Value], x: &[f64]| {
+            for (&(b, c), v) in comps.iter().zip(x) {
+                vals[b] = match &vals[b] {
+                    Value::Num(_) => Value::Num(*v),
+                    Value::Point(a) => {
+                        let mut a = *a;
+                        a.v[c] = *v;
+                        Value::Point(a)
                     }
-                }
-                // The smallest change of the scaled components: with Js = J S,
-                // dx = -S Js^T (Js Js^T)^-1 r.
-                let js: Vec<Vec<f64>> = jac.iter().map(|row| row.iter().zip(&scale).map(|(a, s)| a * s).collect()).collect();
-                let mut normal = vec![vec![0.0; m]; m];
-                for a in 0..m {
-                    for b in 0..m {
-                        normal[a][b] = js[a].iter().zip(&js[b]).map(|(p, q)| p * q).sum();
+                    Value::Vec(a) => {
+                        let mut a = *a;
+                        a.v[c] = *v;
+                        Value::Vec(a)
                     }
-                }
-                let Some(z) = gauss(normal, r.clone()) else {
-                    write(vals, &x);
-                    return Err(fail("they are dependent, or do not depend on the values they move"));
+                    other => other.clone(),
                 };
-                let dx: Vec<f64> = (0..n).map(|j| -scale[j] * (0..m).map(|i| js[i][j] * z[i]).sum::<f64>()).collect();
-                for (a, d) in x.iter_mut().zip(&dx) {
-                    *a += d;
+            }
+        };
+        let residual = |vals: &mut [Value]| -> Result<(Vec<f64>, Vec<f64>), Status> {
+            for &i in &derived {
+                let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                let v = self.bindings[i].def.as_ref().expect("checked").eval(&c)?;
+                vals[i] = v;
+            }
+            let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            let (mut r, mut size) = (vec![], vec![]);
+            for (_, l) in rows {
+                let ((a, sa), (b, sb)) = (l.lhs.eval_sized(&c, l.width)?, l.rhs.eval_sized(&c, l.width)?);
+                let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
+                a.write_to(&mut x[..l.width]);
+                b.write_to(&mut y[..l.width]);
+                for j in 0..l.width {
+                    r.push(x[j] - y[j] - targets.get(r.len()).copied().unwrap_or(0.0));
+                    size.push(sa[j] + sb[j]);
                 }
+            }
+            Ok((r, size))
+        };
+        let names = || rows.iter().map(|(k, _)| format!("`{}`", k.name)).collect::<Vec<_>>().join(", ");
+        let fail = |why: &str| Status::invalid(format!("the constraints {} cannot be enforced here: {why} (RC-5.10)", names()));
+        // The scale of each moved component: the size of its binding's value, or 1 in
+        // coherent SI units.
+        let scale: Vec<f64> = comps
+            .iter()
+            .map(|&(b, _)| {
+                let mut x = [0.0; 3];
+                let w = vals[b].width();
+                vals[b].write_to(&mut x[..w]);
+                let n = x[..w].iter().map(|v| v * v).sum::<f64>().sqrt();
+                if n > 0.0 { n } else { 1.0 }
+            })
+            .collect();
+        let mut x = read(vals);
+        let (mut r, mut size) = residual(vals)?;
+        if comps.is_empty() {
+            // Only parameters, none of them changed: the values must already hold.
+            if r.iter().zip(&size).all(|(e, s)| e.abs() <= 1e-9 * s) {
+                return Ok(false);
+            }
+            return Err(fail("they read only parameters, which move only when a change sets them; give values that satisfy them"));
+        }
+        let mut settled = false;
+        for _ in 0..PROJECT_ITERATIONS {
+            if r.iter().zip(&size).all(|(e, s)| e.abs() <= 1e-15 * s || *e == 0.0) {
+                settled = true;
+                break;
+            }
+            // The Jacobian by central differences, column by column.
+            let (m, n) = (r.len(), x.len());
+            let mut jac = vec![vec![0.0; n]; m];
+            for j in 0..n {
+                let h = 1e-6 * (x[j].abs() + scale[j]);
+                let mut xp = x.clone();
+                xp[j] += h;
+                write(vals, &xp);
+                let (rp, _) = residual(vals)?;
+                xp[j] -= 2.0 * h;
+                write(vals, &xp);
+                let (rm, _) = residual(vals)?;
+                for i in 0..m {
+                    jac[i][j] = (rp[i] - rm[i]) / (2.0 * h);
+                }
+            }
+            // The smallest change of the scaled components: with Js = J S,
+            // dx = -S Js^T (Js Js^T)^-1 r.
+            let js: Vec<Vec<f64>> = jac.iter().map(|row| row.iter().zip(&scale).map(|(a, s)| a * s).collect()).collect();
+            let mut normal = vec![vec![0.0; m]; m];
+            for a in 0..m {
+                for b in 0..m {
+                    normal[a][b] = js[a].iter().zip(&js[b]).map(|(p, q)| p * q).sum();
+                }
+            }
+            let Some(z) = gauss(normal, r.clone()) else {
                 write(vals, &x);
-                moved = true;
-                (r, size) = residual(vals)?;
-                if dx.iter().zip(&x).zip(&scale).all(|((d, a), s)| d.abs() <= 1e-15 * (a.abs() + s)) {
-                    settled = true;
-                    break;
-                }
+                return Err(fail("they are dependent, or do not depend on the values they move"));
+            };
+            let dx: Vec<f64> = (0..n).map(|j| -scale[j] * (0..m).map(|i| js[i][j] * z[i]).sum::<f64>()).collect();
+            for (a, d) in x.iter_mut().zip(&dx) {
+                *a += d;
             }
-            if !settled && !r.iter().zip(&size).all(|(e, s)| e.abs() <= 1e-9 * s) {
-                return Err(fail("the projection does not converge"));
+            write(vals, &x);
+            moved = true;
+            (r, size) = residual(vals)?;
+            if dx.iter().zip(&x).zip(&scale).all(|((d, a), s)| d.abs() <= 1e-15 * (a.abs() + s)) {
+                settled = true;
+                break;
             }
+        }
+        if !settled && !r.iter().zip(&size).all(|(e, s)| e.abs() <= 1e-9 * s) {
+            return Err(fail("the projection does not converge"));
         }
         Ok(moved)
     }
@@ -521,6 +547,69 @@ impl CModel {
         scratch[force] = Value::Num(n + h);
         let r1 = rate(&mut scratch)?;
         Ok(Some(side * (r1 - r0) > 0.0))
+    }
+
+    /// RC-5.14 (D-102): an impact on the enforced inequality `k` with restitution `e`: the
+    /// state is moved onto the boundary, then its gap's rate is set to `-e` times its value
+    /// before, each by the smallest change of what that level moves.
+    pub fn rebound(&self, vals: &mut [Value], t: f64, t0: f64, k: usize, e: f64) -> Result<(), Status> {
+        let c = &self.constraints[k];
+        let (Some(l0), Some(l1)) = (c.levels.first(), c.levels.get(1)) else { return Ok(()) };
+        let rate = {
+            let mut scratch = vals.to_vec();
+            for &i in &l1.derived {
+                let cx = Ctx { vals: &scratch, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                let v = self.bindings[i].def.as_ref().expect("checked").eval(&cx)?;
+                scratch[i] = v;
+            }
+            let cx = Ctx { vals: &scratch, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            l1.lhs.eval(&cx)?.num() - l1.rhs.eval(&cx)?.num()
+        };
+        for (level, target) in [(l0, 0.0), (l1, -e * rate)] {
+            let mut derived = level.derived.clone();
+            derived.sort_by_key(|i| self.derived_order.iter().position(|j| j == i));
+            self.move_onto(vals, t, t0, &[(c, level)], &[target], level.vars.clone(), derived)?;
+        }
+        Ok(())
+    }
+
+    /// RC-5.13 (D-102): the side of each bounded equality that slips at the start, so that
+    /// its force at the bound slows the slip: the slip's sign, against the change of the
+    /// solved rate for a change of the force. Returns whether a side changed.
+    pub fn orient_slips(&self, vals: &mut [Value], t0: f64) -> Result<bool, Status> {
+        let Some(s) = &self.solve else { return Ok(false) };
+        let mut changed = false;
+        for q in &self.equations {
+            let Some((hold, force, side, _)) = &q.slip else { continue };
+            if vals[*hold].boolean() {
+                continue;
+            }
+            let Some(k) = self.constraints.iter().find(|k| k.hold == Some(*hold)) else { continue };
+            let Some(level) = k.levels.first() else { continue };
+            let eval_rate = |vals: &mut Vec<Value>| -> Result<f64, Status> {
+                for &i in &s.inner {
+                    let c = Ctx { vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                    let v = self.bindings[i].def.as_ref().expect("checked").eval(&c)?;
+                    vals[i] = v;
+                }
+                let c = Ctx { vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+                Ok(q.lhs.eval(&c)?.num() - q.rhs.eval(&c)?.num())
+            };
+            let mut scratch = vals.to_vec();
+            let r0 = eval_rate(&mut scratch)?;
+            let f = vals[*force].num();
+            scratch[*force] = Value::Num(f + 1e-6 * (f.abs() + 1.0));
+            let r1 = eval_rate(&mut scratch)?;
+            let c = Ctx { vals, der: None, t: t0, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            let gap = level.lhs.eval(&c)?.num() - level.rhs.eval(&c)?.num();
+            let along = if r1 > r0 { 1.0 } else { -1.0 };
+            let want = if gap > 0.0 { -along } else { along };
+            if vals[*side].num() != want {
+                vals[*side] = Value::Num(want);
+                changed = true;
+            }
+        }
+        Ok(changed)
     }
 
     /// RC-5.11 (D-098): an inequality in contact whose gap is opening (a ball on a floor
@@ -590,6 +679,13 @@ impl CModel {
                 if let Some((_, force)) = q.contact.filter(|(on, _)| !vals[*on].boolean()) {
                     r.push(vals[force].num());
                     size.push(1.0);
+                    continue;
+                }
+                // D-102: a slipping bounded equality's force is at its bound, against the slip.
+                if let Some((_, force, side, bound)) = q.slip.as_ref().filter(|(h, ..)| !vals[*h].boolean()) {
+                    let b = vals[*side].num() * bound.eval(&c)?.num();
+                    r.push(vals[*force].num() - b);
+                    size.push(vals[*force].num().abs() + b.abs());
                     continue;
                 }
                 let ((a, sa), (b, sb)) = (q.lhs.eval_sized(&c, q.width)?, q.rhs.eval_sized(&c, q.width)?);

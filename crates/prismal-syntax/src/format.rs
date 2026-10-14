@@ -838,6 +838,8 @@ impl<'a> Printer<'a> {
             Op::Make { alive, values } => format!("make {alive} {{ {} }}", values.iter().map(|v| format!("{} = {}", v.binding, self.expr(&v.value))).collect::<Vec<_>>().join("; ")),
             // Made by elaboration only; printed for reading, not for parsing (D-057).
             Op::If { r#if, then } => format!("if {} {{ {} }}", self.expr(r#if), then.iter().map(|o| self.op(o)).collect::<Vec<_>>().join("; ")),
+            // Made by elaboration only (D-102).
+            Op::Rebound { constraint } => format!("rebound {constraint}"),
         }
     }
 
@@ -970,6 +972,12 @@ impl<'a> Printer<'a> {
         }
         if let Some(f) = &c.force {
             let _ = write!(s, " with {}", self.binding_name(f));
+            if let Some(b) = &c.bound {
+                let _ = write!(s, " where |{}| <= {}", self.binding_name(f), self.expr(b));
+            }
+        }
+        if let Some(e) = &c.restitution {
+            let _ = write!(s, " restitution {}", self.expr(e));
         }
         s
     }

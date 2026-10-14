@@ -714,6 +714,7 @@ impl<'a> Cx<'a> {
                 }
                 Op::If { r#if, then } => out.push(Op::If { r#if: self.expr(s, r#if), then: self.ops(s, then) }),
                 Op::Destroy { member: Expr::Ref { .. } } | Op::Make { .. } => out.push(o.clone()),
+                Op::Rebound { constraint } => out.push(Op::Rebound { constraint: s.local(constraint) }),
                 Op::Destroy { member } | Op::Disconnect { relation: member } => {
                     let what = if matches!(o, Op::Destroy { .. }) { "destroyed" } else { "disconnected" };
                     let Some(sel) = self.select(s, member) else { continue };
@@ -1112,6 +1113,8 @@ impl<'a> Cx<'a> {
                 nc.cond = Expr::bin(BinOp::Or, Expr::Not { not: Box::new(l.clone()) }, nc.cond);
             }
             nc.tol = c.tol.as_ref().map(|t| self.expr(s, t));
+            nc.bound = c.bound.as_ref().map(|t| self.expr(s, t));
+            nc.restitution = c.restitution.as_ref().map(|t| self.expr(s, t));
             nc.attached_to = c.attached_to.as_ref().map(|a| s.local(a));
             nc.force = c.force.as_ref().and_then(|f| match self.expr(s, &Expr::Ref { r#ref: f.clone() }) {
                 Expr::Ref { r#ref } => Some(r#ref),
@@ -1200,6 +1203,8 @@ impl<'a> Cx<'a> {
             policy: Policy::Stop,
             attached_to: None,
             force: None,
+            bound: None,
+            restitution: None,
         });
     }
 }

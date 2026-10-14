@@ -31,6 +31,8 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `constraint N: c [within tol] [policy reject \| report \| stop]` | a checked condition (`within` for `==` only) | 6 |
 | `constraint N: a == b policy enforce` | a condition the runtime keeps true: the state is moved onto it, and the unknown force that holds it is solved for | 18 |
 | `constraint N: a >= b policy enforce with F` | a constraint on one side, held by the unknown `F` while in contact: contact with a floor, a slack rope | 18 |
+| `constraint N: v == 0 m/s policy enforce with F where \|F\| <= mu * N` | friction: holds while the force needed is within the bound, slips with the force at the bound against the slip, holds again when the slip stops | 18 |
+| `constraint N: y >= 0 m policy enforce with N restitution e` | impacts bounce: the gap's rate reversed and scaled by `e`; bounces that accumulate end in contact | 18 |
 | `object Name { ... }` | an object type, with the body of a model; declared in a model, or outside models for every model of the file | 9, 19 |
 | `use mechanics`, `use mechanics.{Body}` | at the top of a file: the shared definitions of a module, or the ones named | 19 |
 | `parts { a: T { x = e }  c: T[n] { x = e } }` | one object, or a collection of `n` members; overrides and input connections, with `index` the member's number | 9 |
@@ -136,7 +138,7 @@ Two forms add details to a form, one for each place they appear (D-081):
 |---|---|
 | declaration in `param`, `state`, ... | `in I` or `where c` (one range), `intervenable`, `private`, `combine k`, `symbol "s"`, `unit u` |
 | `equation` | `checked within tol` |
-| `constraint` | `within tol`, `policy p` |
+| `constraint` | `within tol`, `policy p`, `with F`, `where \|F\| <= B`, `restitution e` |
 | `event` | `on trigger` first, then `if c`, the block, `zeno ...` |
 | `narrate "..."` | `for d` |
 | `hide`, `bind` | `for d`, `ease e` |
@@ -231,6 +233,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `permit` | what the learner may do | 7 |
 | `policy`, `reject`, `report`, `stop` | what a failed constraint does; `zeno stop` | 5, 6 |
 | `enforce` | `policy enforce`: the runtime keeps the constraint true instead of checking it | 18 |
+| `restitution` | `restitution e` on an enforced inequality: the share of the speed into the boundary an impact gives back | 18 |
 | `presentation` | how a model is shown | 1 |
 | `private` | a binding hidden from outside | 2 |
 | `process` | a named group of flows and events | 4 |
@@ -266,7 +269,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce use algorithm while step`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce use algorithm while step restitution`.
 
 ## Diagnostics
 

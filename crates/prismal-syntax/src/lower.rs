@@ -921,6 +921,24 @@ impl<'a> ModelCx<'a> {
                         };
                         self.model.constraints.last_mut().expect("pushed").force = force;
                     }
+                    // D-102: `where |F| <= B` bounds the force named by `with`.
+                    if let Some(b) = &c.bound {
+                        let is_force = |l: &ast::Expr| matches!(&l.kind, ast::ExprKind::Norm(x) if matches!(&x.kind, ast::ExprKind::Name(n) if c.force.as_ref().is_some_and(|f| &f.text == n)));
+                        match &b.kind {
+                            ast::ExprKind::Compare(l, rest) if rest.len() == 1 && rest[0].0 == ast::CmpOp::Le && is_force(l) => {
+                                let r = self.expr(&rest[0].1, &[]);
+                                self.model.constraints.last_mut().expect("pushed").bound = Some(r);
+                            }
+                            _ => {
+                                let f = c.force.as_ref().map(|f| f.text.clone()).unwrap_or_else(|| "F".into());
+                                self.err("SX-E08", format!("`where` bounds the force that holds the constraint: `with {f} where |{f}| <= B`"), b.span);
+                            }
+                        }
+                    }
+                    if let Some(e) = &c.restitution {
+                        let e = self.expr(e, &[]);
+                        self.model.constraints.last_mut().expect("pushed").restitution = Some(e);
+                    }
                 }
                 Member::Object(o) => self.object(o),
                 Member::Parts(ps) => self.parts_decl(ps),
@@ -961,7 +979,7 @@ impl<'a> ModelCx<'a> {
             self.err("SX-E09", format!("constraint `{name}` declared twice"), span);
         }
         self.map.insert(id.clone(), span);
-        self.model.constraints.push(Constraint { id, name: name.into(), cond, tol, policy, attached_to, force: None });
+        self.model.constraints.push(Constraint { id, name: name.into(), cond, tol, policy, attached_to, force: None, bound: None, restitution: None });
     }
 
     // ------------------------------------------------------------ declarations

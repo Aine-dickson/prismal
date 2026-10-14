@@ -26,7 +26,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
-    "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use", "algorithm", "while", "step",
+    "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use", "algorithm", "while", "step", "restitution",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -552,14 +552,17 @@ impl<'a> Parser<'a> {
             };
             let cond = self.expr()?;
             let (mut within, mut policy, mut force, mut seen) = (None, None, None, vec![]);
-            while let Some(w) = self.clause(&["within", "policy", "with"], &mut seen)? {
+            let (mut bound, mut restitution) = (None, None);
+            while let Some(w) = self.clause(&["within", "policy", "with", "where", "restitution"], &mut seen)? {
                 match w {
                     "within" => within = Some(self.expr()?),
                     "policy" => policy = Some(self.any_name("a policy")?),
+                    "where" => bound = Some(self.expr()?),
+                    "restitution" => restitution = Some(self.expr()?),
                     _ => force = Some(self.name("the unknown that holds the constraint")?),
                 }
             }
-            return Ok(vec![Member::Constraint(ConstraintDecl { name, cond, within, policy, force, span: self.since(start) })]);
+            return Ok(vec![Member::Constraint(ConstraintDecl { name, cond, within, policy, force, bound, restitution, span: self.since(start) })]);
         }
         if self.eat_word("object") {
             let notes = self.notes_before(start.line);
