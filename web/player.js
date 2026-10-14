@@ -465,13 +465,12 @@ const PALETTES = {
   sequential: [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]],
   diverging: [[59, 76, 192], [242, 242, 242], [180, 4, 38]],
 };
-function paletteColor(name, v) {
+function paletteRgb(name, v) {
   const stops = PALETTES[name] || PALETTES.sequential;
   const x = Math.min(Math.max(v, 0), 1) * (stops.length - 1);
   const i = Math.min(Math.floor(x), stops.length - 2);
   const w = x - i;
-  const c = [0, 1, 2].map((k) => Math.round(stops[i][k] + w * (stops[i + 1][k] - stops[i][k])));
-  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  return [0, 1, 2].map((k) => Math.round(stops[i][k] + w * (stops[i + 1][k] - stops[i][k])));
 }
 
 function drawRep(v, g, r, u, colorIndex) {
@@ -550,15 +549,31 @@ function drawRep(v, g, r, u, colorIndex) {
       break;
     }
     case 'raster': {
-      // Coloured cells of a field in the plane (D-091), as prismal-svg draws them.
+      // Coloured cells of a field in the plane (D-091), with the colours prismal-svg gives
+      // them. One image of one pixel per cell, scaled without smoothing: a ripple tank of
+      // 60 by 60 cells would otherwise be 3600 elements redrawn every frame.
       const [fx, fy] = m.to(r.from);
       const [tx, ty] = m.to(r.to);
-      const cw = (tx - fx) / r.cols, ch = (ty - fy) / r.rows;
-      const g = svg('g', { class: 'raster', 'shape-rendering': 'crispEdges' }, grp);
+      const canvas = document.createElement('canvas');
+      canvas.width = r.cols;
+      canvas.height = r.rows;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(r.cols, r.rows);
+      // Cell k is column k % cols from `from` towards `to`, row k / cols likewise; the image's
+      // rows run downwards on the page.
+      const flipX = tx < fx, flipY = ty < fy;
       r.values.forEach((v, k) => {
-        const x0 = fx + (k % r.cols) * cw, y0 = fy + Math.floor(k / r.cols) * ch;
-        svg('rect', { x: Math.min(x0, x0 + cw), y: Math.min(y0, y0 + ch), width: Math.abs(cw) + 0.5, height: Math.abs(ch) + 0.5, fill: paletteColor(r.palette, v) }, g);
+        const i = k % r.cols, j = Math.floor(k / r.cols);
+        const px = flipX ? r.cols - 1 - i : i, py = flipY ? r.rows - 1 - j : j;
+        const c = paletteRgb(r.palette, v);
+        const o = 4 * (py * r.cols + px);
+        img.data[o] = c[0];
+        img.data[o + 1] = c[1];
+        img.data[o + 2] = c[2];
+        img.data[o + 3] = 255;
       });
+      ctx.putImageData(img, 0, 0);
+      svg('image', { class: 'raster', href: canvas.toDataURL(), x: Math.min(fx, tx), y: Math.min(fy, ty), width: Math.abs(tx - fx), height: Math.abs(ty - fy), preserveAspectRatio: 'none', style: 'image-rendering: pixelated' }, grp);
       break;
     }
     case 'polygon': {

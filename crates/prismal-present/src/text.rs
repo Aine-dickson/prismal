@@ -107,21 +107,34 @@ pub fn unit_text(d: &Dim) -> String {
             return text.into();
         }
     }
+    // Positive powers, then `/` and the negative ones: `m^2/s`, `1/(m s)`, `s^0.5`.
     let syms = ["m", "kg", "s", "A", "K", "mol", "cd"];
-    let mut parts = vec![];
+    let power = |sym: &str, n: i64, den: i64| -> String {
+        match (n, den) {
+            (1, 1) => sym.to_string(),
+            (n, 1) => format!("{sym}^{n}"),
+            (n, 2) => format!("{sym}^{}", n as f64 / 2.0),
+            (n, d) => format!("{sym}^({n}/{d})"),
+        }
+    };
+    let (mut up, mut down) = (vec![], vec![]);
     for (i, r) in d.0.iter().enumerate() {
         if r.is_zero() {
             continue;
         }
-        if r.n == 1 && r.d == 1 {
-            parts.push(syms[i].to_string());
-        } else if r.d == 1 {
-            parts.push(format!("{}^{}", syms[i], r.n));
+        let (n, den) = (r.n as i64, r.d as i64);
+        if n > 0 {
+            up.push(power(syms[i], n, den));
         } else {
-            parts.push(format!("{}^({}/{})", syms[i], r.n, r.d));
+            down.push(power(syms[i], -n, den));
         }
     }
-    parts.join(" ")
+    let top = if up.is_empty() { "1".to_string() } else { up.join(" ") };
+    match down.len() {
+        0 => top,
+        1 => format!("{top}/{}", down[0]),
+        _ => format!("{top}/({})", down.join(" ")),
+    }
 }
 
 fn with_unit(x: f64, unit: &str) -> String {
@@ -334,6 +347,8 @@ mod tests {
         assert_eq!(components(&[1e-12, 2e-12]), [1e-12, 2e-12]);
         assert_eq!(unit_text(&Dim::parse("L/T").unwrap()), "m/s");
         assert_eq!(superscripts("25.00 m^2"), "25.00 m²");
+        assert_eq!(unit_text(&Dim::parse("L^2/T").unwrap()), "m^2/s");
+        assert_eq!(unit_text(&Dim::parse("1/(L T)").unwrap_or(Dim::parse("L^-1 T^-1").unwrap())), "1/(m s)");
         assert_eq!(superscripts("(1 m/s^2, 2 m^-10)"), "(1 m/s², 2 m⁻¹⁰)");
         assert_eq!(superscripts("a^b 1e-5"), "a^b 1e-5");
     }

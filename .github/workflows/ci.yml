@@ -80,6 +80,9 @@ jobs:
         run: node web/check-input.mjs
       - name: Narration sound in a browser
         run: node web/check-voice.mjs
+      - name: Fields, chance and constraints in a browser
+        # A shared runner draws slower than a desktop; the frame rate is only bounded below.
+        run: MIN_FPS=5 node web/check-content.mjs
       - name: SVG renderer against the player
         run: node crates/prismal-svg/compare.mjs
 

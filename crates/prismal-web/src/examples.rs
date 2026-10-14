@@ -25,6 +25,10 @@ const GUIDE: &[(&str, &str)] = &[
     ("7", include_str!("../../../docs/guide/07-presentations.md")),
     ("8", include_str!("../../../docs/guide/08-lessons.md")),
     ("9", include_str!("../../../docs/guide/09-objects.md")),
+    ("15", include_str!("../../../docs/guide/15-chance.md")),
+    ("16", include_str!("../../../docs/guide/16-fields.md")),
+    ("17", include_str!("../../../docs/guide/17-solving-equations.md")),
+    ("18", include_str!("../../../docs/guide/18-constraints.md")),
 ];
 
 /// An example program: a title and its source in the working syntax.

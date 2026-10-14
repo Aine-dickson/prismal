@@ -101,6 +101,7 @@ fn match_ids(new: &Document, prev: &Document) -> HashMap<Id, Id> {
     for np in &new.presentations {
         let Some(pp) = prev.presentations.iter().find(|p| p.name == np.name) else { continue };
         mt.pair(&np.observations, &pp.observations, |o| o.name.clone(), |o| &o.id);
+        mt.pair(&np.instruments, &pp.instruments, |i| i.name.clone(), |i| &i.id);
         mt.pair(&np.views, &pp.views, |v| v.name.clone(), |v| &v.id);
         for nv in &np.views {
             if let Some(pv) = pp.views.iter().find(|v| v.name == nv.name) {
@@ -143,6 +144,7 @@ fn match_body(mt: &mut Matcher, nm: &Model, pm: &Model) {
     mt.pair(&nm.parts, &pm.parts, |p| p.name.clone(), |p| &p.id);
     mt.pair(&nm.objects, &pm.objects, |o| o.name.clone(), |o| &o.id);
     mt.pair(&nm.ends, &pm.ends, |e| e.name.clone(), |e| &e.id);
+    mt.pair(&nm.grids, &pm.grids, |g| g.name.clone(), |g| &g.id);
     for no in &nm.objects {
         if let Some(po) = pm.objects.iter().find(|p| p.name == no.name) {
             match_body(mt, no, po);
@@ -272,6 +274,7 @@ fn reorder(doc: &mut Document, prev: &Document) {
         order(&mut m.functions, &ids(&p.functions, |b| &b.id), |b| &b.id);
         order(&mut m.parts, &ids(&p.parts, |b| &b.id), |b| &b.id);
         order(&mut m.objects, &ids(&p.objects, |b| &b.id), |b| &b.id);
+        order(&mut m.grids, &ids(&p.grids, |b| &b.id), |b| &b.id);
         for o in &mut m.objects {
             if let Some(po) = p.objects.iter().find(|x| x.id == o.id) {
                 body(o, po);
@@ -286,6 +289,7 @@ fn reorder(doc: &mut Document, prev: &Document) {
     for pr in &mut doc.presentations {
         let Some(p) = prev.presentations.iter().find(|x| x.id == pr.id) else { continue };
         order(&mut pr.observations, &ids(&p.observations, |o| &o.id), |o| &o.id);
+        order(&mut pr.instruments, &ids(&p.instruments, |i| &i.id), |i| &i.id);
         order(&mut pr.views, &ids(&p.views, |v| &v.id), |v| &v.id);
         for v in &mut pr.views {
             if let Some(pv) = p.views.iter().find(|x| x.id == v.id) {
@@ -401,6 +405,10 @@ pub fn rename(doc: &Document, id: &str, new_name: &str) -> Result<Document, Stri
             q.name = new_name.into();
             return Ok(d);
         }
+        if let Some(g) = m.grids.iter_mut().find(|g| g.id == id) {
+            g.name = new_name.into();
+            return Ok(d);
+        }
         if let Some(c) = m.constraints.iter_mut().find(|c| c.id == id) {
             c.name = new_name.into();
             return Ok(d);
@@ -413,6 +421,10 @@ pub fn rename(doc: &Document, id: &str, new_name: &str) -> Result<Document, Stri
         }
         if let Some(o) = p.observations.iter_mut().find(|o| o.id == id) {
             o.name = new_name.into();
+            return Ok(d);
+        }
+        if let Some(i) = p.instruments.iter_mut().find(|i| i.id == id) {
+            i.name = new_name.into();
             return Ok(d);
         }
         if let Some(v) = p.views.iter_mut().find(|v| v.id == id) {
