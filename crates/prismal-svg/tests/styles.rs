@@ -80,3 +80,46 @@ fn printing_keeps_styles() {
     assert!(printed.contains("segment(origin, pos, color: blue, line: dashed) as rod"), "{printed}");
     assert_eq!(prismal_syntax::compile(&printed).unwrap().doc, doc);
 }
+
+/// `width: k` (D-095): a multiple of the kind's own line width, in frames and drawings;
+/// printed back; a positive number, and only where a line style applies.
+#[test]
+fn widths() {
+    let src = SRC.replace("segment(origin, pos, color: blue, line: dashed) as rod", "segment(origin, pos, color: blue, line: dashed, width: 3) as rod");
+    let (layout, f) = frame(&src);
+    assert_eq!(rep(&f, "rod")["width"], 3.0);
+    assert!(rep(&f, "path").get("width").is_none());
+    let svg = render(&layout, &f, &Options::default());
+    let rod = svg.split("<line class=\"segment\"").nth(1).unwrap();
+    let w: f64 = rod.split("stroke-width=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+    assert!(w > 5.0, "three times the usual 2 units: {w}");
+    let printed = prismal_syntax::format::format(&prismal_syntax::compile(&src).unwrap().doc);
+    assert!(printed.contains("segment(origin, pos, color: blue, line: dashed, width: 3) as rod"), "{printed}");
+    let load = |s: String| match Document::load(Content::Text(s)) {
+        Err(e) => format!("{e:?}"),
+        Ok(d) => format!("{:?}", d.diagnostics()),
+    };
+    let e = load(SRC.replace("marker(pos, color: red) as ball", "marker(pos, width: 2) as ball"));
+    assert!(e.contains("SX-E08") && e.contains("width"), "{e}");
+    let e = load(SRC.replace("segment(origin, pos, color: blue, line: dashed) as rod", "segment(origin, pos, width: 0) as rod"));
+    assert!(e.contains("PK-E05") && e.contains("positive"), "{e}");
+}
+
+/// `align` of a text put at a point (D-095): `center` and `right` reach frames and anchor
+/// the drawn text; without `at` it is an error.
+#[test]
+fn aligned_texts() {
+    let src = SRC.replace("marker(origin) as plain", "marker(origin) as plain\n    text(\"start\", at: origin, align: center) as tag");
+    let (layout, f) = frame(&src);
+    assert_eq!(rep(&f, "tag")["align"], "center");
+    let svg = render(&layout, &f, &Options::default());
+    assert!(svg.contains("text-anchor=\"middle\""), "{svg}");
+    let printed = prismal_syntax::format::format(&prismal_syntax::compile(&src).unwrap().doc);
+    assert!(printed.contains("text(\"start\", at: origin, align: center) as tag"), "{printed}");
+    let bad = src.replace("text(\"start\", at: origin, align: center)", "text(\"start\", align: center)");
+    let e = match Document::load(Content::Text(bad)) {
+        Err(e) => format!("{e:?}"),
+        Ok(d) => format!("{:?}", d.diagnostics()),
+    };
+    assert!(e.contains("PK-E05") && e.contains("align"), "{e}");
+}

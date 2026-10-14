@@ -19,18 +19,22 @@ Candidate A amended as accepted in D-028: A's keyword-led statements, with group
 | `state { x: T = e ... }` | continuous state with initial definitions |
 | `discrete { x: T = e ... }` | discrete state |
 | `derived { x: T = e; f(x: A): B = e ... }` | derived bindings, including function-valued ones |
+| `unknown { x: T [= guess] ... }` | unknowns (MK-11.6, D-092): numbers or quantities that the equations reading them determine together; the value is the solver's starting guess, 0 when omitted |
 | `enum Phase { a, b, c }` | enumeration (MK-2.2a, D-049); cases by name (`a`) or qualified (`Phase.a`) |
 | `fn f(x: A): B = e` | declared function (MK-10.3a, D-048): reads only its parameters, constants and other functions |
 | `flow { der(x) = e; der(y) += e ... }` | defining flows and contributions (MK-14.7) |
 | `process P { flow ...; event ... }` | named process (MK-14.1), optional |
 | `event E on <trigger> [if cond] [{ ops }] [zeno stop \| zeno settle { ops }]` | event (MK-15) |
-| `equation N: lhs == rhs [checked within tol]` | equation (MK-11) |
-| `constraint [N:] cond [within tol] [policy p]` | constraint (MK-12) |
+| `equation N: lhs == rhs [checked within tol]` | equation (MK-11); without `checked`, an equation that reads an unknown is solved (MK-11.7), and one that reads `der(x)` of a state without a flow gives that state its rate (MK-11.9) |
+| `constraint [N:] cond [within tol] [policy p]` | constraint (MK-12); `p` is `reject`, `report` (the default), `stop` or `enforce`: an enforced constraint is an equation `a == b`, without `within`, kept true by the runtime (MK-12.6, D-093) |
 | `object Name { ... }` | object type (MK-7.13, D-055), declared in a model, with the body of a model |
 | `parts { a: T [{ x = e ... }]  c: T[n] [{ x = e ... }] }` | a contained object, or a collection of `n` members; overrides and input connections, with `index` the member's number (MK-8.3a) |
 | `flow { for b in c { der(b.x) = e ... } }` | flows written by the container for each member (MK-8.8) |
 | `parts { c: T[max m]  d: T[n, max m] { ... } }` | a collection whose membership changes (MK-8.2a, D-057): none or `n` members at the start, at most `m` made in a run |
 | `for b in c { event E on ... { ops } }` | an event of the model repeated for each member (MK-15.1b) |
+| `grid g(x: [a, b], cells: n)`, `grid g(x: [a, b], y: [c, d], cells: (n, m))` | a grid of cells on a line or in the model's plane (MK-9.5, D-091) |
+| `state { T(x in g): R = e }`, `derived { q(x in g): R = e }`, `der(T) = e`, `der(T(x)) = e`, `set T(p) = e` | a field over a grid, its flow and a pointwise set; `laplacian(T)`, `gradient(T)` in them, `T(x)`, `integral(T)`, `mean(T)`, `min(T)`, `max(T)` anywhere (MK-9.4 to MK-9.8, D-091) |
+| `boundary T { left = e; right = e; bottom = e; top = e }`, `boundary T periodic` | a field's boundary conditions; edges not named are insulated (MK-9.6) |
 | `relation R(a in c, b in d) { ... }` | relation type (MK-8.5a, D-058); its endpoints are members of `c` and `d`; a part of type `R` is a relation set |
 
 Every block keyword also has a one-line form for a single declaration (`param g: Acceleration = 9.81 m/s^2`, `flow der(x) = v`). Both parse to the same IR; the formatter prints blocks.
@@ -41,7 +45,7 @@ Modifiers after a declaration: `intervenable`, `private`, `symbol "v"`, `unit de
 
 Expressions add `match e { a => x, b => y }` (one arm per case, arms separated by commas or lines) to the shared sublanguage, and members (D-055): `a.x`, `c[k].x` with a constant `k`, `b.x` for a loop variable; aggregates `sum(e for b in c [if cond])`, likewise `min`, `max`, `any`, `all`, and `count(c)` or `count(b for b in c if cond)`. In views and representation blocks, `for b in c { reps }` repeats each representation per member. `parts` and `index` are contextual words.
 
-Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0]`, `on E [(p: T)]`, `on start`, `on input(i)`, `on request [(p: T)]`; `(p: T)` names the payload the occurrence receives (D-050). A payload may be a member, `(b in balls)`, and an event may declare several, `(b in balls, j: Momentum)` (D-059). `emit E(v)` and `emit E(b, j)` supply payloads. A target may go through an endpoint: `set s.a.vel = e`. `input { x: T [= default] }` declares an input with an optional default (D-051). Operations: `set`, `contribute`, `create`, `destroy`, `connect`, `disconnect`, `emit`. `create c { x = e ... }` makes a member of `c` with starting values; `destroy b` ends the member `b`; `set b.x = e` writes a member's binding from its container (D-057). `max` in `[n, max m]` is a contextual word; `[max inf]` declares no limit (D-066). `connect rs(x, y) { k = e }` makes a relation, `disconnect s` ends one; `s.a` is the member at an endpoint (D-058); `relation` is a contextual word. `undirected relation R(a in c, b in c)` has no order outside its body; `s.has(o)` and `s.other(o)` read endpoints without one (D-064). A collection of a contained object is named by its path, `left.atoms`, in endpoints, members, loops and aggregates (D-065).
+Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0]`, `on E [(p: T)]`, `on start`, `on input(i)`, `on request [(p: T)]`, `random(λ)` (a contextual word, an addition under section 1.7; `random(p: T)` still follows an event named `random`; D-083); `(p: T)` names the payload the occurrence receives (D-050). A payload may be a member, `(b in balls)`, and an event may declare several, `(b in balls, j: Momentum)` (D-059). `emit E(v)` and `emit E(b, j)` supply payloads. A target may go through an endpoint: `set s.a.vel = e`. `input { x: T [= default] }` declares an input with an optional default (D-051). Operations: `set`, `contribute`, `create`, `destroy`, `connect`, `disconnect`, `emit`. `create c { x = e ... }` makes a member of `c` with starting values; `destroy b` ends the member `b`; `set b.x = e` writes a member's binding from its container (D-057). `max` in `[n, max m]` is a contextual word; `[max inf]` declares no limit (D-066). `connect rs(x, y) { k = e }` makes a relation, `disconnect s` ends one; `s.a` is the member at an endpoint (D-058); `relation` is a contextual word. The distributions `uniform`, `normal`, `exponential`, `bernoulli`, `integer`, `poisson`, `binomial` and `choice` are built-in functions written only in an event's condition and operations; a name the author declares wins over them (D-083). `dot(a, b)` is the dot product of two vectors of one space, or the product of two quantities (D-093). `undirected relation R(a in c, b in c)` has no order outside its body; `s.has(o)` and `s.other(o)` read endpoints without one (D-064). A collection of a contained object is named by its path, `left.atoms`, in endpoints, members, loops and aggregates (D-065).
 
 ### 1.2 Presentation
 
@@ -57,6 +61,11 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 | `view v: ... { on click as q request E(q) ... }` | a view that requests an event with the point clicked, where no representation takes the click (D-060) |
 | `group(at: P, rotate: θ, scale: k) [as name] { reps }` | representations placed, turned and scaled together; members are written in the group's frame (D-043) |
 | `trace(pos every 0.02 s)`, `series_plot(y every 0.01 s)` | a sampled source: `expr every Δ`, only as a representation's argument (PK-6.3a) |
+| `heatmap(T, range: [a, b])` | a field in the plane drawn as coloured cells in a spatial view; a field on a line is a `function_graph(T)` (PK-6.3f, D-091) |
+| `until t0 + 20 s` (in a presentation) | how long the presentation's run lasts, as in a case (PK-10.1a, D-091) |
+| `histogram(face on roll)`, `histogram(h every 1 s)` | a histogram of one run: the values at each occurrence of an event, or sampled, up to the instant shown (PK-6.3e, D-089) |
+| `histogram(n at t0 + 7 s over 200 runs, bins: 20)` | an ensemble source: `expr at τ over n runs`, the values in `n` runs with consecutive seeds; also an observation's schedule, `ends = n at τ over n runs` (PK-3.8, D-084) |
+| `instrument ruler(resolution: 1 cm, range: [0 m, 2 m], noise: 2 cm)`; `ruler(y) every 0.05 s` | an instrument, and a source read through it in an observation, a sampled or an ensemble source: rounded, limited, with normal noise (PK-3.7, D-087) |
 | `plot(x: [0 s, 6 s], y: [0 m, 1.1 m])` | plot axes with dimensions; a plot marker is at a pair in those dimensions, `marker(at: (0, y))` (PK-7.3a) |
 | `permit learner { ... }` | permissions |
 | `layout row(scene, column(plot, controls))` | page layout: views side by side in a row, one below the other in a column, nested (D-063) |
@@ -68,7 +77,7 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 
 ### 1.3 Runs
 
-`run Name of Model with Presentation { param { ... } input { x = v; x = v at τ } config { ... } until τ; learner { ... } expect { ... } }`. `input` gives inputs their starting values and later changes (D-051). A timeline's `request E(v)` supplies a payload (D-050); `request E(balls[2], v)` supplies a member and a value (D-059). A learner step is `at τ: continue`, `at τ: set slider x = v` or `at τ: press E` (an explore beat's button, D-069). `button(reset)`, `button(undo)` and `button(redo)` are runtime-control buttons of labs (D-069).
+`run Name of Model with Presentation { param { ... } input { x = v; x = v at τ } config { ... } until τ; learner { ... } expect { ... } }`. `input` gives inputs their starting values and later changes (D-051). `config { seed = n }` names the run's seed, a whole number (D-083). A timeline's `request E(v)` supplies a payload (D-050); `request E(balls[2], v)` supplies a member and a value (D-059). A learner step is `at τ: continue`, `at τ: set slider x = v` or `at τ: press E` (an explore beat's button, D-069). `button(reset)`, `button(undo)` and `button(redo)` are runtime-control buttons of labs (D-069); `button(reseed)` starts again with the next seed (D-084); `button(restart)` and the timeline action `restart` start a new run from `t0` with the parameter values of the instant shown (D-085). Expectations may read `mean(obs)` and `deviation(obs)` (D-084).
 
 ### 1.4 Canonical printing (C4)
 
@@ -84,8 +93,8 @@ The formatter prints, from the IR: enumerations, then declarations grouped in bl
 - **Statements** end at a newline or `;`. Several statements on one line are separated by `;`. A line ending in an operator (other than a closing `|`), `,`, an open bracket or one of the operator words continues on the next line; so does every line inside `( )` or `[ ]`.
 - **Reserved words** (D-040), never names: `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 - **Representation kinds** are read where a representation is expected; there `equation`, reserved elsewhere, is the representation kind of PK-6.3.
-- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title`.
-- **Built-in names** (not reserved, but predefined): `t`, `t0`, `elapsed`, `origin`, `der`, `π` and `pi` (D-039), `inf` (only as an interval bound), the SI units and named dimensions of MK section 3. Named dimensions: `Length`, `Mass`, `Time`, `Current`, `Amount`, `Area`, `Volume`, `Velocity`, `Acceleration`, `Frequency`, `Momentum`, `Force`, `Energy`, `Power`, `Pressure`, and `Angle` (dimensionless, D-021); base symbols `L M T I Θ N J` inside `Quantity<...>`.
+- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart layout row column instrument grid boundary periodic unknown enforce`.
+- **Built-in names** (not reserved, but predefined): `t`, `t0`, `elapsed`, `origin`, `der`, `π` and `pi` (D-039), `inf` (only as an interval bound), the SI units and named dimensions of MK section 3. Named dimensions: `Length`, `Mass`, `Time`, `Current`, `Amount`, `Area`, `Volume`, `Velocity`, `Acceleration`, `Frequency`, `Momentum`, `Force`, `Energy`, `Power`, `Pressure`, `Temperature`, `Charge`, `Voltage`, `Resistance`, `Capacitance`, `Inductance` (D-092), and `Angle` (dimensionless, D-021); base symbols `L M T I Θ N J` inside `Quantity<...>`.
 
 
 ### 1.6 Options and clauses (D-081)
@@ -572,3 +581,9 @@ run A_keep of Projectile with ProjectileLesson {
 - 2026-10-01 `wait learner` (D-067); `animate`, `release`, `bind` defined (D-068).
 - 2026-10-01 learner step `press E`; runtime-control buttons; `press`, `undo` and `redo` added to the contextual keywords (D-069).
 - 2026-10-12 syntax stability review (D-081): options and clauses (section 1.6), closed option lists per kind, clauses in any order, a message for a line that starts with an operator; marked version 1 (section 1.7).
+- 2026-10-13 `unknown { ... }` blocks, solved equations and rates from equations (D-092); electrical named dimensions; the contextual keyword list brought up to date with the parser (`layout`, `row`, `column`, `instrument`, `grid`, `boundary`, `periodic`, `unknown`).
+- 2026-10-14 `policy enforce` and the built-in function `dot` (D-093); `enforce` added to the contextual keywords. Additions under section 1.7: `enforce` was not a policy before, and a declared name `dot` wins over the function.
+- 2026-10-14 `select(p)`, a control choosing one case of an enumeration parameter (D-094); an addition under section 1.7 (a new representation kind).
+- 2026-10-14 `ease e` after `reveal`, `hide ... for`, `camera` and `bind` (D-095), as after `animate`; additions under section 1.7.
+- 2026-10-14 `width: k` on drawn kinds that take a line style, and `animate R width to k` (D-095); additions under section 1.7.
+- 2026-10-14 `align: left|center|right` for a text put `at` a point (D-095); an addition under section 1.7.

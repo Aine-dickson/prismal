@@ -493,6 +493,7 @@ impl<'a> Cx<'a> {
             Expr::Norm { norm } => Expr::Norm { norm: b(self, norm) },
             Expr::Bin { bin, l, r } => Expr::Bin { bin: *bin, l: b(self, l), r: b(self, r) },
             Expr::Call { call, args } => Expr::Call { call: *call, args: args.iter().map(|a| self.expr(s, a)).collect() },
+            Expr::Draw { draw, args } => Expr::Draw { draw: *draw, args: args.iter().map(|a| self.expr(s, a)).collect() },
             Expr::Apply { apply, args } => Expr::Apply { apply: b(self, apply), args: args.iter().map(|a| self.expr(s, a)).collect() },
             Expr::If { r#if, then, r#else } => Expr::If { r#if: b(self, r#if), then: b(self, then), r#else: b(self, r#else) },
             Expr::Tuple { tuple } => Expr::Tuple { tuple: tuple.iter().map(|a| self.expr(s, a)).collect() },
@@ -881,12 +882,15 @@ impl<'a> Cx<'a> {
             Trigger::Level { cond } => Trigger::Level { cond: self.expr(s, cond) },
             Trigger::Start => Trigger::Start,
             Trigger::Request => Trigger::Request,
+            Trigger::Random { rate } => Trigger::Random { rate: self.expr(s, rate) },
         };
         // The guard of a member not alive is not evaluated: its values may not exist (D-058).
         let trigger = match (trigger, &live) {
             (Trigger::Rising { guard }, Some(l)) => Trigger::Rising { guard: Self::guarded(l, guard) },
             (Trigger::Falling { guard }, Some(l)) => Trigger::Falling { guard: Self::guarded(l, guard) },
             (Trigger::Crossing { guard }, Some(l)) => Trigger::Crossing { guard: Self::guarded(l, guard) },
+            // A member not alive has rate 0 (D-083).
+            (Trigger::Random { rate }, Some(l)) => Trigger::Random { rate: Self::guarded(l, rate) },
             (t, _) => t,
         };
         let enable = e.enable.as_ref().map(|c| self.expr(s, c));
@@ -1019,6 +1023,7 @@ impl<'a> Cx<'a> {
                 notes: vec![],
                 when: None,
             combine: None,
+            boundary: None,
             });
         }
         for f in &ty.functions {
@@ -1133,6 +1138,7 @@ impl<'a> Cx<'a> {
             notes: vec![],
             when: None,
             combine: None,
+            boundary: None,
         };
         let counter = created(&p.id, &s.path);
         out.bindings.push(hidden(counter.clone(), join(&s.path, &format!("{}.created", p.name)), Type::real(), num(start as f64)));
@@ -1202,7 +1208,9 @@ impl<'a> PCx<'a, '_> {
         match a {
             Arg::Expr { expr } => Arg::Expr { expr: self.e(s, expr) },
             Arg::Range { lo, hi } => Arg::Range { lo: self.e(s, lo), hi: self.e(s, hi) },
-            Arg::Sampled { expr, every } => Arg::Sampled { expr: self.e(s, expr), every: self.e(s, every) },
+            Arg::Sampled { expr, every, instrument } => Arg::Sampled { expr: self.e(s, expr), every: self.e(s, every), instrument: instrument.clone() },
+            Arg::Ensemble { expr, at, runs, instrument } => Arg::Ensemble { expr: self.e(s, expr), at: self.e(s, at), runs: self.e(s, runs), instrument: instrument.clone() },
+            Arg::On { expr, event, instrument } => Arg::On { expr: self.e(s, expr), event: event.clone(), instrument: instrument.clone() },
             Arg::Scale { scale } => Arg::Scale { scale: crate::present::Scale { quantity: self.e(s, &scale.quantity), px: scale.px } },
             Arg::Text { .. } | Arg::Word { .. } | Arg::Element { .. } | Arg::Texts { .. } => a.clone(),
         }
@@ -1288,8 +1296,8 @@ impl<'a> PCx<'a, '_> {
             let ex = |p: &mut Self, e: &Option<Expr>| e.as_ref().map(|x| p.e(&s, x));
             let na = match a {
                 Action::Show { view, reps } => Action::Show { view: view.clone(), reps: self.reps(&s, reps) },
-                Action::Reveal { view, style, duration, reps } => Action::Reveal { view: view.clone(), style: *style, duration: ex(self, duration), reps: self.reps(&s, reps) },
-                Action::Camera { view, center, zoom, duration } => Action::Camera { view: view.clone(), center: ex(self, center), zoom: ex(self, zoom), duration: ex(self, duration) },
+                Action::Reveal { view, style, duration, ease, reps } => Action::Reveal { view: view.clone(), style: *style, duration: ex(self, duration), ease: *ease, reps: self.reps(&s, reps) },
+                Action::Camera { view, center, zoom, duration, ease } => Action::Camera { view: view.clone(), center: ex(self, center), zoom: ex(self, zoom), duration: ex(self, duration), ease: *ease },
                 Action::Narrate { text, duration } => Action::Narrate { text: text.clone(), duration: ex(self, duration) },
                 Action::Run { rate } => Action::Run { rate: self.e(&s, rate) },
                 Action::Seek { time } => Action::Seek { time: self.e(&s, time) },
@@ -1311,18 +1319,18 @@ impl<'a> PCx<'a, '_> {
                     for id in ids {
                         out.push(match a {
                             Action::Highlight { .. } => Action::Highlight { target: id },
-                            Action::Hide { duration, .. } => Action::Hide { target: id, duration: ex(self, duration) },
+                            Action::Hide { duration, ease, .. } => Action::Hide { target: id, duration: ex(self, duration), ease: *ease },
                             Action::Animate { property, to, word, duration, ease, .. } => Action::Animate { target: id, property: *property, to: ex(self, to), word: word.clone(), duration: ex(self, duration), ease: *ease },
                             Action::Release { .. } => Action::Release { target: id },
-                            Action::Bind { duration, .. } => Action::Bind { target: id, duration: ex(self, duration) },
+                            Action::Bind { duration, ease, .. } => Action::Bind { target: id, duration: ex(self, duration), ease: *ease },
                             _ => unreachable!(),
                         });
                     }
                     continue;
                 }
-                Action::Hide { target, duration } => Action::Hide { target: target.clone(), duration: ex(self, duration) },
+                Action::Hide { target, duration, ease } => Action::Hide { target: target.clone(), duration: ex(self, duration), ease: *ease },
                 Action::Animate { target, property, to, word, duration, ease } => Action::Animate { target: target.clone(), property: *property, to: ex(self, to), word: word.clone(), duration: ex(self, duration), ease: *ease },
-                Action::Bind { target, duration } => Action::Bind { target: target.clone(), duration: ex(self, duration) },
+                Action::Bind { target, duration, ease } => Action::Bind { target: target.clone(), duration: ex(self, duration), ease: *ease },
                 other => other.clone(),
             };
             out.push(na);
@@ -1335,6 +1343,19 @@ fn presentation<'a>(cx: &mut Cx<'a>, root: &'a Model, p: &Presentation) -> Prese
     let mut pc = PCx { cx, root: Scope::root(root), families: vec![] };
     let s = pc.root.clone();
     let mut out = p.clone();
+    out.instruments = p
+        .instruments
+        .iter()
+        .map(|i| {
+            pc.cx.element = i.id.clone();
+            crate::present::Instrument {
+                resolution: i.resolution.as_ref().map(|e| pc.e(&s, e)),
+                range: i.range.as_ref().map(|(a, b)| (pc.e(&s, a), pc.e(&s, b))),
+                noise: i.noise.as_ref().map(|e| pc.e(&s, e)),
+                ..i.clone()
+            }
+        })
+        .collect();
     out.observations = p
         .observations
         .iter()
@@ -1347,7 +1368,7 @@ fn presentation<'a>(cx: &mut Cx<'a>, root: &'a Model, p: &Presentation) -> Prese
                 },
                 schedule: match &o.schedule {
                     Schedule::Every { period } => Schedule::Every { period: pc.e(&s, period) },
-                    Schedule::At { time } => Schedule::At { time: pc.e(&s, time) },
+                    Schedule::At { time, runs } => Schedule::At { time: pc.e(&s, time), runs: runs.as_ref().map(|r| pc.e(&s, r)) },
                     Schedule::Over { from, to, lo_closed, hi_closed } => Schedule::Over { from: pc.e(&s, from), to: to.as_ref().map(|t| pc.e(&s, t)), lo_closed: *lo_closed, hi_closed: *hi_closed },
                     other => other.clone(),
                 },
@@ -1566,4 +1587,78 @@ fn with_capacities(d: &Document, caps: &Capacities) -> Document {
         }
     }
     out
+}
+
+/// MK-11.9 (D-092): `der(x)` of a continuous state that no flow defines, read by an
+/// equation that is not a check, is an unknown of the solve: a hidden unknown `der(x)` and
+/// the flow `der(x) = der(x)` stand for it, so `m * der(v) == F - k * v` gives `v` its rate.
+pub fn solved_rates(mut d: Document) -> Document {
+    for m in &mut d.models {
+        rates(m);
+    }
+    d
+}
+
+fn rates(m: &mut Model) {
+    let flowing: Vec<Id> = m.flows.iter().map(|f| f.target.clone()).collect();
+    let mut found: Vec<Id> = vec![];
+    for q in m.equations.iter().filter(|q| q.role != crate::EquationRole::Check) {
+        for side in [&q.lhs, &q.rhs] {
+            side.walk(&mut |x| {
+                if let Expr::Der { der } = x {
+                    // Unknowns are numbers or quantities: rates of vectors and points are
+                    // left to the check (MK-E35).
+                    let stateful = m.binding(der).is_some_and(|b| b.role == Role::Continuous && matches!(b.ty, Type::Quantity { .. }));
+                    if stateful && !flowing.contains(der) && !found.contains(der) {
+                        found.push(der.clone());
+                    }
+                }
+            });
+        }
+    }
+    for x in found {
+        let b = m.binding(&x).expect("found").clone();
+        let per_t = crate::Dim::time().inv();
+        let Type::Quantity { dim } = &b.ty else { continue };
+        let ty = Type::Quantity { dim: dim.mul(&per_t) };
+        let rate = format!("{x}@rate");
+        m.bindings.push(Binding {
+            id: rate.clone(),
+            name: format!("der({})", b.name),
+            role: Role::Unknown,
+            ty,
+            init: None,
+            def: None,
+            intervenable: None,
+            private: true,
+            display: Display::default(),
+            notes: vec![],
+            when: None,
+            combine: None,
+            boundary: None,
+        });
+        m.flows.push(Flow { id: format!("{rate}.flow"), target: x.clone(), kind: crate::FlowKind::Define, expr: Expr::Ref { r#ref: rate.clone() }, process: None, member: None, each: None });
+        // `der(x)` in the solved equations reads the unknown.
+        let from = serde_json::json!({ "der": x });
+        let to = serde_json::json!({ "ref": rate });
+        for q in m.equations.iter_mut().filter(|q| q.role != crate::EquationRole::Check) {
+            for side in [&mut q.lhs, &mut q.rhs] {
+                let mut v = serde_json::to_value(&*side).expect("serializable");
+                replace(&mut v, &from, &to);
+                *side = serde_json::from_value(v).expect("an expression");
+            }
+        }
+    }
+}
+
+fn replace(v: &mut serde_json::Value, from: &serde_json::Value, to: &serde_json::Value) {
+    if v == from {
+        *v = to.clone();
+        return;
+    }
+    match v {
+        serde_json::Value::Array(items) => items.iter_mut().for_each(|x| replace(x, from, to)),
+        serde_json::Value::Object(map) => map.values_mut().for_each(|x| replace(x, from, to)),
+        _ => {}
+    }
 }

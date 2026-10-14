@@ -157,6 +157,9 @@ run at_rest of Drops with DropsView {
 
 An object cannot see the others: a ball does not know the row it is in. Forces between members are written by the model, which contains them all, with a `for` in its `flow` block:
 
+**Goal.** Three bodies pulling on one another by gravity, with their total momentum conserved.
+**How it is built.** An object type `Body` and a collection of three; the model's flow gives each body the sum of the others' pulls with `for b in bodies` and a filtered `sum`.
+
 ```text
 space Plane = euclidean(2)
 
@@ -221,6 +224,9 @@ The tolerance is a relative `2e-12`: the sums are computed in floating point, an
 ## Members that come and go
 
 The collections so far keep their members for the whole run. A fountain does not: it throws a drop every half second, and each drop is gone when it falls back. A collection whose membership changes declares the most members it makes in one run, with `max` (D-057):
+
+**Goal.** A fountain that throws a drop every half second, each drop gone when it lands.
+**How it is built.** A collection with a capacity, `Drop[max ...]`; a time event `create`s a drop; an event repeated per drop `destroy`s it at the ground.
 
 ```text
 space Plane = euclidean(2)
@@ -306,6 +312,9 @@ When no limit belongs in the model, say so: `drops: Drop[max inf]` (D-066). Pris
 ## Relations between members
 
 A spring joins two balls; a thread ties one bead to another. The spring is not a ball, and it is not a line drawn between them: it is a **relation**, with its own values (a stiffness, a rest length) and two **endpoints**, each a member of a collection (MK-8.5, D-058).
+
+**Goal.** Two balls joined by a spring that can be cut and joined again.
+**How it is built.** A `relation Spring(a in balls, b in balls)` with its stiffness and rest length; a relation set `springs`; the model's flow adds each spring's pull at its two ends; requested events `disconnect` and `connect` it.
 
 ```text
 space Plane = euclidean(2)
@@ -393,6 +402,9 @@ run oscillates of Pair with Springs {
 
 An event can be repeated for each relation, like an event for each member. A thread snaps when stretched by 1 m:
 
+**Goal.** Beads tied by threads that snap when stretched by more than a metre.
+**How it is built.** A relation `Thread` with a derived `stretch`, and an event repeated per thread that disconnects it when its stretch passes 1 m.
+
 ```text
 space Plane = euclidean(2)
 
@@ -450,6 +462,9 @@ A relation that is not made yet, or already disconnected, has no values: `spring
 ### Relations without a direction
 
 The spring above has a direction: its pull is towards `b` at its `a` end and the other way at its `b` end, so the model sums the pulls at each end separately. A spring has no real direction, though, and nothing should change if its endpoints are swapped. An **undirected** relation says so (D-064):
+
+**Goal.** A chain of balls linked by springs whose two ends are alike.
+**How it is built.** An `undirected relation Link`; each ball's pull is summed over the links that have it, `s.has(o)`, towards the ball at the other end, `s.other(o)`.
 
 ```text
 space Plane = euclidean(2)
@@ -522,6 +537,9 @@ run symmetric of Chain with ChainView {
 ### Relations across containers
 
 An endpoint's collection may belong to a contained object: a bond between atoms of two different cells is held by the model that contains both cells (D-065). The collection is named by its path, `left.atoms`, and so are its members and loops:
+
+**Goal.** Two cells of atoms, with bonds from an atom of one cell to an atom of the other.
+**How it is built.** An object `Cell` with its own collection of atoms; the model's relation has endpoints in `left.atoms` and `right.atoms`, paths through the contained cells.
 
 ```text
 space Plane = euclidean(2)
@@ -651,6 +669,9 @@ run fed of Feed with FeedChecks {
 ## Labs with members
 
 A lab with many objects lets the learner act on one of them: drag this planet, remove that one. The learner's action has to say **which** member it is about. An event can receive a member as its payload (D-059):
+
+**Goal.** A lab of planets: the learner drags a planet, clicks one to remove it, adds one with a button or a click.
+**How it is built.** Events take a planet as their payload (`on request(p in planets)`); representations repeated per planet carry a drag that proposes its position and a click that requests the removal.
 
 ```text
 space Plane = euclidean(2)

@@ -23,10 +23,10 @@ pub const PROTOCOL: u64 = 1;
 /// Representation kinds and timeline actions the implementation supports (HI-6.5).
 const KINDS: &[&str] = &[
     "marker", "arrow", "segment", "polyline", "polygon", "circle", "ellipse", "arc", "trace", "function_graph", "series_plot", "axes", "grid", "label",
-    "equation", "formula", "table", "slider", "number_input", "toggle", "button", "group",
+    "equation", "formula", "table", "slider", "number_input", "toggle", "select", "button", "group", "histogram",
 ];
 const ACTIONS: &[&str] = &[
-    "show", "reveal", "hide", "highlight", "camera", "narrate", "wait", "wait_until", "run", "hold", "seek", "reset", "branch", "intervene", "request",
+    "show", "reveal", "hide", "highlight", "camera", "narrate", "wait", "wait_until", "run", "hold", "seek", "reset", "restart", "branch", "intervene", "request",
     "explore", "sequence",
 ];
 

@@ -19,6 +19,7 @@ pub mod expect;
 pub mod frame;
 pub mod interact;
 pub mod math;
+pub mod measure;
 pub mod text;
 pub mod timeline;
 
@@ -62,6 +63,8 @@ impl Program {
     pub fn sized(source: Document, capacities: prismal_ir::elaborate::Capacities) -> Result<Program, Vec<PDiag>> {
         // Objects and collections become a flat model first (D-055).
         let doc = prismal_ir::elaborate::document_with(&source, &capacities).map_err(|ds| ds.into_iter().map(|d| PDiag { code: d.code, message: d.message, element: d.element }).collect::<Vec<_>>())?;
+        // Rates given by solved equations become unknowns (D-092).
+        let doc = prismal_ir::elaborate::solved_rates(doc);
         let mut diags = vec![];
         let mut models = vec![];
         for m in &doc.models {
@@ -146,7 +149,7 @@ pub fn constant_as(cm: &CModel, e: &Expr, expected: Option<&prismal_ir::Type>) -
         return Err("the expression reads bindings of the model; it is not a constant".into());
     }
     let (c, _) = compile_expr(cm, e, expected).map_err(|d| d.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("; "))?;
-    c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[] }).map_err(|s| s.cause)
+    c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None, noise: &[], point: None }).map_err(|s| s.cause)
 }
 
 /// A constant number (a quantity in coherent SI units, or an instant in seconds).
@@ -166,11 +169,37 @@ pub fn flat(v: &Value) -> Vec<f64> {
         Value::Tuple(items) => items.iter().flat_map(flat).collect(),
         Value::Case(c) => vec![*c as f64],
         Value::Func(_) => vec![],
+        Value::Field(d) => d.to_vec(),
     }
 }
 
 /// Default simulated span of a lesson run whose case gives no end (PK-9.5).
 pub const LESSON_HORIZON: f64 = 60.0;
+
+/// The configuration of a run started again from `t0` with the parameter values `run` has
+/// at `t` (D-085): every parameter becomes an override of its current value, and the action
+/// log is emptied. What else the learner or the lesson did to the run is not kept.
+pub fn restarted(run: &prismal_runtime::Run, t: f64) -> Config {
+    let cm = &run.model;
+    let vals = run.state_at(t.min(run.end_time()));
+    let mut cfg = run.config.clone();
+    cfg.log.clear();
+    for (i, b) in cm.bindings.iter().enumerate() {
+        if b.role != prismal_ir::Role::Parameter {
+            continue;
+        }
+        let e = match (&vals[i], &b.ty) {
+            (Value::Num(x), prismal_ir::Type::Quantity { dim }) if dim.is_none() => prismal_ir::build::lit(*x),
+            (Value::Num(x), prismal_ir::Type::Quantity { dim }) => Expr::Num { num: *x, unit: Some(prismal_ir::Unit { text: text::unit_text(dim), scale: 1.0, offset: 0.0, dim: *dim }) },
+            (Value::Bool(v), _) => Expr::Bool { bool: *v },
+            (Value::Case(c), prismal_ir::Type::Enum { cases, .. }) => Expr::Case { case: cases[*c as usize].clone() },
+            _ => continue,
+        };
+        cfg.params.retain(|(id, _)| id != &b.id);
+        cfg.params.push((b.id.clone(), e));
+    }
+    cfg
+}
 
 /// The run configuration of a case (RC section 16 defaults, overridden by the case).
 pub fn config(cm: &CModel, case: &RunCase, default_end: f64) -> Result<Config, String> {
@@ -185,6 +214,9 @@ pub fn config(cm: &CModel, case: &RunCase, default_end: f64) -> Result<Config, S
         Some("rk4") => SolverConfig::Rk4 { h },
         _ => SolverConfig::Dopri5 { rtol: rtol.unwrap_or(1e-6), atol: atol.unwrap_or(1e-9), h_max: f64::INFINITY },
     };
+    cfg.seed = case.config.seed.unwrap_or(0);
+    // A model with noise steps by Euler-Maruyama with the case's `h` (RC-13.9).
+    cfg.h_noise = h;
     for o in &case.params {
         cfg = cfg.param(&o.binding, o.value.clone());
     }

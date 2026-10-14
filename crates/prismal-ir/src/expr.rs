@@ -32,6 +32,9 @@ pub enum Builtin {
     /// The number of the member being declared, from 1, in the overrides of a collection
     /// (D-055).
     Index,
+    /// White noise in a flow, `der(x) = a + b * noise` (MK-14.16, D-090): each occurrence an
+    /// independent standard white noise, of dimension `T^(-1/2)`.
+    Noise,
 }
 
 /// Aggregates over the members of a collection (MK-8.3, D-055).
@@ -87,6 +90,55 @@ pub enum Func {
     Min,
     Max,
     Atan2,
+    /// The dot product of two vectors of one space, or the product of two quantities (D-093).
+    Dot,
+    /// Of a field, at the cell of a pointwise expression (MK-9.7, D-091).
+    Laplacian,
+    Gradient,
+    /// Of a whole field: `h` times the sum of its cells, and their mean (MK-9.8, D-091).
+    Integral,
+    Mean,
+}
+
+/// Distributions a `draw` samples (D-083, MK-10.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Dist {
+    /// `uniform(a, b)`: a quantity in `[a, b)`.
+    Uniform,
+    /// `normal(m, s)`: mean `m` (a quantity or a vector, by component), deviation `s`.
+    Normal,
+    /// `exponential(r)`: a waiting time at rate `r`, of the inverse dimension.
+    Exponential,
+    /// `bernoulli(p)`: true with probability `p`.
+    Bernoulli,
+    /// `integer(a, b)`: an integer from `a` to `b`, both included, equally likely.
+    Integer,
+    /// `poisson(m)`: a count with mean `m`.
+    Poisson,
+    /// `binomial(n, p)`: the number of successes in `n` trials of probability `p`.
+    Binomial,
+    /// `choice(x1, ..., xk)`: one of the arguments, equally likely.
+    Choice,
+}
+
+impl Dist {
+    pub fn name(self) -> &'static str {
+        match self {
+            Dist::Uniform => "uniform",
+            Dist::Normal => "normal",
+            Dist::Exponential => "exponential",
+            Dist::Bernoulli => "bernoulli",
+            Dist::Integer => "integer",
+            Dist::Poisson => "poisson",
+            Dist::Binomial => "binomial",
+            Dist::Choice => "choice",
+        }
+    }
+    pub fn from_name(s: &str) -> Option<Dist> {
+        Dist::ALL.into_iter().find(|d| d.name() == s)
+    }
+    pub const ALL: [Dist; 8] = [Dist::Uniform, Dist::Normal, Dist::Exponential, Dist::Bernoulli, Dist::Integer, Dist::Poisson, Dist::Binomial, Dist::Choice];
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -151,6 +203,12 @@ pub enum Expr {
     },
     Apply {
         apply: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    /// A value drawn from a distribution, only in an event's condition and operations
+    /// (MK-10.4, D-083).
+    Draw {
+        draw: Dist,
         args: Vec<Expr>,
     },
     If {
@@ -292,7 +350,7 @@ impl Expr {
                 l.walk(f);
                 r.walk(f);
             }
-            Expr::Call { args, .. } | Expr::Tuple { tuple: args } => args.iter().for_each(|a| a.walk(f)),
+            Expr::Call { args, .. } | Expr::Draw { args, .. } | Expr::Tuple { tuple: args } => args.iter().for_each(|a| a.walk(f)),
             Expr::Apply { apply, args } => {
                 apply.walk(f);
                 args.iter().for_each(|a| a.walk(f));

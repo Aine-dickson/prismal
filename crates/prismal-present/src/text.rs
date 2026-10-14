@@ -91,6 +91,13 @@ pub fn unit_text(d: &Dim) -> String {
         ("1/T", "1/s"),
         ("1/L", "1/m"),
         ("M L/T", "kg m/s"),
+        // Electrical quantities (D-092).
+        ("M L^2/T^3/I", "V"),
+        ("M L^2/T^3/I^2", "Ω"),
+        ("I T", "C"),
+        ("T^4 I^2/M/L^2", "F"),
+        ("M L^2/T^2/I^2", "H"),
+        ("M/L/T^2", "Pa"),
     ];
     if d.is_none() {
         return String::new();
@@ -100,21 +107,34 @@ pub fn unit_text(d: &Dim) -> String {
             return text.into();
         }
     }
+    // Positive powers, then `/` and the negative ones: `m^2/s`, `1/(m s)`, `s^0.5`.
     let syms = ["m", "kg", "s", "A", "K", "mol", "cd"];
-    let mut parts = vec![];
+    let power = |sym: &str, n: i64, den: i64| -> String {
+        match (n, den) {
+            (1, 1) => sym.to_string(),
+            (n, 1) => format!("{sym}^{n}"),
+            (n, 2) => format!("{sym}^{}", n as f64 / 2.0),
+            (n, d) => format!("{sym}^({n}/{d})"),
+        }
+    };
+    let (mut up, mut down) = (vec![], vec![]);
     for (i, r) in d.0.iter().enumerate() {
         if r.is_zero() {
             continue;
         }
-        if r.n == 1 && r.d == 1 {
-            parts.push(syms[i].to_string());
-        } else if r.d == 1 {
-            parts.push(format!("{}^{}", syms[i], r.n));
+        let (n, den) = (r.n as i64, r.d as i64);
+        if n > 0 {
+            up.push(power(syms[i], n, den));
         } else {
-            parts.push(format!("{}^({}/{})", syms[i], r.n, r.d));
+            down.push(power(syms[i], -n, den));
         }
     }
-    parts.join(" ")
+    let top = if up.is_empty() { "1".to_string() } else { up.join(" ") };
+    match down.len() {
+        0 => top,
+        1 => format!("{top}/{}", down[0]),
+        _ => format!("{top}/({})", down.join(" ")),
+    }
 }
 
 fn with_unit(x: f64, unit: &str) -> String {
@@ -216,6 +236,7 @@ pub fn print(e: &Expr, cm: &CModel, params: &[String]) -> String {
             Builtin::T0 => "t0".into(),
             Builtin::Elapsed => "elapsed".into(),
             Builtin::Index => "index".into(),
+            Builtin::Noise => "noise".into(),
         },
         // Elaboration replaces members and aggregates before anything is printed (D-055).
         Expr::Field { .. } | Expr::Part { .. } | Expr::Item { .. } | Expr::Var { .. } | Expr::Aggregate { .. } | Expr::Extreme { .. } | Expr::End { .. } | Expr::Other { .. } | Expr::Has { .. } | Expr::Pick { .. } => "…".into(),
@@ -268,9 +289,15 @@ pub fn print(e: &Expr, cm: &CModel, params: &[String]) -> String {
                 Func::Min => "min",
                 Func::Max => "max",
                 Func::Atan2 => "atan2",
+                Func::Dot => "dot",
+                Func::Laplacian => "laplacian",
+                Func::Gradient => "gradient",
+                Func::Integral => "integral",
+                Func::Mean => "mean",
             };
             format!("{name}({})", args.iter().map(p).collect::<Vec<_>>().join(", "))
         }
+        Expr::Draw { draw, args } => format!("{}({})", draw.name(), args.iter().map(p).collect::<Vec<_>>().join(", ")),
         Expr::Apply { apply, args } => format!("{}({})", wrap(apply, 8), args.iter().map(p).collect::<Vec<_>>().join(", ")),
         Expr::If { r#if, then, r#else } => format!("if {} then {} else {}", p(r#if), p(then), p(r#else)),
         Expr::Tuple { tuple } => format!("({})", tuple.iter().map(p).collect::<Vec<_>>().join(", ")),
@@ -320,6 +347,8 @@ mod tests {
         assert_eq!(components(&[1e-12, 2e-12]), [1e-12, 2e-12]);
         assert_eq!(unit_text(&Dim::parse("L/T").unwrap()), "m/s");
         assert_eq!(superscripts("25.00 m^2"), "25.00 m²");
+        assert_eq!(unit_text(&Dim::parse("L^2/T").unwrap()), "m^2/s");
+        assert_eq!(unit_text(&Dim::parse("1/(L T)").unwrap_or(Dim::parse("L^-1 T^-1").unwrap())), "1/(m s)");
         assert_eq!(superscripts("(1 m/s^2, 2 m^-10)"), "(1 m/s², 2 m⁻¹⁰)");
         assert_eq!(superscripts("a^b 1e-5"), "a^b 1e-5");
     }

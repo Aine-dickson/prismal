@@ -330,10 +330,12 @@ The energy drifts agree with the predictions of `tools/refvals.py` (RP-04: 7.8e-
 | Relations between relations, relation sets with at most one relation per pair, relation types declared in object types (D-074), creation and destruction as interventions (set aside by D-059), native growable state for very large populations (D-066 option 1); function libraries shared between models | MK sections 8, 16, 17, MK section 2, R-55 |
 | Sampled sources `over I`; a button's value read from a control (D-072 option 3) | PK-6.3, PK-6.3b |
 | Easing for `reveal`, `hide` and `camera`; animated line width (D-075); narration speed as a learner control separate from playback speed (the web player offers pause, seek, replay, speed, zoom and pan) | PK-8.4, PK-9.7 |
-| Learner predictions as expected values; instruments | PK-4.3, PK-3.7, PK-7.4 |
+| Learner predictions as expected values; instrument options read from parameters (a slider of measurement noise); higher-order stochastic integrators (Milstein, stochastic Runge-Kutta); a reading's uncertainty as data (it is stated in text alternatives) | PK-4.3, PK-7.4, PK-3.7, RC-13.9 |
 | Combinations supplied by types (D-073 option 2) | MK-14.9 |
 | Failure policies chosen per category in a run's configuration (D-071) | RC-10.3 |
 | Frames of spaces (D-022), affine temperature units | MK sections 3.4, 4 |
+| Fields: noise and draws per cell, fields of vectors, fields in object types, meshes, implicit solvers for stiff fields on fine grids, computing a lab's run as it is shown (heavy fields now shorten the default horizon instead) | MK-9.4 to MK-9.8, RC-6.2a, HI-5.1a (D-091) |
+| Solved equations and constraints: vector unknowns, solved equations over fields, inequality constraints (contact, a slack rope), enforced constraints whose rates read `der` | MK-11.6 to MK-11.9, MK-12.6 to MK-12.10 (D-092, D-093) |
 
 ## History
 
@@ -371,3 +373,6 @@ The energy drifts agree with the predictions of `tools/refvals.py` (RP-04: 7.8e-
 - 2026-10-01 authors' text with values, `when:` on representations, titles of presentations, views and panels (D-076).
 - 2026-10-12 words at a slider's ends, the percent unit, labels in display units (D-077); a banded label left to `text ... when:`.
 - 2026-10-12 first complete example (`examples/projectile.md`, lab, lesson, video); found and fixed: `on E` read past logged actions at the event's instant, paths joined across jumps; rounding in texts and chosen labels (D-078).
+- 2026-10-13 stochastic leftovers: rates that vary between events (D-086), instruments (D-087), `restart` and `reseed` in explore beats (D-088), histograms of one run (D-089), noise in flows by Euler-Maruyama (D-090).
+- 2026-10-13 fields on grids of one and two axes (D-091): pointwise evaluation, vectorized where the form allows; compact storage of large states.
+- 2026-10-14 enforced constraints (D-093): constraints differentiated along the flows to the rate that reads the holding force, solved with the model's equations, and the state projected onto the constraint after each step and transition; `dot`; residuals judged against the size of their terms; `prismal-present/tests/constraints.rs`.

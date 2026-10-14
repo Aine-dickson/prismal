@@ -88,8 +88,8 @@ pub struct Shown {
     pub until: f64,
     pub view: Option<Id>,
     pub rep: CRep,
-    /// A reveal: its style and duration (D-042).
-    pub reveal: Option<(RevealStyle, f64)>,
+    /// A reveal: its style, duration and easing (D-042, D-095).
+    pub reveal: Option<(RevealStyle, f64, prismal_ir::present::Ease)>,
 }
 
 /// A camera move (D-042): from presentation instant `from`, over `duration`.
@@ -100,6 +100,8 @@ pub struct CameraCue {
     pub duration: f64,
     pub center: Option<prismal_kernel::CExpr>,
     pub zoom: Option<f64>,
+    /// The easing of the move (D-095).
+    pub ease: prismal_ir::present::Ease,
 }
 
 /// The state of a representation `k` of the way through a reveal (D-042): a path is drawn
@@ -317,6 +319,7 @@ pub enum AnimValue {
     Color(String),
     Line(String),
     Scale(f64),
+    Width(f64),
     Morph(Id),
 }
 
@@ -342,6 +345,8 @@ pub struct Released {
     pub t: f64,
     pub bind: f64,
     pub blend: f64,
+    /// The easing of the blend back (D-095).
+    pub ease: prismal_ir::present::Ease,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -374,7 +379,7 @@ pub struct Playback {
     pub highlights: Vec<Highlight>,
     /// Representations hidden from a presentation instant on (PK-9.2), fading out over a
     /// duration (0 for at once).
-    pub hidden: Vec<(Id, f64, f64)>,
+    pub hidden: Vec<(Id, f64, f64, prismal_ir::present::Ease)>,
     pub cameras: Vec<CameraCue>,
     pub waits: Vec<WaitPoint>,
     pub animations: Vec<Animation>,
@@ -475,6 +480,27 @@ impl Player {
         self.map(p, self.pb.current, s, rate);
     }
 
+    /// A new version of the current run from `t0` with the parameters of the instant shown
+    /// at `p`, and with the next seed when `reseed` (D-085, D-088).
+    fn restart_branch(&mut self, p: f64, reseed: bool) {
+        let s = self.sim_at(p);
+        let old = &self.pb.runs[self.cur()];
+        let mut cfg = crate::restarted(&old.run, s);
+        if reseed {
+            cfg.seed = cfg.seed.wrapping_add(1);
+        }
+        let t0 = cfg.t0;
+        let run = prismal_runtime::run(&old.run.model, cfg.clone());
+        let lineage = old.lineage.clone();
+        self.pb.runs.push(RunVersion { lineage, config: cfg, run });
+        self.pb.current = self.pb.runs.len() - 1;
+        if lineage_is(&self.pb.runs[self.pb.current], "lesson") {
+            self.lesson = self.pb.current;
+        }
+        let rate = self.open.rate;
+        self.map(p, self.pb.current, t0, rate);
+    }
+
     fn branch(&mut self, p: f64) -> usize {
         self.branches += 1;
         let s = self.sim_at(p);
@@ -508,6 +534,8 @@ impl Player {
                 let rate = self.open.rate;
                 self.map(p, self.cur(), t0, rate);
             }
+            // D-085: a new run version from `t0`, with the parameters of the instant shown.
+            TAction::Restart => self.restart_branch(p, false),
             TAction::Branch => {
                 self.branch(p);
             }
@@ -545,7 +573,7 @@ impl Player {
             TAction::Show { view, reps } => {
                 let ctx = self.pb.projector.ctx(view.as_deref());
                 for r in reps {
-                    match compile_rep(&self.pb.cm, &ctx, r) {
+                    match compile_rep(&self.pb.cm, &ctx, r, &self.pb.pres.instruments) {
                         Ok(c) => self.pb.shown.push(Shown { from: p, until: f64::INFINITY, view: view.clone(), rep: c, reveal: None }),
                         Err(d) => self.pb.diagnostics.extend(d.into_iter().map(|x| x.to_string())),
                     }
@@ -556,23 +584,24 @@ impl Player {
                 self.pb.highlights.push(Highlight { target: target.clone(), from: p, until: f64::NAN });
                 p
             }
-            TAction::Hide { target, duration } => {
+            TAction::Hide { target, duration, ease } => {
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(0.0);
-                self.pb.hidden.push((target.clone(), p, d));
+                self.pb.hidden.push((target.clone(), p, d, ease.unwrap_or(prismal_ir::present::Ease::Smooth)));
                 p + d
             }
-            TAction::Reveal { view, style, duration, reps } => {
+            TAction::Reveal { view, style, duration, ease, reps } => {
+                let ease = ease.unwrap_or(prismal_ir::present::Ease::Smooth);
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(1.0);
                 let ctx = self.pb.projector.ctx(view.as_deref());
                 for r in reps {
-                    match compile_rep(&self.pb.cm, &ctx, r) {
-                        Ok(c) => self.pb.shown.push(Shown { from: p, until: f64::INFINITY, view: view.clone(), rep: c, reveal: Some((*style, d)) }),
+                    match compile_rep(&self.pb.cm, &ctx, r, &self.pb.pres.instruments) {
+                        Ok(c) => self.pb.shown.push(Shown { from: p, until: f64::INFINITY, view: view.clone(), rep: c, reveal: Some((*style, d, ease)) }),
                         Err(e) => self.pb.diagnostics.extend(e.into_iter().map(|x| x.to_string())),
                     }
                 }
                 p + d
             }
-            TAction::Camera { view, center, zoom, duration } => {
+            TAction::Camera { view, center, zoom, duration, ease } => {
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(1.0);
                 let z = zoom.as_ref().map(|z| self.num(z));
                 let c = match (center, self.pb.projector.ctx(Some(view))) {
@@ -596,7 +625,7 @@ impl Player {
                     }
                     _ => None,
                 };
-                self.pb.cameras.push(CameraCue { view: view.clone(), from: p, duration: d, center: c, zoom: z });
+                self.pb.cameras.push(CameraCue { view: view.clone(), from: p, duration: d, center: c, zoom: z, ease: ease.unwrap_or(prismal_ir::present::Ease::Smooth) });
                 p + d
             }
             TAction::Narrate { text, duration } => {
@@ -682,6 +711,7 @@ impl Player {
                     (Animated::Opacity, Some(to)) => AnimValue::Opacity(self.num(to).clamp(0.0, 1.0)),
                     (Animated::Offset, Some(to)) => AnimValue::Offset(self.offset(target, to, p)),
                     (Animated::Scale, Some(to)) => AnimValue::Scale(self.num(to).max(0.0)),
+                    (Animated::Width, Some(to)) => AnimValue::Width(self.num(to).max(0.0)),
                     (Animated::Color, _) => AnimValue::Color(w()),
                     (Animated::Line, _) => AnimValue::Line(w()),
                     (Animated::Morph, _) => AnimValue::Morph(w()),
@@ -697,15 +727,16 @@ impl Player {
                     return p;
                 }
                 let (run, t) = (self.open.run, self.sim_at(p));
-                self.pb.released.push(Released { target: target.clone(), from: p, run, t, bind: f64::INFINITY, blend: 0.0 });
+                self.pb.released.push(Released { target: target.clone(), from: p, run, t, bind: f64::INFINITY, blend: 0.0, ease: prismal_ir::present::Ease::Smooth });
                 p
             }
-            TAction::Bind { target, duration } => {
+            TAction::Bind { target, duration, ease } => {
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(0.0);
                 match self.pb.released.iter_mut().rev().find(|r| &r.target == target && r.bind.is_infinite()) {
                     Some(r) => {
                         r.bind = p;
                         r.blend = d;
+                        r.ease = ease.unwrap_or(prismal_ir::present::Ease::Smooth);
                         p + d
                     }
                     None => {
@@ -794,6 +825,16 @@ impl Player {
                         None => Action::Request(event.clone()),
                     });
                 }
+                // D-088: `restart` starts the branch again from `t0` with its parameters as
+                // they are; `reseed` does so with the next seed.
+                LearnerInput::Control { control } => {
+                    let offered = controls.iter().any(|c| c.kind == "button" && matches!(c.sources.first(), Some(prismal_ir::present::Arg::Word { word }) if word == control));
+                    if !offered {
+                        self.pb.refusals.push(Refusal { at: inp.at, input: describe(&inp.input), reason: format!("{beat} offers no button({control}) (PK-9.8)") });
+                        continue;
+                    }
+                    self.restart_branch(inp.at, control == "reseed");
+                }
             }
         }
         let end_input = end;
@@ -804,7 +845,7 @@ impl Player {
         };
         self.pb.waits.push(WaitPoint { beat: beat.to_string(), at: p, end, pending: end_input.is_none() && limit.is_none(), explore: true });
         for c in controls {
-            match compile_rep(&self.pb.cm, &ViewCtx::Panel, c) {
+            match compile_rep(&self.pb.cm, &ViewCtx::Panel, c, &self.pb.pres.instruments) {
                 Ok(cr) => self.pb.shown.push(Shown { from: p, until: end, view: None, rep: cr, reveal: None }),
                 Err(d) => self.pb.diagnostics.extend(d.into_iter().map(|x| x.to_string())),
             }
@@ -828,6 +869,7 @@ fn describe(i: &LearnerInput) -> String {
         LearnerInput::Continue => "continue".into(),
         LearnerInput::SetControl { control, binding, .. } => format!("set {control} {binding}"),
         LearnerInput::Press { event } => format!("press {event}"),
+        LearnerInput::Control { control } => format!("press {control}"),
     }
 }
 
@@ -901,7 +943,7 @@ fn play_once(prog: &Program, presentation: &str, base: Config, medium: Medium, i
         if !used {
             let reason = match inp.input {
                 LearnerInput::Continue => "no continue point at this instant".into(),
-                LearnerInput::SetControl { .. } | LearnerInput::Press { .. } => "outside an explore beat the learner has no model actions (PK-9.8, D-025)".to_string(),
+                LearnerInput::SetControl { .. } | LearnerInput::Press { .. } | LearnerInput::Control { .. } => "outside an explore beat the learner has no model actions (PK-9.8, D-025)".to_string(),
             };
             pl.pb.refusals.push(Refusal { at: inp.at, input: describe(&inp.input), reason });
         }
@@ -947,7 +989,7 @@ impl Playback {
         // and blend back to their projection while a `bind` hands them back.
         for r in self.released.iter().filter(|r| r.from <= p && p < r.bind + r.blend) {
             let Some(held) = self.held(r) else { continue };
-            let k = if p < r.bind { 0.0 } else { ease((p - r.bind) / r.blend) };
+            let k = if p < r.bind { 0.0 } else { r.ease.apply((p - r.bind) / r.blend) };
             let mut swap = |x: &mut crate::frame::RepFrame| {
                 if x.id == r.target {
                     match lerp_shape(&held.shape, &x.shape, k) {
@@ -992,11 +1034,11 @@ impl Playback {
         retain_reps(&mut overlay, &keep);
         let mut animate = |r: &mut crate::frame::RepFrame| {
             if let Some(h) = self.hidden.iter().find(|h| h.0 == r.id && h.1 <= p && p < h.1 + h.2) {
-                r.opacity = Some(1.0 - ease((p - h.1) / h.2));
+                r.opacity = Some(1.0 - h.3.apply((p - h.1) / h.2));
             }
             if let Some(s) = self.shown.iter().find(|s| s.rep.rep.id == r.id && s.from <= p) {
-                if let Some((style, d)) = s.reveal {
-                    let k = if d > 0.0 { ease((p - s.from) / d) } else { 1.0 };
+                if let Some((style, d, e)) = s.reveal {
+                    let k = if d > 0.0 { e.apply((p - s.from) / d) } else { 1.0 };
                     if k < 1.0 {
                         match (&mut r.shape, style) {
                             // A group drawn: its paths are drawn, its markers fade in.
@@ -1019,6 +1061,8 @@ impl Playback {
             // A color reached so far, and one being blended to (D-075).
             let (mut color, mut mix): (Option<String>, Option<(String, f64)>) = (r.color.clone(), None);
             let mut line: Option<String> = None;
+            // The width reached so far, from the author's (D-095).
+            let mut width: Option<f64> = None;
             let mut morphs: Vec<(&Id, f64)> = vec![];
             for a in self.animations.iter().filter(|a| a.target == r.id && a.from <= p) {
                 let k = if a.duration > 0.0 { a.ease.apply((p - a.from) / a.duration) } else { 1.0 };
@@ -1035,6 +1079,10 @@ impl Playback {
                     AnimValue::Scale(x) => {
                         scale += (x - scale) * k;
                         any.2 = true;
+                    }
+                    AnimValue::Width(x) => {
+                        let w = width.or(r.width).unwrap_or(1.0);
+                        width = Some(w + (x - w) * k);
                     }
                     AnimValue::Color(c) => {
                         if let Some((prev, _)) = mix.take() {
@@ -1078,6 +1126,9 @@ impl Playback {
             if let Some(l) = line {
                 r.line = Some(l);
             }
+            if width.is_some() {
+                r.width = width;
+            }
         };
         if !self.animations.is_empty() {
             for v in views.iter_mut() {
@@ -1096,7 +1147,7 @@ impl Playback {
                 any = true;
                 let target = c.center.as_ref().and_then(|ce| v.run.eval_state(ce, &vals, t).ok()).map(|pt| ctx.to_view(&crate::flat(&pt))).or(center);
                 let tz = c.zoom.unwrap_or(zoom);
-                let k = if c.duration > 0.0 { ease((p - c.from) / c.duration) } else { 1.0 };
+                let k = if c.duration > 0.0 { c.ease.apply((p - c.from) / c.duration) } else { 1.0 };
                 zoom += (tz - zoom) * k;
                 match (center, target) {
                     (Some(a), Some(b)) => {

@@ -13,12 +13,16 @@ use prismal_ir::{Expr, Id, Model, Space};
 use std::collections::HashMap;
 
 /// Runtime controls a `button` can offer instead of an event (PK-6.3, D-069).
-pub const RUN_CONTROLS: &[&str] = &["reset", "undo", "redo"];
+pub const RUN_CONTROLS: &[&str] = &["reset", "undo", "redo", "reseed", "restart"];
+
+/// The runtime controls an explore beat may offer: they start the learner's branch again
+/// (D-088).
+pub const EXPLORE_CONTROLS: &[&str] = &["restart", "reseed"];
 
 /// Representation kinds of the first slice (PK-6.3).
 const KINDS: &[&str] = &[
     "marker", "arrow", "segment", "polyline", "polygon", "circle", "ellipse", "arc", "trace", "function_graph", "series_plot", "axes", "grid", "label",
-    "equation", "formula", "table", "slider", "number_input", "toggle", "button", "group", "text", "title",
+    "equation", "formula", "table", "slider", "number_input", "toggle", "select", "button", "group", "text", "title", "histogram", "heatmap",
 ];
 
 /// The named options each representation kind takes, besides `when` (D-081). A name not in
@@ -26,19 +30,33 @@ const KINDS: &[&str] = &[
 fn options(kind: &str) -> &'static [&'static str] {
     match kind {
         "marker" => &["at", "color", "label"],
-        "arrow" => &["from", "scale", "color", "line", "label"],
-        "function_graph" => &["color", "line", "label"],
-        "segment" | "polyline" | "polygon" | "circle" | "trace" | "series_plot" => &["color", "line"],
-        "ellipse" => &["rotate", "color", "line"],
-        "arc" => &["from", "to", "color", "line"],
-        "text" => &["at"],
+        "arrow" => &["from", "scale", "color", "line", "width", "label"],
+        "function_graph" => &["color", "line", "width", "label"],
+        "segment" | "polyline" | "polygon" | "circle" | "trace" | "series_plot" => &["color", "line", "width"],
+        "ellipse" => &["rotate", "color", "line", "width"],
+        "arc" => &["from", "to", "color", "line", "width"],
+        "text" => &["at", "align"],
         "formula" | "equation" => &["live"],
         "slider" => &["range", "step", "ends"],
         "number_input" => &["range", "step"],
         "button" => &["label"],
+        "histogram" => &["bins", "color", "line", "width"],
+        "heatmap" => &["range"],
         "group" => &["at", "rotate", "scale"],
         _ => &[],
     }
+}
+
+/// An easing word of a timeline animation (D-075, D-095).
+fn ease_of(word: &str) -> Option<prismal_ir::present::Ease> {
+    use prismal_ir::present::Ease;
+    Some(match word {
+        "linear" => Ease::Linear,
+        "smooth" => Ease::Smooth,
+        "in" => Ease::In,
+        "out" => Ease::Out,
+        _ => return None,
+    })
 }
 
 /// The named options of each view kind (D-081).
@@ -104,6 +122,8 @@ struct PresCx<'a, 'b> {
     pres: &'b str,
     views: HashMap<String, Id>,
     aliases: HashMap<String, Id>,
+    /// The presentation's instruments by name (PK-3.7, D-087).
+    instruments: HashMap<String, Id>,
 }
 
 impl PresCx<'_, '_> {
@@ -124,6 +144,16 @@ impl PresCx<'_, '_> {
             ast::LayoutNode::Row(_, xs) => Some(Layout::Row(xs.iter().filter_map(|x| self.layout(x, placed)).collect())),
             ast::LayoutNode::Column(_, xs) => Some(Layout::Column(xs.iter().filter_map(|x| self.layout(x, placed)).collect())),
         }
+    }
+
+    /// The easing a clause `ease e` names; an unknown word is SX-E02.
+    fn ease(&mut self, e: Option<&ast::Name>) -> Option<prismal_ir::present::Ease> {
+        let e = e?;
+        let found = ease_of(&e.text);
+        if found.is_none() {
+            self.err("SX-E02", format!("unknown easing `{}`: `linear`, `smooth`, `in` or `out` (D-075)", e.text), e.span);
+        }
+        found
     }
 
     fn err(&mut self, code: &'static str, msg: impl Into<String>, span: Span) {
@@ -231,7 +261,7 @@ impl PresCx<'_, '_> {
             let value = match (&a.value.kind, a.name.as_ref().map(|n| n.text.as_str())) {
                 (ExprKind::Str(s), _) => Arg::Text { text: s.clone() },
                 // Style words (D-061): `color: blue`, `line: dashed`.
-                (ExprKind::Name(w), Some("color" | "line")) => Arg::Word { word: w.clone() },
+                (ExprKind::Name(w), Some("color" | "line" | "align")) => Arg::Word { word: w.clone() },
                 // `label: none`: no label drawn beside the representation (D-078).
                 (ExprKind::Name(w), Some("label")) if w == "none" => Arg::Word { word: w.clone() },
                 (ExprKind::List(_), _) => match self.range(&a.value) {
@@ -258,13 +288,29 @@ impl PresCx<'_, '_> {
                     Arg::Element { element }
                 }
                 // A positional name of an event or equation, not a binding: a model element.
-                (ExprKind::Name(n), None) if a.every.is_none() && !self.cx.bindings.contains_key(n) && (self.cx.events.contains_key(n) || self.equations.contains_key(n)) => {
+                (ExprKind::Name(n), None) if a.every.is_none() && a.on.is_none() && !self.cx.bindings.contains_key(n) && (self.cx.events.contains_key(n) || self.equations.contains_key(n)) => {
                     let element = self.cx.events.get(n).or_else(|| self.equations.get(n)).cloned().unwrap();
                     Arg::Element { element }
                 }
-                _ => match &a.every {
-                    Some(dt) => Arg::Sampled { expr: self.expr(&a.value), every: self.expr(dt) },
-                    None => Arg::Expr { expr: self.expr(&a.value) },
+                _ => match (&a.every, &a.ensemble) {
+                    (Some(dt), _) => {
+                        let (expr, instrument) = self.measured(&a.value);
+                        Arg::Sampled { expr, every: self.expr(dt), instrument }
+                    }
+                    (None, Some((at, n))) => {
+                        let (expr, instrument) = self.measured(&a.value);
+                        Arg::Ensemble { expr, at: self.expr(at), runs: self.expr(n), instrument }
+                    }
+                    (None, None) if a.on.is_some() => {
+                        let (expr, instrument) = self.measured(&a.value);
+                        Arg::On { expr, event: self.cx.event_id(a.on.as_ref().unwrap()), instrument }
+                    }
+                    (None, None) => {
+                        if let Some(name) = self.instrument_call(&a.value) {
+                            self.err("SX-E08", format!("instrument `{name}` reads at instants: a sampled source, `{name}(x) every 0.1 s`, or an ensemble"), a.value.span);
+                        }
+                        Arg::Expr { expr: self.expr(&a.value) }
+                    }
                 },
             };
             match &a.name {
@@ -360,7 +406,7 @@ impl PresCx<'_, '_> {
         let kind = match v.kind.text.as_str() {
             "spatial" => {
                 let space = match v.args.first() {
-                    Some(ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Name(s), span }, every: None }) => match self.cx.space_by_name(s) {
+                    Some(ast::Arg { name: None, value: ast::Expr { kind: ExprKind::Name(s), span }, every: None, ensemble: None, on: None }) => match self.cx.space_by_name(s) {
                         Some(id) => id,
                         None => {
                             self.err("SX-E03", format!("unknown space `{s}`"), *span);
@@ -451,8 +497,51 @@ impl PresCx<'_, '_> {
         Some(View { id, name: v.name.text.clone(), kind, representations, click })
     }
 
+    /// The name of the instrument `e` reads through, when `e` is `ruler(x)` for an
+    /// instrument `ruler` of the presentation.
+    fn instrument_call(&self, e: &ast::Expr) -> Option<String> {
+        let ExprKind::Call(f, args) = &e.kind else { return None };
+        let ExprKind::Name(n) = &f.kind else { return None };
+        (self.instruments.contains_key(n) && args.len() == 1 && args[0].name.is_none()).then(|| n.clone())
+    }
+
+    /// A source and the instrument it is read through: `ruler(x)` is `x` read by `ruler`
+    /// (PK-3.7, D-087); anything else is read exactly.
+    fn measured(&mut self, e: &ast::Expr) -> (Expr, Option<Id>) {
+        match self.instrument_call(e) {
+            Some(n) => {
+                let ExprKind::Call(_, args) = &e.kind else { unreachable!() };
+                (self.expr(&args[0].value), self.instruments.get(&n).cloned())
+            }
+            None => (self.expr(e), None),
+        }
+    }
+
+    /// `instrument ruler(resolution: 1 mm, range: [0 m, 1 m], noise: 2 mm)`.
+    fn instrument(&mut self, name: &ast::Name, args: &[ast::Arg], span: Span) -> Instrument {
+        let id = format!("{}.instrument.{}", self.pres, name.text);
+        self.cx.map.insert(id.clone(), span);
+        let mut bad = vec![];
+        let skip = check_options(args, "instrument", &["resolution", "range", "noise"], &mut bad);
+        for (m, s) in bad {
+            self.err("SX-E08", m, s);
+        }
+        let mut out = Instrument { id, name: name.text.clone(), resolution: None, range: None, noise: None };
+        for (i, a) in args.iter().enumerate() {
+            match a.name.as_ref().map(|n| n.text.as_str()) {
+                _ if skip.contains(&i) => {}
+                None => self.err("SX-E08", "an instrument takes named options: `resolution`, `range`, `noise`", a.value.span),
+                Some("range") => out.range = self.range(&a.value),
+                Some("resolution") => out.resolution = Some(self.expr(&a.value)),
+                Some(_) => out.noise = Some(self.expr(&a.value)),
+            }
+        }
+        out
+    }
+
     fn observation(&mut self, o: &ast::Observation, model: &Model) -> Observation {
         let id = format!("{}.observe.{}", self.pres, o.name.text);
+        let mut instrument = None;
         self.cx.map.insert(id.clone(), o.span);
         let word = match &o.expr.kind {
             ExprKind::Name(n) if matches!(n.as_str(), "event_log" | "diagnostics" | "intervention_log") => Some(n.as_str()),
@@ -499,13 +588,17 @@ impl PresCx<'_, '_> {
                 Source::Diagnostics { element }
             }
             Some(_) => Source::InterventionLog,
-            None => Source::Expr { expr: self.expr(&o.expr) },
+            None => {
+                let (expr, i) = self.measured(&o.expr);
+                instrument = i;
+                Source::Expr { expr }
+            }
         };
         let schedule = match &o.schedule {
             None => Schedule::Run,
             Some(ast::Schedule::Live) => Schedule::Live,
             Some(ast::Schedule::Every(e)) => Schedule::Every { period: self.expr(e) },
-            Some(ast::Schedule::At(e)) => Schedule::At { time: self.expr(e) },
+            Some(ast::Schedule::At(e, runs)) => Schedule::At { time: self.expr(e), runs: runs.as_ref().map(|n| self.expr(n)) },
             Some(ast::Schedule::On(ev, micro)) => Schedule::On { event: self.cx.event_id(ev), microstep: *micro },
             Some(ast::Schedule::Over(i)) => {
                 let from = match &i.lo {
@@ -523,7 +616,7 @@ impl PresCx<'_, '_> {
                 Schedule::Over { from, to, lo_closed: i.lo_closed, hi_closed: i.hi_closed }
             }
         };
-        Observation { id, name: o.name.text.clone(), source, schedule }
+        Observation { id, name: o.name.text.clone(), source, schedule, instrument }
     }
 
     #[allow(clippy::only_used_in_recursion)]
@@ -557,19 +650,22 @@ impl PresCx<'_, '_> {
                 }
                 ast::Action::Hold => out.push(Action::Hold),
                 ast::Action::Reset => out.push(Action::Reset),
+                ast::Action::Restart => out.push(Action::Restart),
                 ast::Action::Branch => out.push(Action::Branch),
                 ast::Action::Highlight(n) => match self.aliases.get(&n.text) {
                     Some(id) => out.push(Action::Highlight { target: id.clone() }),
                     None => self.err("SX-E03", format!("no representation named `{}` before this beat", n.text), n.span),
                 },
-                ast::Action::Hide(n, d) => match self.aliases.get(&n.text).cloned() {
+                ast::Action::Hide(n, d, e) => match self.aliases.get(&n.text).cloned() {
                     Some(id) => {
                         let duration = d.as_ref().map(|d| self.expr(d));
-                        out.push(Action::Hide { target: id, duration })
+                        let ease = self.ease(e.as_ref());
+                        out.push(Action::Hide { target: id, duration, ease })
                     }
                     None => self.err("SX-E03", format!("no representation named `{}` before this beat", n.text), n.span),
                 },
-                ast::Action::Reveal { style, duration, view, reps } => {
+                ast::Action::Reveal { style, duration, view, ease, reps } => {
+                    let ease = self.ease(ease.as_ref());
                     let style = match style.text.as_str() {
                         "fade" => RevealStyle::Fade,
                         "draw" => RevealStyle::Draw,
@@ -590,14 +686,15 @@ impl PresCx<'_, '_> {
                     };
                     let duration = duration.as_ref().map(|d| self.expr(d));
                     let reps = reps.iter().map(|r| self.rep(r, beat, counts)).collect();
-                    out.push(Action::Reveal { view: v, style, duration, reps });
+                    out.push(Action::Reveal { view: v, style, duration, ease, reps });
                 }
-                ast::Action::Camera { view, center, zoom, duration } => match self.views.get(&view.text).cloned() {
+                ast::Action::Camera { view, center, zoom, duration, ease } => match self.views.get(&view.text).cloned() {
                     Some(v) => {
+                        let ease = self.ease(ease.as_ref());
                         let center = center.as_ref().map(|e| self.expr(e));
                         let zoom = zoom.as_ref().map(|e| self.expr(e));
                         let duration = duration.as_ref().map(|e| self.expr(e));
-                        out.push(Action::Camera { view: v, center, zoom, duration });
+                        out.push(Action::Camera { view: v, center, zoom, duration, ease });
                     }
                     None => self.err("SX-E03", format!("unknown view `{}`", view.text), view.span),
                 },
@@ -635,23 +732,14 @@ impl PresCx<'_, '_> {
                         "color" => Animated::Color,
                         "line" => Animated::Line,
                         "scale" => Animated::Scale,
+                        "width" => Animated::Width,
                         "morph" => Animated::Morph,
                         other => {
-                            self.err("SX-E02", format!("`animate` drives `opacity`, `offset`, `color`, `line`, `scale` or `morph`, not `{other}` (D-068, D-075)"), property.span);
+                            self.err("SX-E02", format!("`animate` drives `opacity`, `offset`, `color`, `line`, `width`, `scale` or `morph`, not `{other}` (D-068, D-075, D-095)"), property.span);
                             Animated::Opacity
                         }
                     };
-                    let ease = match ease.as_ref().map(|e| (e.text.as_str(), e.span)) {
-                        None => None,
-                        Some(("linear", _)) => Some(prismal_ir::present::Ease::Linear),
-                        Some(("smooth", _)) => Some(prismal_ir::present::Ease::Smooth),
-                        Some(("in", _)) => Some(prismal_ir::present::Ease::In),
-                        Some(("out", _)) => Some(prismal_ir::present::Ease::Out),
-                        Some((other, span)) => {
-                            self.err("SX-E02", format!("unknown easing `{other}`: `linear`, `smooth`, `in` or `out` (D-075)"), span);
-                            None
-                        }
-                    };
+                    let ease = self.ease(ease.as_ref());
                     match self.aliases.get(&target.text).cloned() {
                         Some(id) => {
                             // A palette word, a line style or a representation's name is a word;
@@ -689,10 +777,11 @@ impl PresCx<'_, '_> {
                     Some(id) => out.push(Action::Release { target: id.clone() }),
                     None => self.err("SX-E03", format!("no representation named `{}` before this beat", n.text), n.span),
                 },
-                ast::Action::Bind(n, d) => match self.aliases.get(&n.text).cloned() {
+                ast::Action::Bind(n, d, e) => match self.aliases.get(&n.text).cloned() {
                     Some(id) => {
                         let duration = d.as_ref().map(|d| self.expr(d));
-                        out.push(Action::Bind { target: id, duration })
+                        let ease = self.ease(e.as_ref());
+                        out.push(Action::Bind { target: id, duration, ease })
                     }
                     None => self.err("SX-E03", format!("no representation named `{}` before this beat", n.text), n.span),
                 },
@@ -715,7 +804,18 @@ pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: 
     let id = p.name.text.clone();
     map.insert(id.clone(), p.span);
     let equations = model.equations.iter().map(|q| (q.name.clone(), q.id.clone())).collect();
-    let mut px = PresCx { cx: ModelCx::scope(model, spaces, diags, map), equations, pres: &id, views: HashMap::new(), aliases: HashMap::new() };
+    let mut px = PresCx { cx: ModelCx::scope(model, spaces, diags, map), equations, pres: &id, views: HashMap::new(), aliases: HashMap::new(), instruments: HashMap::new() };
+    // Instruments first: views and observations read through them.
+    let mut instruments = vec![];
+    for it in &p.items {
+        if let ast::PresItem::Instrument { name, args, span } = it {
+            if px.instruments.insert(name.text.clone(), format!("{id}.instrument.{}", name.text)).is_some() {
+                px.err("SX-E09", format!("instrument `{}` declared twice", name.text), name.span);
+                continue;
+            }
+            instruments.push(px.instrument(name, args, *span));
+        }
+    }
     let mut views = vec![];
     for it in &p.items {
         if let ast::PresItem::View(v) = it {
@@ -733,8 +833,15 @@ pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: 
     let mut timeline = None;
     let mut layout = None;
     let mut title = None;
+    let mut until = None;
     for it in &p.items {
         match it {
+            ast::PresItem::Until(e) => {
+                if until.is_some() {
+                    px.err("SX-E09", "one `until` per presentation", e.span);
+                }
+                until = Some(px.cx.expr(e, &[]));
+            }
             ast::PresItem::Title(t) => {
                 if title.is_some() {
                     px.err("SX-E09", "one title per presentation", p.name.span);
@@ -783,10 +890,10 @@ pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: 
                 }
                 timeline = Some(Timeline { scenes: out });
             }
-            ast::PresItem::View(_) => {}
+            ast::PresItem::View(_) | ast::PresItem::Instrument { .. } => {}
         }
     }
-    Some(Presentation { id: id.clone(), name: id.clone(), model: model.id.clone(), observations, views, permissions, timeline, layout, notes: vec![], title })
+    Some(Presentation { id: id.clone(), name: id.clone(), model: model.id.clone(), observations, instruments, views, permissions, timeline, layout, notes: vec![], title, until })
 }
 
 pub(crate) fn run(
@@ -827,7 +934,11 @@ pub(crate) fn run(
             "h" => config.h = Some(cx.expr(v, &[])),
             "rtol" => config.rtol = Some(cx.expr(v, &[])),
             "atol" => config.atol = Some(cx.expr(v, &[])),
-            other => cx.err("SX-E03", format!("unknown run configuration `{other}`: `solver`, `h`, `rtol`, `atol`"), k.span),
+            "seed" => match &v.kind {
+                ExprKind::Num(x, None) if *x >= 0.0 && x.fract() == 0.0 && *x < 9.007_199_254_740_992e15 => config.seed = Some(*x as u64),
+                _ => cx.err("SX-E03", "a seed is a whole number, 0 or more (RC-13.1)", v.span),
+            },
+            other => cx.err("SX-E03", format!("unknown run configuration `{other}`: `solver`, `h`, `rtol`, `atol`, `seed`"), k.span),
         }
     }
     let end = r.until.as_ref().map(|u| cx.expr(u, &[]));
@@ -835,6 +946,9 @@ pub(crate) fn run(
     for s in &r.learner {
         let input = match &s.action {
             ast::LearnerAction::Continue => LearnerInput::Continue,
+            // `press restart`: a runtime-control button, unless the model has an event of
+            // that name (D-088, as `button(restart)`).
+            ast::LearnerAction::Press(e) if EXPLORE_CONTROLS.contains(&e.text.as_str()) && !cx.events.contains_key(&e.text) => LearnerInput::Control { control: e.text.clone() },
             ast::LearnerAction::Press(e) => LearnerInput::Press { event: cx.event_id(e) },
             ast::LearnerAction::Set { control, value } => match control.as_slice() {
                 [kind, target] => LearnerInput::SetControl { control: kind.text.clone(), binding: cx.binding(target), value: cx.expr(value, &[]) },
@@ -876,6 +990,24 @@ pub(crate) fn run(
                 }
             },
             ExprKind::On(x, ev, micro) => Some(Subject::On { expr: cx.expr(x, &[]), event: cx.event_id(ev), microstep: *micro }),
+            // `mean(ends)`, `deviation(ends)` (D-084).
+            ExprKind::Call(f, args) if matches!(&f.kind, ExprKind::Name(n) if n == "mean" || n == "deviation") => {
+                let ExprKind::Name(stat) = &f.kind else { unreachable!() };
+                let statistic = if stat == "mean" { prismal_ir::present::Statistic::Mean } else { prismal_ir::present::Statistic::Deviation };
+                match args.as_slice() {
+                    [ast::Arg { value: ast::Expr { kind: ExprKind::Name(n), span }, .. }] => match observation(n) {
+                        Some(o) => Some(Subject::Statistic { statistic, observation: o }),
+                        None => {
+                            cx.err("SX-E03", format!("no observation `{n}` in the run's presentation"), *span);
+                            None
+                        }
+                    },
+                    _ => {
+                        cx.err("SX-E08", format!("`{stat}` takes the name of an observation: `{stat}(ends)`"), e.span);
+                        None
+                    }
+                }
+            }
             ExprKind::BeatTime { start, beat: b } => match beat(&b.text) {
                 Some(id) if *start => Some(Subject::BeatStart { beat: id }),
                 Some(id) => Some(Subject::BeatEnd { beat: id }),
@@ -885,7 +1017,7 @@ pub(crate) fn run(
                 }
             },
             _ => {
-                cx.err("SX-E08", "an expectation is about an observation, `(e on E)`, or `start of` / `end of` a beat", e.span);
+                cx.err("SX-E08", "an expectation is about an observation, `mean(obs)` or `deviation(obs)`, `(e on E)`, or `start of` / `end of` a beat", e.span);
                 None
             }
         }

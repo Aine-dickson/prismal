@@ -1,9 +1,10 @@
 //! Runs (RC sections 3 to 11): initialization, continuous evolution, event detection and
 //! location, event iteration, Zeno detection, failures, interventions and requests.
 
-use crate::solver::{Attempt, Dopri5, Rhs, Rk4, Step};
+use crate::solver::{Attempt, Dense, Dopri5, Rhs, Rk4, Step};
 use prismal_ir::{Expr, Id, Op, Policy, Role, Type};
-use prismal_kernel::{check_intervention, compile_expr, distance, CExpr, CModel, COp, CTrigger, Ctx, Dir, Status, Value};
+use prismal_kernel::random::{fnv1a, Uniforms, CLOCK_SITE};
+use prismal_kernel::{check_intervention, compile_expr, distance, CExpr, CModel, COp, CTrigger, Ctx, Dir, Draws, Status, Value};
 use std::collections::VecDeque;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +52,11 @@ pub struct Config {
     pub params: Vec<(Id, Expr)>,
     /// The input and intervention log (RC-3.1).
     pub log: Vec<Scheduled>,
+    /// The seed of every random stream (RC-13.1, D-083).
+    pub seed: u64,
+    /// The step of the Euler-Maruyama solver of a model with noise in its flows (RC-13.9);
+    /// `None`: the fixed step `h` of `rk4` if one is given, else `t_ref / 1000`.
+    pub h_noise: Option<f64>,
 }
 
 impl Config {
@@ -68,6 +74,8 @@ impl Config {
             w_zeno: None,
             params: vec![],
             log: vec![],
+            seed: 0,
+            h_noise: None,
         }
     }
     pub fn param(mut self, id: &str, value: Expr) -> Config {
@@ -78,12 +86,24 @@ impl Config {
         self.solver = s;
         self
     }
+    pub fn seed(mut self, seed: u64) -> Config {
+        self.seed = seed;
+        self
+    }
     pub fn at(mut self, t: f64, action: Action) -> Config {
         self.log.push(Scheduled { t, action });
         self
     }
     fn eps_t(&self) -> f64 {
         self.eps_t.unwrap_or(1e-10 * self.t_ref)
+    }
+    /// The step of the Euler-Maruyama solver (RC-13.9).
+    pub fn noise_step(&self) -> f64 {
+        let fixed = match self.solver {
+            SolverConfig::Rk4 { h } => h,
+            _ => None,
+        };
+        self.h_noise.or(fixed).unwrap_or(1e-3 * self.t_ref)
     }
 }
 
@@ -172,6 +192,9 @@ pub struct Run {
 /// results).
 pub const SNAPSHOT_STEPS: usize = 8;
 
+/// Above this many continuous state components a run stores its steps compactly (RC-6.2a).
+pub const LARGE_STATE: usize = 4096;
+
 /// Everything needed to continue a run exactly from the top of its evolution loop at a
 /// committed instant (RC-14.1): the state, the event machinery, the solver's proposed next
 /// step, and how much of the trajectory, logs and action list lies before it.
@@ -185,6 +208,8 @@ pub struct Snapshot {
     time_next: Vec<Option<f64>>,
     every_k: Vec<u64>,
     payloads: Vec<Option<Value>>,
+    due_k: Vec<u64>,
+    clocks: Vec<Option<Clock>>,
     h: Option<f64>,
     /// Lengths of the run's records at the snapshot.
     committed: usize,
@@ -198,6 +223,17 @@ pub struct Snapshot {
     /// logged after `theta` (and after `t`) leaves the trajectory before the snapshot as it
     /// is (RC-14.2).
     pub theta: f64,
+}
+
+/// The clock of a random event (RC-13.8, the modified next reaction method): the integral
+/// of its rate up to `t_last`, the rate since then, and the integral at which it occurs next.
+#[derive(Clone, Debug)]
+struct Clock {
+    rate: f64,
+    integral: f64,
+    t_last: f64,
+    target: f64,
+    fired: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -219,6 +255,9 @@ struct Engine<'a> {
     every_k: Vec<u64>,
     /// Payloads of the occurrences handled at the current microstep, by event (D-050).
     payloads: Vec<Option<Value>>,
+    /// How many times each event has been due (RC-13.5): the counter of its draws.
+    due_k: Vec<u64>,
+    clocks: Vec<Option<Clock>>,
     run: Run,
     /// The solver's proposed next step (`None` after an event or an action, RC-8.6).
     h: Option<f64>,
@@ -230,18 +269,20 @@ struct Engine<'a> {
     acting: bool,
 }
 
-/// The right-hand side over one segment: discrete state and parameters fixed.
+/// The right-hand side over one segment: discrete state and parameters fixed. `noise`: the
+/// values of the white noises during an Euler-Maruyama step (D-090).
 struct SegmentRhs<'a> {
     cm: &'a CModel,
     scratch: Vec<Value>,
     t0: f64,
+    noise: Vec<f64>,
 }
 
 impl Rhs for SegmentRhs<'_> {
     fn f(&mut self, t: f64, y: &[f64], dy: &mut [f64]) -> Result<(), Status> {
         self.cm.load_y(&mut self.scratch, y);
-        self.cm.update_derived(&mut self.scratch, t, self.t0)?;
-        self.cm.rhs(&self.scratch, t, self.t0, dy)
+        self.cm.update_for_flows(&mut self.scratch, t, self.t0)?;
+        self.cm.rhs_noisy(&self.scratch, t, self.t0, &self.noise, dy)
     }
 }
 
@@ -267,6 +308,17 @@ fn matches_dir(dir: Dir, from: bool, to: bool) -> bool {
 /// not reached by the step, whatever rounding the landing test meets.
 fn reach(t: f64, h: f64) -> f64 {
     t + h * (1.0 + 1e-9) + 1e-12 * t.abs().max(1.0)
+}
+
+/// The smallest instant after `t`.
+fn after(t: f64) -> f64 {
+    if t == 0.0 {
+        f64::from_bits(1)
+    } else if t > 0.0 {
+        f64::from_bits(t.to_bits() + 1)
+    } else {
+        f64::from_bits(t.to_bits() - 1)
+    }
 }
 
 /// The action log in the order a run applies it: by instant, in log order at one instant.
@@ -303,7 +355,7 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
         };
         let v = compile_expr(cm, e, Some(&cm.bindings[i].ty))
             .map_err(|d| format!("{d:?}"))
-            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[] }).map_err(|s| s.cause));
+            .and_then(|(c, _)| c.eval(&Ctx { vals: &cm.constant_values(), der: None, t: cfg.t0, t0: cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None }).map_err(|s| s.cause));
         match v {
             Ok(v) => overrides.push((i, v)),
             Err(m) => {
@@ -330,13 +382,24 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
         time_next: vec![None; cm.events.len()],
         every_k: vec![0; cm.events.len()],
         payloads: vec![None; cm.events.len()],
+        due_k: vec![0; cm.events.len()],
+        clocks: cm
+            .events
+            .iter()
+            .map(|ev| match ev.trigger {
+                Some(CTrigger::Random { .. }) => {
+                    Some(Clock { rate: 0.0, integral: 0.0, t_last: cfg.t0, target: Uniforms::new(cfg.seed, fnv1a(&ev.id), CLOCK_SITE, 0).exp1(), fired: 0 })
+                }
+                _ => None,
+            })
+            .collect(),
         run,
         h: None,
         consumed: 0,
         theta: f64::NEG_INFINITY,
         acting: false,
     };
-    if let Err(d) = e.schedule_time_events() {
+    if let Err(d) = e.schedule_time_events().and_then(|_| e.refresh_clocks()) {
         e.run.status = RunStatus::NotStarted(RunDiag { category: Category::Initialization, ..d });
         return e.run;
     }
@@ -352,7 +415,7 @@ pub fn run(cm: &CModel, cfg: Config) -> Run {
     // RC-5.3: `on start` and time events at t0 are due at (t0, 0).
     let mut start: Vec<usize> = cm.events.iter().enumerate().filter(|(_, ev)| matches!(ev.trigger, Some(CTrigger::Start))).map(|(i, _)| i).collect();
     start.extend(e.take_time_events());
-    if let Err(d) = e.iterate(start, vec![]) {
+    if let Err(d) = e.iterate(start, vec![]).and_then(|_| e.refresh_clocks()) {
         e.run.status = RunStatus::Stopped(d);
         return e.run;
     }
@@ -409,6 +472,8 @@ pub fn resume(prev: &Run, cfg: Config) -> Run {
         time_next: snap.time_next.clone(),
         every_k: snap.every_k.clone(),
         payloads: snap.payloads.clone(),
+        due_k: snap.due_k.clone(),
+        clocks: snap.clocks.clone(),
         run: r,
         h: snap.h,
         consumed: snap.consumed,
@@ -449,6 +514,38 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// RC-13.8: after a transition, each random event's clock integrates its rate up to now,
+    /// takes the rate of the committed state and schedules its next occurrence, never at the
+    /// current instant. A clock whose rate varies between transitions (RC-13.8a) is
+    /// integrated along the steps instead and has no scheduled instant.
+    fn refresh_clocks(&mut self) -> Result<(), RunDiag> {
+        for ei in 0..self.cm.events.len() {
+            let Some(CTrigger::Random { rate, varying }) = &self.cm.events[ei].trigger else { continue };
+            let r = rate.eval(&self.ctx(&self.vals)).map_err(|s| self.diag(Category::Model, s.cause, Some(&self.cm.events[ei].id)))?.num();
+            if r < 0.0 {
+                return Err(self.negative_rate(ei, r));
+            }
+            let t = self.t;
+            let c = self.clocks[ei].as_mut().unwrap();
+            if *varying {
+                c.t_last = t;
+                c.rate = r;
+                self.time_next[ei] = None;
+                continue;
+            }
+            c.integral += c.rate * (t - c.t_last);
+            c.t_last = t;
+            c.rate = r;
+            self.time_next[ei] = if r > 0.0 {
+                let next = t + (c.target - c.integral) / r;
+                Some(if next > t { next } else { after(t) })
+            } else {
+                None
+            };
+        }
+        Ok(())
+    }
+
     fn next_time_event(&self) -> Option<f64> {
         self.time_next.iter().flatten().copied().fold(None, |m, t| Some(m.map_or(t, |x: f64| x.min(t))))
     }
@@ -469,10 +566,169 @@ impl<'a> Engine<'a> {
                     self.every_k[ei] += 1;
                     self.time_next[ei] = Some(f + self.every_k[ei] as f64 * d);
                 }
+                Some(CTrigger::Random { .. }) => self.fire_clock(ei),
                 _ => self.time_next[ei] = None,
             }
         }
         due
+    }
+
+    /// RC-13.8: the integral has reached the target; the next target is one more standard
+    /// exponential from the clock's stream.
+    fn fire_clock(&mut self, ei: usize) {
+        let stream = fnv1a(&self.cm.events[ei].id);
+        let (seed, t) = (self.cfg.seed, self.t);
+        let c = self.clocks[ei].as_mut().unwrap();
+        c.integral = c.target;
+        c.t_last = t;
+        c.fired += 1;
+        c.target += Uniforms::new(seed, stream, CLOCK_SITE, c.fired).exp1();
+        self.time_next[ei] = None;
+    }
+
+    fn negative_rate(&self, ei: usize, r: f64) -> RunDiag {
+        self.diag(Category::Model, format!("the rate of `{}` is negative ({r})", self.cm.events[ei].name), Some(&self.cm.events[ei].id))
+    }
+
+    /// Stores an accepted step of the trajectory. A run with more than `LARGE_STATE`
+    /// components (fields, D-091) keeps each step as the straight line between its two
+    /// states, each state shared with the neighbouring step: one state per step instead of
+    /// the solver's interpolant (RC-6.2a). Values at step ends are exact either way.
+    fn keep(&mut self, step: Step, base: usize) {
+        let n = self.cm.n_y();
+        if n <= LARGE_STATE || matches!(step.dense, Dense::Linear { .. }) {
+            self.run.segments.push(Segment { step, base });
+            return;
+        }
+        let prev = self.run.segments.last().and_then(|s| match &s.step.dense {
+            Dense::Linear { y1, .. } if s.step.t1 == step.t0 => Some(y1.clone()),
+            _ => None,
+        });
+        let at = |t: f64| {
+            let mut y = vec![0.0; n];
+            step.eval(t, &mut y);
+            std::rc::Rc::new(y)
+        };
+        let y0 = prev.unwrap_or_else(|| at(step.t0));
+        let y1 = at(step.t1);
+        let mut compact = Step::new(step.t0, step.t1 - step.t0, Dense::Linear { y0, y1 });
+        compact.t1 = step.t1;
+        self.run.segments.push(Segment { step: compact, base });
+    }
+
+    /// The rates of the random events `which` at `t` inside a step (RC-13.8a). A negative
+    /// rate is a model failure, reported at the first instant of the step found negative, by
+    /// bisection to the time tolerance.
+    fn rates_in_step(&self, step: &Step, scratch: &[Value], t: f64, which: &[usize], out: &mut [f64]) -> Result<(), RunDiag> {
+        let rates = |t: f64, out: &mut [f64]| -> Result<Option<usize>, RunDiag> {
+            let vals = self.state_in_step(step, scratch, t).map_err(|s| self.diag(Category::Model, s.cause, None))?;
+            let c = Ctx { vals: &vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: None, noise: &[], point: None };
+            for (k, (o, &ei)) in out.iter_mut().zip(which).enumerate() {
+                let Some(CTrigger::Random { rate, .. }) = &self.cm.events[ei].trigger else { unreachable!() };
+                *o = rate.eval(&c).map_err(|s| self.diag(Category::Model, s.cause, Some(&self.cm.events[ei].id)))?.num();
+                if *o < 0.0 {
+                    return Ok(Some(k));
+                }
+            }
+            Ok(None)
+        };
+        let Some(mut k) = rates(t, out)? else { return Ok(()) };
+        let (mut lo, mut hi, mut r) = (self.t, t, out[k]);
+        let mut probe = vec![0.0; which.len()];
+        while hi - lo > self.cfg.eps_t() {
+            let mid = 0.5 * (lo + hi);
+            if mid <= lo || mid >= hi {
+                break;
+            }
+            match rates(mid, &mut probe)? {
+                Some(j) => {
+                    (hi, k, r) = (mid, j, probe[j]);
+                }
+                None => lo = mid,
+            }
+        }
+        Err(RunDiag { t: hi, ..self.negative_rate(which[k], r) })
+    }
+
+    /// Three-point Gauss-Legendre integrals over `[a, b]` of the rates of `which`.
+    fn rate_panel(&self, step: &Step, scratch: &[Value], a: f64, b: f64, which: &[usize]) -> Result<Vec<f64>, RunDiag> {
+        const X: [f64; 3] = [-0.774_596_669_241_483_4, 0.0, 0.774_596_669_241_483_4];
+        const W: [f64; 3] = [5.0 / 9.0, 8.0 / 9.0, 5.0 / 9.0];
+        let (m, r) = (0.5 * (a + b), 0.5 * (b - a));
+        let mut sum = vec![0.0; which.len()];
+        let mut rates = vec![0.0; which.len()];
+        for (x, w) in X.iter().zip(W) {
+            self.rates_in_step(step, scratch, m + r * x, which, &mut rates)?;
+            for (s, q) in sum.iter_mut().zip(&rates) {
+                *s += w * r * q;
+            }
+        }
+        Ok(sum)
+    }
+
+    /// The integrals over `[a, b]` of the rates of `which` along a step's dense output:
+    /// Gauss-Legendre panels halved until the two halves agree with the whole to `1e-10`
+    /// (absolute and relative) for every rate (RC-13.8a).
+    fn integrate_rates(&self, step: &Step, scratch: &[Value], a: f64, b: f64, which: &[usize]) -> Result<Vec<f64>, RunDiag> {
+        if b <= a {
+            return Ok(vec![0.0; which.len()]);
+        }
+        let mut total = vec![0.0; which.len()];
+        let mut stack = vec![(a, b, self.rate_panel(step, scratch, a, b, which)?, 0u32)];
+        while let Some((a, b, whole, depth)) = stack.pop() {
+            let m = 0.5 * (a + b);
+            let (l, r) = (self.rate_panel(step, scratch, a, m, which)?, self.rate_panel(step, scratch, m, b, which)?);
+            let close = whole.iter().zip(l.iter().zip(&r)).all(|(w, (x, y))| (w - (x + y)).abs() <= 1e-10 * (1.0 + (x + y).abs()));
+            if close || depth >= 30 || m <= a || m >= b {
+                for (t, (x, y)) in total.iter_mut().zip(l.iter().zip(&r)) {
+                    *t += x + y;
+                }
+            } else {
+                stack.push((m, b, r, depth + 1));
+                stack.push((a, m, l, depth + 1));
+            }
+        }
+        Ok(total)
+    }
+
+    /// RC-13.8a: the first instant in the step at which a varying clock reaches its target,
+    /// by bisection to the time tolerance (the far end of the bracket, as RC-7.6), and the
+    /// clocks reached there. `total` holds the integrals over the whole step.
+    fn locate_clocks(&self, step: &Step, scratch: &[Value], which: &[usize], total: &[f64], t1: f64, eps_t: f64) -> Result<Option<(f64, Vec<usize>)>, RunDiag> {
+        let need: Vec<f64> = which.iter().map(|&ei| self.clocks[ei].as_ref().map(|c| c.target - c.integral).unwrap()).collect();
+        let reach = |at: &[f64]| at.iter().zip(&need).any(|(i, n)| i >= n);
+        if !reach(total) {
+            return Ok(None);
+        }
+        let (mut lo, mut hi) = (self.t, t1);
+        let mut at_lo = vec![0.0; which.len()];
+        let mut at_hi = total.to_vec();
+        while hi - lo > eps_t {
+            let mid = 0.5 * (lo + hi);
+            if mid <= lo || mid >= hi {
+                break;
+            }
+            let add = self.integrate_rates(step, scratch, lo, mid, which)?;
+            let at_mid: Vec<f64> = at_lo.iter().zip(&add).map(|(x, y)| x + y).collect();
+            if reach(&at_mid) {
+                hi = mid;
+                at_hi = at_mid;
+            } else {
+                lo = mid;
+                at_lo = at_mid;
+            }
+        }
+        let reached = which.iter().zip(at_hi.iter().zip(&need)).filter(|(_, (i, n))| i >= n).map(|(&ei, _)| ei).collect();
+        Ok(Some((hi, reached)))
+    }
+
+    /// Adds to the varying clocks `which` the integrals of their rates up to `t`.
+    fn advance_clocks(&mut self, which: &[usize], add: &[f64], t: f64) {
+        for (&ei, a) in which.iter().zip(add) {
+            let c = self.clocks[ei].as_mut().unwrap();
+            c.integral += a;
+            c.t_last = t;
+        }
     }
 
     fn diag(&self, category: Category, message: String, element: Option<&str>) -> RunDiag {
@@ -480,7 +736,7 @@ impl<'a> Engine<'a> {
     }
 
     fn ctx<'v>(&'v self, vals: &'v [Value]) -> Ctx<'v> {
-        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads }
+        Ctx { vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &self.payloads, draws: Some(Draws { seed: self.cfg.seed, due: &self.due_k }), noise: &[], point: None }
     }
 
     fn snapshot(&mut self) {
@@ -494,6 +750,8 @@ impl<'a> Engine<'a> {
             time_next: self.time_next.clone(),
             every_k: self.every_k.clone(),
             payloads: self.payloads.clone(),
+            due_k: self.due_k.clone(),
+            clocks: self.clocks.clone(),
             h: self.h,
             committed: r.committed.len(),
             segments: r.segments.len(),
@@ -567,6 +825,10 @@ impl<'a> Engine<'a> {
     fn check_constraints(&self, vals: &[Value], _initial: bool) -> Result<Vec<RunDiag>, RunDiag> {
         let mut reports = vec![];
         for k in &self.cm.constraints {
+            // An enforced constraint is kept by projection (RC-5.10), not checked.
+            if k.policy == Policy::Enforce {
+                continue;
+            }
             let c = self.ctx(vals);
             let ok = if let Some((l, r, tol)) = &k.within {
                 match (l.eval(&c), r.eval(&c)) {
@@ -594,6 +856,7 @@ impl<'a> Engine<'a> {
             match k.policy {
                 Policy::Report => reports.push(d),
                 Policy::Reject | Policy::Stop => return Err(d),
+                Policy::Enforce => unreachable!("skipped above"),
             }
         }
         Ok(reports)
@@ -604,11 +867,21 @@ impl<'a> Engine<'a> {
         let der = self.cm.der_values(&self.vals, self.t, self.cfg.t0).ok();
         for q in &self.cm.equations {
             let Some(tol) = q.check_tol else { continue };
-            let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: &[], payloads: &[] };
-            let res = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
-                (Ok(a), Ok(b)) => distance(&a, &b),
-                _ => None,
-            };
+            // An equation over a field: the largest residual over its cells (D-091).
+            let cells = q.field.map(|g| g.cells()).unwrap_or(1);
+            let mut res = Some(0.0f64);
+            for k in 0..cells {
+                let args = q.field.map(|g| [g.coord(k)]);
+                let c = Ctx { vals: &self.vals, der: der.as_deref(), t: self.t, t0: self.cfg.t0, args: args.as_ref().map(|a| &a[..]).unwrap_or(&[]), payloads: &[], draws: None, noise: &[], point: q.field.map(|_| k) };
+                let r = match (q.lhs.eval(&c), q.rhs.eval(&c)) {
+                    (Ok(a), Ok(b)) => distance(&a, &b),
+                    _ => None,
+                };
+                res = match (res, r) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    _ => None,
+                };
+            }
             if res.map(|r| r > tol).unwrap_or(true) {
                 let message = match res {
                     Some(r) => format!("check equation `{}` at t = {} s: residual {r:.3e} exceeds {tol:e}", q.name, self.t),
@@ -647,7 +920,7 @@ impl<'a> Engine<'a> {
         if a > step.t0 {
             if let Some(v) = state(self, a) {
                 step.t1 = a;
-                self.run.segments.push(Segment { step, base });
+                self.keep(step, base);
                 self.t = a;
                 self.n = 0;
                 self.vals = v;
@@ -685,6 +958,8 @@ impl<'a> Engine<'a> {
         let mut h: Option<f64> = self.h;
         let mut pending: VecDeque<Scheduled> = sorted_log(&self.cfg.log).into_iter().skip(self.consumed).collect();
         let mut steps = 0usize;
+        // RC-13.8a: random events whose rate varies along a step.
+        let varying: Vec<usize> = (0..cm.events.len()).filter(|&ei| matches!(cm.events[ei].trigger, Some(CTrigger::Random { varying: true, .. }))).collect();
         loop {
             // RC-14.3: a snapshot at the start, where actions apply, and every few steps.
             let due = pending.front().map(|s| s.t <= self.t).unwrap_or(false);
@@ -710,6 +985,7 @@ impl<'a> Engine<'a> {
                 acted = true;
             }
             if acted {
+                self.refresh_clocks()?;
                 self.retake_refs();
                 h = None;
             }
@@ -722,10 +998,27 @@ impl<'a> Engine<'a> {
                 next_stop = next_stop.min(te);
             }
             let base = self.run.committed.len() - 1;
-            let mut rhs = SegmentRhs { cm, scratch: self.vals.clone(), t0: self.cfg.t0 };
+            let mut rhs = SegmentRhs { cm, scratch: self.vals.clone(), t0: self.cfg.t0, noise: vec![] };
             let span = next_stop - self.t;
             // One accepted step (RC-6.7: never past the next stop).
-            let (y1, step, h_next) = match &self.cfg.solver {
+            let (y1, step, h_next) = if !cm.noise.is_empty() {
+                // RC-13.9 (D-090): an Euler-Maruyama step. Each noise takes `ΔW / h` with
+                // `ΔW = sqrt(h) N`, `N` standard normal from the noise's stream at the step's
+                // start, so the flows give the drift plus the noise's coefficient times `ΔW`.
+                let hf = self.cfg.noise_step();
+                let land = self.t + hf >= next_stop - 1e-12 * hf;
+                let hs = if land { span } else { hf };
+                self.theta = self.theta.max(if land { next_stop } else { reach(self.t, hf) });
+                let (seed, t) = (self.cfg.seed, self.t);
+                rhs.noise = cm.noise.iter().map(|&key| Uniforms::new(seed, key, 0, t.to_bits()).normal() / hs.sqrt()).collect();
+                let mut dy = vec![0.0; n_y];
+                rhs.f(self.t, &y, &mut dy).map_err(|s| self.diag(Category::Model, s.cause, None))?;
+                let y1: Vec<f64> = y.iter().zip(&dy).map(|(a, d)| a + hs * d).collect();
+                rhs.noise.clear();
+                let step = Step::new(self.t, hs, Dense::Linear { y0: std::rc::Rc::new(y.clone()), y1: std::rc::Rc::new(y1.clone()) });
+                (y1, step, None)
+            } else {
+                match &self.cfg.solver {
                 SolverConfig::Rk4 { h: Some(hf) } => {
                     let land = self.t + hf >= next_stop - 1e-12 * hf;
                     let hs = if land { span } else { *hf };
@@ -767,6 +1060,7 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+            }
             };
             h = h_next;
             let t1 = if step.t1 >= next_stop - 1e-12 * (step.t1 - step.t0) { next_stop } else { step.t1 };
@@ -805,21 +1099,39 @@ impl<'a> Engine<'a> {
                 }
                 new_refs[ei] = r;
             }
+            let mut clocks_total = vec![];
+            if !varying.is_empty() {
+                clocks_total = self.integrate_rates(&step, &rhs.scratch, self.t, t1, &varying)?;
+                if let Some((th, reached)) = self.locate_clocks(&step, &rhs.scratch, &varying, &clocks_total, t1, eps_t)? {
+                    found.extend(reached.into_iter().map(|ei| (ei, th)));
+                }
+            }
 
             if !found.is_empty() {
                 let te = found.iter().map(|x| x.1).fold(f64::INFINITY, f64::min);
                 let due: Vec<usize> = found.iter().filter(|x| x.1 <= te + eps_t).map(|x| x.0).collect();
+                if !varying.is_empty() {
+                    let add = if te == t1 { clocks_total.clone() } else { self.integrate_rates(&step, &rhs.scratch, self.t, te, &varying)? };
+                    self.advance_clocks(&varying, &add, te);
+                }
                 step.t1 = te;
                 let mut ye = vec![0.0; n_y];
                 step.eval(te, &mut ye);
-                self.run.segments.push(Segment { step, base });
+                self.keep(step, base);
                 self.t = te;
                 self.n = 0;
                 cm.load_y(&mut self.vals, &ye);
+                cm.project(&mut self.vals, self.t, self.cfg.t0, &[]).map_err(|s| self.diag(Category::Model, s.cause, None))?;
                 cm.update_derived(&mut self.vals, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
                 self.commit();
                 self.after_step_checks()?;
+                for &ei in &due {
+                    if matches!(cm.events[ei].trigger, Some(CTrigger::Random { .. })) {
+                        self.fire_clock(ei);
+                    }
+                }
                 self.iterate(due, vec![])?;
+                self.refresh_clocks()?;
                 self.retake_refs();
                 h = None;
                 continue;
@@ -828,11 +1140,15 @@ impl<'a> Engine<'a> {
             // whole. The run ends at the last state found valid inside it.
             let mut v1 = self.vals.clone();
             cm.load_y(&mut v1, &y1);
+            // RC-5.10: the end of each step is moved back onto the enforced constraints, so
+            // the solver's error does not accumulate as drift.
+            cm.project(&mut v1, t1, self.cfg.t0, &[]).map_err(|s| self.diag(Category::Model, s.cause, None))?;
             cm.update_derived(&mut v1, t1, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
             if let Err(d) = self.check_constraints(&v1, false) {
                 return Err(self.fail_in_step(step, base, d));
             }
-            self.run.segments.push(Segment { step, base });
+            self.advance_clocks(&varying, &clocks_total, t1);
+            self.keep(step, base);
             self.t = t1;
             self.n = 0;
             self.vals = v1;
@@ -843,6 +1159,7 @@ impl<'a> Engine<'a> {
             if !timed.is_empty() {
                 self.commit();
                 self.iterate(timed, vec![])?;
+                self.refresh_clocks()?;
                 self.retake_refs();
                 h = None;
             }
@@ -870,7 +1187,7 @@ impl<'a> Engine<'a> {
 
     /// The guard of crossing event `ei` in a state at `t`.
     fn guard_in(&self, vals: &[Value], t: f64, ei: usize) -> Result<f64, Status> {
-        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[] };
+        let c = Ctx { vals, der: None, t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
         match &self.cm.events[ei].trigger {
             Some(CTrigger::Crossing { guard, .. }) => Ok(guard.eval(&c)?.num()),
             _ => unreachable!(),
@@ -961,6 +1278,25 @@ impl<'a> Engine<'a> {
             for (ei, p) in &requested {
                 self.payloads[*ei] = p.clone();
             }
+            // RC-13.5: each event due at this microstep draws with its due count, which
+            // advances after it, whether or not the event is enabled.
+            let mut counted: Vec<usize> = due.iter().copied().chain(requested.iter().map(|r| r.0)).collect();
+            counted.sort();
+            counted.dedup();
+            let r = self.microstep(&mut due, &mut requested, &mut carried);
+            for ei in counted {
+                self.due_k[ei] += 1;
+            }
+            if !r? {
+                return Ok(());
+            }
+        }
+    }
+
+    /// One microstep of `iterate_with`: false when no event is enabled; otherwise `due`,
+    /// `requested` and `carried` become those of the next microstep.
+    fn microstep(&mut self, due: &mut Vec<usize>, requested: &mut Vec<(usize, Option<Value>)>, carried: &mut Vec<Option<Value>>) -> Result<bool, RunDiag> {
+        {
             // Step 2: enabling conditions.
             let vals = self.vals.clone();
             due.retain(|&ei| match &self.cm.events[ei].enable {
@@ -975,7 +1311,7 @@ impl<'a> Engine<'a> {
             due.sort();
             due.dedup();
             if due.is_empty() && requested.is_empty() {
-                return Ok(());
+                return Ok(false);
             }
             if self.n >= self.cfg.n_micro {
                 return Err(self.diag(Category::Cascade, format!("more than {} microsteps at t = {}", self.cfg.n_micro, self.t), None));
@@ -983,7 +1319,7 @@ impl<'a> Engine<'a> {
             // Zeno policies replace handlers at an accumulating occurrence (RC-9.3).
             let mut handled: Vec<(usize, bool, bool)> = vec![];
             let mut ops: Vec<COp> = vec![];
-            for &ei in &due {
+            for &ei in due.iter() {
                 let is_crossing = matches!(self.cm.events[ei].trigger, Some(CTrigger::Crossing { .. }));
                 if is_crossing && self.zeno_detected(ei) {
                     match self.cm.events[ei].zeno.as_ref().unwrap().settle.clone() {
@@ -1000,7 +1336,7 @@ impl<'a> Engine<'a> {
                     handled.push((ei, false, false));
                 }
             }
-            for (ei, _) in &requested {
+            for (ei, _) in requested.iter() {
                 ops.extend(self.cm.events[*ei].handler.clone());
                 handled.push((*ei, false, true));
             }
@@ -1016,7 +1352,7 @@ impl<'a> Engine<'a> {
             // (MK-15.3, MK-15.10, D-041), and crossings caused by jumps (RC-8.5). An event
             // carries its occurrence's payload, or the payload it was emitted with (D-050).
             let occurred: Vec<usize> = handled.iter().map(|h| h.0).collect();
-            carried = vec![None; self.cm.events.len()];
+            *carried = vec![None; self.cm.events.len()];
             for &ei in &occurred {
                 carried[ei] = self.payloads[ei].clone();
             }
@@ -1043,9 +1379,10 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
-            due = next;
-            requested = vec![];
+            *due = next;
+            *requested = vec![];
         }
+        Ok(true)
     }
 
     /// One transition (MK-16.3): conflicts, proposed state, constraints, commit.
@@ -1100,6 +1437,14 @@ impl<'a> Engine<'a> {
                         None => contributions.push((*binding, combine.clone(), vec![v])),
                     }
                 }
+                COp::SetField { binding, grid, value } => {
+                    if contributions.iter().any(|c| c.0 == *binding) || destroyed.contains(binding) || targets.iter().any(|(b, _)| b == binding) {
+                        return Err(conflict(self, *binding));
+                    }
+                    targets.push((*binding, None));
+                    let v = prismal_kernel::per_cell(value, grid, &self.ctx(&self.vals)).map_err(|s| self.diag(Category::Model, s.cause, None))?;
+                    proposed[*binding] = v;
+                }
                 COp::Set { binding, component, value } => {
                     if contributions.iter().any(|c| c.0 == *binding) {
                         return Err(conflict(self, *binding));
@@ -1130,6 +1475,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        let contributions_set: Vec<usize> = contributions.iter().map(|c| c.0).collect();
         for (b, how, vs) in contributions {
             proposed[b] = combine(&how, &self.vals[b], &vs);
         }
@@ -1143,6 +1489,10 @@ impl<'a> Engine<'a> {
                 return Err(self.diag(Category::Conflict, format!("`{}` is set in the transition that destroys its member", self.cm.bindings[b].name), None));
             }
         }
+        // RC-5.10: a transition's result is moved onto the enforced constraints (a bob dragged
+        // off its circle lands on it).
+        let set: Vec<usize> = targets.iter().map(|(b, _)| *b).chain(contributions_set.iter().copied()).collect();
+        self.cm.project(&mut proposed, self.t, self.cfg.t0, &set).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         self.cm.update_derived(&mut proposed, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         match self.check_constraints(&proposed, false) {
             Ok(reports) => self.run.diagnostics.extend(reports),
@@ -1200,7 +1550,7 @@ impl<'a> Engine<'a> {
                 }
                 // The environment's value reads nothing of the model but its constants.
                 let value = match compile_expr(self.cm, e, Some(&self.cm.bindings[i].ty)) {
-                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[] }),
+                    Ok((c, _)) => c.eval(&Ctx { vals: &self.cm.constant_values(), der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None }),
                     Err(d) => return reject(self, format!("the value of `{}`: {}", self.cm.bindings[i].name, d.iter().map(|x| x.message.clone()).collect::<Vec<_>>().join("; "))),
                 };
                 let v = match value {
@@ -1227,7 +1577,7 @@ impl<'a> Engine<'a> {
                 let payload = match (action, declared) {
                     (Action::Request(_), None) => None,
                     (Action::RequestWith(_, e), Some(p)) => match compile_expr(self.cm, e, Some(&p.ty)) {
-                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[] }) {
+                        Ok((c, _)) => match c.eval(&Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None }) {
                             Ok(v) => Some(v),
                             Err(s) => {
                                 let rd = self.diag(Category::Intervention, format!("the payload of `{}`: {}", self.cm.events[ei].name, s.cause), Some(id));
@@ -1260,7 +1610,7 @@ impl<'a> Engine<'a> {
                 if let Some(c) = &self.cm.events[ei].enable {
                     let mut payloads = vec![None; self.cm.events.len()];
                     payloads[ei] = payload.clone();
-                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads };
+                    let ctx = Ctx { vals: &self.vals, der: None, t: self.t, t0: self.cfg.t0, args: &[], payloads: &payloads, draws: None, noise: &[], point: None };
                     let why = match c.eval(&ctx) {
                         Ok(Value::Bool(true)) => None,
                         Ok(_) => Some(self.not_enabled(ei, payload.as_ref())),
@@ -1302,7 +1652,7 @@ impl Run {
 
     fn eval_on(&self, c: &CExpr, vals: &[Value], t: f64) -> Result<Value, Status> {
         let der = self.model.der_values(vals, t, self.config.t0).ok();
-        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[] })
+        c.eval(&Ctx { vals, der: der.as_deref(), t, t0: self.config.t0, args: &[], payloads: &[], draws: None, noise: &[], point: None })
     }
 
     /// The state at time `t`: the final microstep at an event time (RC-4.3), otherwise the
@@ -1311,11 +1661,13 @@ impl Run {
         if let Some(c) = self.committed.iter().rev().find(|c| c.t == t) {
             return c.vals.clone();
         }
-        let seg = self
-            .segments
-            .iter()
-            .find(|s| s.step.t0 <= t && t <= s.step.t1)
-            .unwrap_or_else(|| panic!("time {t} is outside the run"));
+        // Segments are in time order: the first that ends at or after `t`, found by bisection
+        // (a run with noise has a segment per millisecond, D-090), is the first containing it.
+        let k = self.segments.partition_point(|s| s.step.t1 < t);
+        let seg = match self.segments.get(k) {
+            Some(s) if s.step.t0 <= t => s,
+            _ => self.segments.iter().find(|s| s.step.t0 <= t && t <= s.step.t1).unwrap_or_else(|| panic!("time {t} is outside the run")),
+        };
         let mut y = vec![0.0; self.model.n_y()];
         seg.step.eval(t, &mut y);
         let mut vals = self.committed[seg.base].vals.clone();

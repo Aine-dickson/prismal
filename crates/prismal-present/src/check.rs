@@ -68,7 +68,8 @@ pub fn check_presentation(cm: &CModel, p: &Presentation) -> Vec<PDiag> {
         }
     }
     // A runtime control acts on a lab's session; a lesson's timeline is directed by the
-    // learner through the player instead (PK-9.7, D-069).
+    // learner through the player instead (PK-9.7, D-069). An explore beat may offer
+    // `restart` and `reseed`, which start the learner's branch again (D-088).
     if p.timeline.is_some() {
         let mut ids = vec![];
         for v in &p.views {
@@ -78,7 +79,7 @@ pub fn check_presentation(cm: &CModel, p: &Presentation) -> Vec<PDiag> {
             run_buttons_in(&b.actions, &mut ids);
         }
         for id in ids {
-            out.push(PDiag { code: "PK-E05", message: "a runtime-control button (`reset`, `undo`, `redo`) belongs in a lab, not a lesson (D-069)".into(), element: id });
+            out.push(PDiag { code: "PK-E05", message: "a runtime-control button belongs in a lab; in a lesson, an explore beat may offer `button(restart)` and `button(reseed)` (D-069, D-088)".into(), element: id });
         }
     }
     for o in &p.observations {
@@ -101,7 +102,7 @@ pub fn check_presentation(cm: &CModel, p: &Presentation) -> Vec<PDiag> {
         }
         match &o.schedule {
             Schedule::Every { period } => expr(cm, period, Some(&duration), &o.id, &mut out),
-            Schedule::At { time: t } => expr(cm, t, Some(&time), &o.id, &mut out),
+            Schedule::At { time: t, .. } => expr(cm, t, Some(&time), &o.id, &mut out),
             Schedule::On { event, .. } => {
                 event_exists(cm, event, &o.id, &mut out);
             }
@@ -112,6 +113,26 @@ pub fn check_presentation(cm: &CModel, p: &Presentation) -> Vec<PDiag> {
                 }
             }
             Schedule::Live | Schedule::Run => {}
+        }
+        // PK-3.7 (D-087): an instrument reads an expression at instants.
+        if let Some(id) = &o.instrument {
+            let problem = match (&o.source, &o.schedule) {
+                (_, Schedule::Live) => Some("an instrument reads at instants: observe `every`, `at`, `on` or `over`, not `live`".to_string()),
+                (Source::Expr { expr: e }, _) => match compile_expr(cm, e, None) {
+                    Ok((_, ty)) => crate::measure::meter(cm, &p.instruments, Some(id), e, &ty).err(),
+                    Err(_) => None,
+                },
+                _ => Some("an instrument reads values, not logs".to_string()),
+            };
+            if let Some(m) = problem {
+                out.push(PDiag { code: "PK-E04", message: format!("{m} (PK-3.7)"), element: o.id.clone() });
+            }
+        }
+    }
+    // Every instrument is valid for some value, so that an unused one is still checked.
+    for i in &p.instruments {
+        for e in i.resolution.iter().chain(i.noise.iter()).chain(i.range.iter().flat_map(|(a, b)| [a, b])) {
+            expr(cm, e, None, &i.id, &mut out);
         }
     }
     let Some(projector) = projector else { return out };
@@ -143,13 +164,13 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                 }
                 let ctx = pr.ctx(view.as_deref());
                 for r in rs {
-                    if let Err(d) = compile_rep(cm, &ctx, r) {
+                    if let Err(d) = compile_rep(cm, &ctx, r, &p.instruments) {
                         out.extend(d);
                     }
                     with_members(r, reps);
                 }
             }
-            Action::Camera { view, center, zoom, duration: d } => {
+            Action::Camera { view, center, zoom, duration: d, .. } => {
                 match pr.views.iter().find(|x| &x.0 == view) {
                     Some((_, ViewCtx::Spatial { space, .. }, _)) => {
                         if let Some(c) = center {
@@ -185,7 +206,7 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                 }
                 let ctx = pr.ctx(view.as_deref());
                 for r in rs {
-                    if let Err(d) = compile_rep(cm, &ctx, r) {
+                    if let Err(d) = compile_rep(cm, &ctx, r, &p.instruments) {
                         out.extend(d);
                     }
                     with_members(r, reps);
@@ -200,7 +221,7 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                 }
             }
             Action::Narrate { duration: Some(d), .. } | Action::Wait { duration: d } => expr(cm, d, Some(duration), beat, out),
-            Action::Narrate { .. } | Action::Hold | Action::Reset | Action::Branch => {}
+            Action::Narrate { .. } | Action::Hold | Action::Reset | Action::Restart | Action::Branch => {}
             Action::Run { rate } => {
                 expr(cm, rate, Some(&Type::real()), beat, out);
                 if number(cm, rate).is_ok_and(|r| r < 0.0) {
@@ -242,7 +263,7 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                     }
                 }
                 for r in controls {
-                    if let Err(d) = compile_rep(cm, &ViewCtx::Panel, r) {
+                    if let Err(d) = compile_rep(cm, &ViewCtx::Panel, r, &p.instruments) {
                         out.extend(d);
                     }
                     with_members(r, reps);
@@ -282,10 +303,10 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                 let Some(to) = to else { continue };
                 match property {
                     Animated::Color | Animated::Line | Animated::Morph => {}
-                    Animated::Scale => {
+                    Animated::Scale | Animated::Width => {
                         expr(cm, to, Some(&Type::real()), beat, out);
                         if number(cm, to).is_ok_and(|x| x <= 0.0) {
-                            diag(out, "PK-E02", "a scale is positive (D-075)".into());
+                            diag(out, "PK-E02", "a scale or a width is positive (D-075, D-095)".into());
                         }
                     }
                     Animated::Opacity => {
@@ -302,10 +323,10 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                     },
                 }
             }
-            Action::Release { target } | Action::Bind { target, duration: None } => {
+            Action::Release { target } | Action::Bind { target, duration: None, .. } => {
                 known(reps, target, beat, out);
             }
-            Action::Bind { target, duration: Some(d) } => {
+            Action::Bind { target, duration: Some(d), .. } => {
                 known(reps, target, beat, out);
                 expr(cm, d, Some(duration), beat, out);
             }
@@ -315,11 +336,18 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
 
 /// Runtime-control buttons among representations (D-069).
 fn run_buttons(reps: &[prismal_ir::present::Rep], out: &mut Vec<String>) {
+    run_buttons_but(reps, &[], out)
+}
+
+/// Runtime-control buttons among `reps`, except those whose control is in `allowed`.
+fn run_buttons_but(reps: &[prismal_ir::present::Rep], allowed: &[&str], out: &mut Vec<String>) {
     for r in reps {
-        if r.kind == "button" && matches!(r.sources.first(), Some(prismal_ir::present::Arg::Word { .. })) {
-            out.push(r.id.clone());
+        if let (true, Some(prismal_ir::present::Arg::Word { word })) = (r.kind == "button", r.sources.first()) {
+            if !allowed.contains(&word.as_str()) {
+                out.push(r.id.clone());
+            }
         }
-        run_buttons(&r.members, out);
+        run_buttons_but(&r.members, allowed, out);
     }
 }
 
@@ -328,7 +356,7 @@ fn run_buttons_in(acts: &[Action], out: &mut Vec<String>) {
         match a {
             Action::Show { reps, .. } | Action::Reveal { reps, .. } => run_buttons(reps, out),
             Action::Explore { controls, fallback, .. } => {
-                run_buttons(controls, out);
+                run_buttons_but(controls, &["restart", "reseed"], out);
                 run_buttons_in(fallback, out);
             }
             Action::Sequence { actions } | Action::WaitLearner { fallback: actions, .. } => run_buttons_in(actions, out),

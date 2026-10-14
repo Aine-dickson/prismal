@@ -56,6 +56,10 @@ pub enum Member {
     Object(ObjectDecl),
     /// `parts { ball: Ball { ... }  row: Ball[3] { ... } }` (D-055).
     Parts(Vec<PartDecl>),
+    /// `grid rod(x: [0 m, 1 m], cells: 100)` (MK-9.5, D-091).
+    Grid { name: Name, args: Vec<Arg>, span: Span },
+    /// `boundary T { left = e; right = e }` or `boundary T periodic` (MK-9.6, D-091).
+    Boundary { field: Name, periodic: bool, fixed: Vec<(Name, Expr)>, span: Span },
 }
 
 /// An object type: the body of a model, declared in one (D-055). A relation type has
@@ -98,6 +102,8 @@ pub enum RoleWord {
     State,
     Discrete,
     Derived,
+    /// `unknown { I: Current = 0 A }` (D-092).
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,6 +112,8 @@ pub struct Decl {
     pub name: Name,
     /// Parameters of a derived function value: `f(x: Real): Real = e` (MK-10.7).
     pub params: Option<Vec<(Name, TypeExpr)>>,
+    /// A field: `T(x in rod)`, its coordinate and grid (MK-9.4, D-091).
+    pub over: Option<(Name, Name)>,
     pub ty: TypeExpr,
     pub value: Option<Expr>,
     pub range: Option<Range>,
@@ -156,6 +164,8 @@ pub struct FlowStmt {
     pub member: Option<Expr>,
     /// `for b in row { ... }`: the loop variable and the collection.
     pub each: Option<(Name, Name)>,
+    /// `der(T(x))`: the coordinate of a field's flow (D-091).
+    pub coord: Option<Name>,
     pub contribute: bool,
     pub expr: Expr,
     pub span: Span,
@@ -193,6 +203,8 @@ pub enum TriggerExpr {
     Start,
     Input(Name),
     Request(Vec<PayloadDecl>),
+    /// `random(λ)`: at random instants, at rate `λ` (D-083).
+    Random(Expr),
     /// `on E` or `on E(p: T)`, receiving `E`'s payload as `p` (D-050).
     On(Name, Vec<PayloadDecl>),
 }
@@ -228,7 +240,8 @@ pub struct Path {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum OpStmt {
-    Set { target: Path, value: Expr, span: Span },
+    /// `set x = e`; `set T(p) = e` sets a field in each cell (D-091).
+    Set { target: Path, coord: Option<Name>, value: Expr, span: Span },
     Contribute { target: Path, value: Expr, span: Span },
     Emit { event: Name, payload: Option<Expr>, span: Span },
     /// `create drops { pos = p }` (D-057).
@@ -332,6 +345,10 @@ pub struct Arg {
     pub value: Expr,
     /// `pos every 0.02 s`: a representation source sampled over the run (PK-6.3).
     pub every: Option<Expr>,
+    /// `n at t0 + 7 s over 200 runs`: an ensemble source (D-084), the instant and the count.
+    pub ensemble: Option<(Expr, Expr)>,
+    /// `gap on decay`: the values at each occurrence of an event (D-089).
+    pub on: Option<Name>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -392,6 +409,10 @@ pub enum PresItem {
     Layout(LayoutNode),
     /// `title "..."` (D-076).
     Title(String),
+    /// `until t0 + 20 s`: how long the presentation's run lasts (D-091).
+    Until(Expr),
+    /// `instrument ruler(resolution: 1 mm, range: [0 m, 1 m], noise: 2 mm)` (PK-3.7, D-087).
+    Instrument { name: Name, args: Vec<Arg>, span: Span },
 }
 
 /// A view, or views in a row or a column; the name of a row or column is its keyword.
@@ -418,7 +439,8 @@ pub struct Observation {
 pub enum Schedule {
     Live,
     Every(Expr),
-    At(Expr),
+    /// `at τ`, or `at τ over n runs` (D-084).
+    At(Expr, Option<Expr>),
     On(Name, Option<u32>),
     Over(Interval),
 }
@@ -485,11 +507,12 @@ pub enum Action {
     Run { rate: Expr, until: Option<Name> },
     Hold,
     Highlight(Name),
-    Hide(Name, Option<Expr>),
+    /// `hide R [for d] [ease e]`
+    Hide(Name, Option<Expr>, Option<Name>),
     /// `reveal fade|draw [for d] [in view] { reps }`
-    Reveal { style: Name, duration: Option<Expr>, view: Option<Name>, reps: Vec<Rep> },
+    Reveal { style: Name, duration: Option<Expr>, view: Option<Name>, ease: Option<Name>, reps: Vec<Rep> },
     /// `camera view [to P] [zoom z] [for d]`
-    Camera { view: Name, center: Option<Expr>, zoom: Option<Expr>, duration: Option<Expr> },
+    Camera { view: Name, center: Option<Expr>, zoom: Option<Expr>, duration: Option<Expr>, ease: Option<Name> },
     Seek(Expr),
     Show(Rep),
     Explore { limit: Option<Expr>, keep: Vec<Name>, reps: Vec<Rep>, fallback: Vec<Action> },
@@ -500,6 +523,8 @@ pub enum Action {
     /// `request E` or `request E(value)` (D-050).
     Request(Name, Option<Expr>),
     Reset,
+    /// `restart`: the run again from `t0` with the parameters as they are (D-085).
+    Restart,
     Branch,
     /// `wait learner [limit d] [fallback { ... }]` (D-067)
     WaitLearner { limit: Option<Expr>, fallback: Vec<Action> },
@@ -508,7 +533,7 @@ pub enum Action {
     /// `release R` (D-068)
     Release(Name),
     /// `bind R [for d]` (D-068)
-    Bind(Name, Option<Expr>),
+    Bind(Name, Option<Expr>, Option<Name>),
 }
 
 // ---------------------------------------------------------------- runs

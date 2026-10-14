@@ -98,12 +98,32 @@ produce the trajectory S (committed states), the event log E and diagnostics D
 ## 5. Initialization
 
 - **Restates:** R-25.
-- **Decisions:** D-008, D-020.
+- **Decisions:** D-008, D-020, D-092.
+- **Prior art:** the solve (RC-5.6) follows damped Newton methods with finite-difference Jacobians (Dennis and Schnabel; MINPACK's `hybrd` scales unknowns in the same way), and SPICE's convergence test on the Newton correction as well as on the residual.
 
 - **RC-5.1** Initialization evaluates, in dependency order (MK-13.5, MK-13.6): parameter values (defaults with run-configuration overrides applied), then the initial definitions of all stored bindings. The result is the state at `(t0, 0)`.
 - **RC-5.2** Constraints are checked on the initial state (MK-12.3). A violated constraint with policy `reject` or `stop` makes initialization fail: the run does not start, and the diagnostic names the constraint and the values involved. A violated `report` constraint produces a diagnostic and the run starts.
 - **RC-5.3** Events with trigger `on start` are due at `(t0, 0)`. Their transition, if any, commits `(t0, 1)` (section 8). Time events `at(t0)` and `every(Δ, from t0)` are due at the same microstep.
 - **RC-5.4** The sign reference of every crossing guard (section 7) is taken from the final state at `t0`.
+
+**Solved equations (D-092).** The solve below is part of every evaluation of a model's values, at `t0` and at every later instant; it is specified here because initialization is its first use.
+
+- **RC-5.5** Initialization evaluates the solve (RC-5.6) at its place in the dependency order of initial definitions (MK-13.5, MK-11.8): after the values its equations and guesses read, before the initial definitions that read unknowns. If the solve fails at `t0` (RC-5.8), the run does not start, and the diagnostic names the unknowns.
+- **RC-5.6** **The solve.** Whenever the runtime evaluates a model's values (initialization, every evaluation of flows during a step, event guards, transitions and observations), it computes the unknowns by Newton's method on the residuals `lhs - rhs` of the solved equations' components (MK-11.7):
+  - It starts at the guesses, evaluated at that instant, every time. It never starts from an earlier solve, so the unknowns at an instant depend only on the other values at that instant, a run is a function of its configuration (D-015), and an observation between steps gives what a step would.
+  - The **scale** `s_j` of unknown `j` is the magnitude of its guess, or 1 in coherent SI units when the guess is 0.
+  - The Jacobian is estimated by forward differences, changing unknown `j` by `1e-7 (|u_j| + s_j)`.
+  - The linear system is solved by Gaussian elimination with partial pivoting after each row, then each column, is scaled to a largest entry of 1, so that the units of equations and unknowns play no part. A pivot below `1e-13` in the scaled system means the equations are dependent at that instant.
+  - The size of the residuals is their Euclidean norm, computed without overflow. A full Newton step is taken if it lowers that size; if it does not, the step is halved up to ten times, and a step below a thousandth of the full step is taken in any case. If the full step lowers the size, steps of 2, 4, 8 ... times the full step (up to `2^30`) are tried and the last that still lowers it is taken: on an exponential guessed from above, a full step moves only a fixed amount (about `Vt` for a diode).
+  - At most 60 iterations.
+- **RC-5.6a** **Size of a residual** (D-093). A residual is judged against the size of the terms its two sides are computed from, not of their values: sums add their terms' sizes, products multiply them, a quotient divides its numerator's by the divisor, a dot product sums its components' products, and other forms have the size of their value. `V0 - Vd` with `Vd` near `V0` has the size `|V0| + |Vd|`; a constraint's second rate, a sum that cancels to 0 at the solution, is judged against its terms.
+- **RC-5.7** **Convergence.** The solve ends with the unknowns at their current values when, after an iteration:
+  - every component's residual is 0 or at most `1e-12` of the size of its terms (RC-5.6a); or
+  - the full Newton correction of every unknown is at most `1e-12 |u_j| + 1e-15 s_j` and the residuals are finite: the corrected values are taken. A residual is computed no more precisely than its terms (in `V0 - Vd == I * R` with `Vd` near `V0`, the rounding of the left side can exceed both sides); the correction measures the distance to the solution instead.
+  - When the iterations run out, a step cannot lower the residuals, or a step changes no unknown by more than `1e-14 (|u_j| + s_j)`, the values reached are taken if every residual is at most `1e-9` of the size of its terms.
+- **RC-5.8** **Failure.** Otherwise every unknown is `invalid` (MK-11.8), with one of three causes, each naming the unknowns: the equations cannot be evaluated at the guesses (an overflow or an invalid value there); the equations are dependent at that instant; no solution was found from the guesses. During a run, an invalid value in a flow rejects the step (RC-6.8): an adaptive solver retries with smaller steps, and a solve that keeps failing is a `model` failure (section 10).
+- **RC-5.9** The tolerances, limits and step rules of RC-5.6, RC-5.7 and RC-5.10 are fixed in v0; they are not part of the run configuration.
+- **RC-5.10** **Projection onto enforced constraints** (MK-12.10, D-093). The levels of the enforced constraints (MK-12.7) are taken in order, level `k` of every constraint together. For each, the components the level moves (MK-12.8) are corrected by Gauss-Newton steps of minimum norm, each component measured against the size of its binding's value (1 in coherent SI units for a zero value): with `J` the Jacobian of the level's residuals by central differences and `S` the diagonal of those sizes, the step is `-S (J S)^T ((J S)(J S)^T)^-1 r`. A level has converged when every residual is within `1e-15` of the size of its terms (RC-5.6a), or when a step changes no component by more than `1e-15` of its size; after 30 steps it is accepted within `1e-9` of the size of its terms, and fails otherwise. Projection happens at initialization (after the initial definitions, followed by the derived values and the solve again), at the end of every accepted step, before event detection's committed state is stored and before the next step starts, and in every transition before constraints are checked (RC-10). Event location uses the step's dense output, which is not projected: between two committed states the constraint holds to the solver's accuracy.
 
 ---
 
@@ -117,6 +137,7 @@ produce the trajectory S (committed states), the event log E and diagnostics D
 
 - **RC-6.1** Between event times the runtime approximates the solution defined by the model kernel (MK section 14.5): every continuous state integrates its combined flow, derived bindings hold their definitions, discrete state is constant.
 - **RC-6.2** Each **accepted step** `[t_i, t_{i+1}]` produces the continuous state at `t_{i+1}` and a **dense output**: an interpolant over the step, of stated order, used for event location (section 7) and for observation between steps (section 15).
+- **RC-6.2a** (D-091) A run whose continuous state has more than 4096 components (fields) locates events on each step's dense output, and then keeps the step as the straight line between its two states, each state shared with the neighbouring step. Observations between steps of such a run are linear interpolations; at step ends they are exact.
 
 ### 6.2 Solvers
 
@@ -288,12 +309,19 @@ Execution control acts on runs, not on the model (MK-17.4). It is how the explan
 - **Decisions:** D-013, D-015.
 - **Prior art:** follows counter-based random number generators (Salmon and others, "Parallel random numbers: as easy as 1, 2, 3", the Random123 library), where each value is a pure function of a key and a counter, so draws do not depend on execution order.
 
-The stochastic modes (D-013) are specified with the stochastic slice. v0 fixes only what makes them reproducible.
+The stochastic modes (D-013) are specified by D-083: random events (MK-15.15) and draws (MK-10.4). RC-13.1 to RC-13.4 make them reproducible; RC-13.5 to RC-13.8 fix the streams, the generator, the distributions and the clocks of random events.
 
 - **RC-13.1** A run has one **seed** in its run configuration.
 - **RC-13.2** Randomness is drawn from **streams**. A stream is identified by the seed and the identity of the element that consumes it (a stochastic event or process, and the object it acts on). Draws from a stream are numbered by a counter. A draw is a pure function of seed, stream identity and counter.
 - **RC-13.3** There is no global generator whose state depends on the order in which elements draw. Adding, removing or reordering one element changes only its own stream.
 - **RC-13.4** The generator algorithm is part of the runtime build and is named in the reproducibility record (section 14).
+- **RC-13.5** (D-083) The stream of a draw is identified by the event that draws (its identity in the elaborated model) and the draw site's number in it: sites are numbered from 0 in order through the event's enabling condition, handler and Zeno settle operations. Its counter is the event's **due count**: how many times the event was due before, counting each microstep at which it was due or requested once, whether or not its condition held. A draw needing several uniform numbers takes them in order from its stream.
+- **RC-13.5a** (D-087) The noise of an instrument's reading (PK-3.7) comes from the generator of RC-13.6 with the run's seed, the stream `fnv1a64` of the instrument's identity and the source's IR together, site 0 and the counter the bits of the instant `t` as a 64-bit float; one standard normal number per component, in order. A reading thus depends on the seed, the instrument, the source and the instant only: an observation and a representation that read one source through one instrument at one instant show the same reading, and readings never change the run (PK-3.2).
+- **RC-13.6** The generator is Philox4x32-10 (Salmon and others 2011). The key is `splitmix64(seed) XOR fnv1a64(event identity)`, split into two 32-bit words (low first); the counter is `(k low, k high, site, j)` for due count `k` and block `j`. Uniform number `i` of a draw is taken from block `i / 2`, words `2 (i mod 2)` and `2 (i mod 2) + 1` as the high and low halves of 64 bits, whose top 53 bits divided by `2^53` give a number in `[0, 1)`.
+- **RC-13.7** Distributions are computed from uniform numbers `u`: uniform `a + (b - a) u`; normal by Box-Muller, `m + s sqrt(-2 ln(1 - u1)) cos(2π u2)` per component; exponential `-ln(1 - u) / r`; Bernoulli `u < p`; integer `a + floor(u (b - a + 1))`; choice the argument numbered `floor(u k)`; Poisson by multiplication of uniforms below a mean of 30 and by Hörmann's PTRS from 30; binomial by inversion when `n min(p, 1 - p) < 30` and by Hörmann's BTRS otherwise (with `n - X` for `p > 1/2`).
+- **RC-13.8** A random event keeps a **clock** (the modified next reaction method, Anderson 2007): the integral `Λ` of its rate since the run's start and a target `P`, a sum of standard exponential numbers from the event's stream at site `2^32 - 1` (counter 0 for the first, `k` after the k-th occurrence). After initialization and after every transition (including actions) the clock adds the previous rate times the time elapsed to `Λ`, reads the new rate `λ`, and schedules the event as a time event at `t + (P - Λ) / λ` (never at the current instant; none when `λ = 0`). When it occurs, `Λ` becomes `P` and `P` grows by the next exponential number. Snapshots (RC-14.1) hold the clocks and the due counts.
+- **RC-13.8a** (D-086) The clock of a rate that reads continuous state or time (MK-15.16) has no scheduled instant. Over every accepted step the runtime integrates the rate along the step's dense output, with three-point Gauss-Legendre panels halved until each half-pair agrees with its whole to `1e-10` (absolute and relative), and adds the integral to `Λ`. When the integral over a step reaches `P - Λ`, the occurrence is located by bisection to `ε_t` and the step is cut there, as for a crossing (RC-7.5, RC-7.6); events found within `ε_t` of it are due with it. A rate found negative inside a step is a model failure at the first instant located negative, to `ε_t`. Varying and constant clocks draw their targets from the same stream (RC-13.8), so an edit that makes a rate vary keeps the event's targets.
+- **RC-13.9** (D-090) A model with noise in its flows (MK-14.16) is integrated by the **Euler-Maruyama** method with a fixed step `h`: the case's `h`, else `t_ref / 1000`; the configured solver is not used. A step from `t` of length `h` (shorter where it lands on a stop, RC-6.7) evaluates the flows once at `t` with each noise `i` equal to `N_i / sqrt(h)`, `N_i` a standard normal number from the generator of RC-13.6 with the run's seed, the stream `fnv1a64` of the flow's identity, `|noise|` and the occurrence's number in the flow, site 0 and the counter the bits of `t`; the step adds `h` times the result. Its dense output is the straight line between its two states (the Brownian bridge's mean), on which events are located (RC section 7) and random clocks integrate (RC-13.8a). The method has strong order 1/2 (order 1 for additive noise) and weak order 1: averages over runs converge with `h`. Runs are reproducible from snapshots like any other (RC-14).
 
 ---
 
@@ -401,6 +429,8 @@ Each program (D-012) is checked for whether this contract determines its expecte
 - Step sequence independent of frame rate and observation (RC-6.6); players slow down rather than skip (RC-2.4).
 - Zeno and cascade defaults scaled by a reference time scale `T_ref` (RC-9.2, section 16).
 - Failure policies: `stop` headless, `pause` interactive (RC-10.4).
+- The solve of unknowns (D-092): Newton from the guesses at every instant, never warm-started; equilibrated elimination; halving and doubling of steps; convergence by residual or by Newton correction; fixed tolerances (RC-5.5 to RC-5.9).
+- Projection onto enforced constraints (D-093): Gauss-Newton of minimum scaled norm, level by level, after every step and transition (RC-5.10); residuals measured against the size of their terms (RC-5.6a).
 - Counter-based random streams keyed by element identity (RC-13.2).
 - Configuration changes only by `reset` or `branch` (section 12).
 
@@ -410,7 +440,7 @@ Each program (D-012) is checked for whether this contract determines its expecte
 
 | Item | Where it will be specified |
 |---|---|
-| Stochastic modes: per-step sampling and event-time sampling (D-013) | Stochastic slice |
+| Stochastic modes: per-step sampling and event-time sampling (D-013) | Done (D-083, RC-13.5 to RC-13.8); rates varying between events (D-086, RC-13.8a) |
 | Algorithmic process execution (RUN-04) | Slice that needs it |
 | Field state discretization and solvers (D-010) | Slice that needs it |
 | Stiff and implicit solvers; multiple solvers in one model (06 sections 49-51) | When a reference program needs them |

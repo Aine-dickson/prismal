@@ -307,7 +307,7 @@ impl Map {
     }
 }
 
-const DRAWN: [&str; 8] = ["point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note"];
+const DRAWN: [&str; 9] = ["point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note", "raster"];
 
 fn view_block(vl: &Json, vf: &Json, clip: usize, opts: &Options) -> Block {
     let th = &opts.theme;
@@ -509,7 +509,8 @@ fn plot_chrome(out: &mut String, vl: &Json, map: &Map, th: &Theme) {
     }
     let units: Vec<&str> = arr(&vl["units"]).iter().map(s).collect();
     if let Some(ux) = units.first().filter(|u| !u.is_empty()) {
-        let t = if *ux == "s" { "elapsed time (s)".to_string() } else { format!("({ux})") };
+        let elapsed = vl["x_elapsed"].as_bool().unwrap_or(true);
+        let t = if *ux == "s" && elapsed { "elapsed time (s)".to_string() } else { format!("({ux})") };
         *out += &text(w - m, h - 8.0, &t, 12.0, false, th.muted, " text-anchor=\"end\" class=\"tick\"");
     }
     if let Some(uy) = units.get(1).filter(|u| !u.is_empty()) {
@@ -537,6 +538,21 @@ fn arrow_head(from: [f64; 2], to: [f64; 2], size: f64) -> Option<String> {
     ))
 }
 
+/// The colour of `v` in `[0, 1]` on a palette of the frames (D-091): `sequential`, from dark
+/// blue through green to yellow (perceptually ordered, readable without colour vision of
+/// red and green), or `diverging`, blue through near white to red. The web player uses the
+/// same stops.
+pub fn palette(name: &str, v: f64) -> String {
+    const SEQ: [[f64; 3]; 5] = [[68.0, 1.0, 84.0], [59.0, 82.0, 139.0], [33.0, 145.0, 140.0], [94.0, 201.0, 98.0], [253.0, 231.0, 37.0]];
+    const DIV: [[f64; 3]; 3] = [[59.0, 76.0, 192.0], [242.0, 242.0, 242.0], [180.0, 4.0, 38.0]];
+    let stops: &[[f64; 3]] = if name == "diverging" { &DIV } else { &SEQ };
+    let x = v.clamp(0.0, 1.0) * (stops.len() - 1) as f64;
+    let i = (x.floor() as usize).min(stops.len() - 2);
+    let w = x - i as f64;
+    let c: Vec<u8> = (0..3).map(|k| (stops[i][k] + w * (stops[i + 1][k] - stops[i][k])).round() as u8).collect();
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
 /// Draws one representation of a spatial or plot view, as the web player's `drawRep`.
 fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme) {
     let shape = s(&r["shape"]);
@@ -560,9 +576,12 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
     };
     // An animated size (D-075): a marker's dot and an arrow's head grow with it.
     let grow = r["scale"].as_f64().unwrap_or(1.0);
+    // The author's line width (D-095), a multiple of each stroke's own.
+    let thick = r["width"].as_f64().unwrap_or(1.0);
     let style = match r["line"].as_str() {
         Some("dashed") => format!(" stroke-dasharray=\"{} {}\"", n(6.0 * u), n(4.0 * u)),
         Some("dotted") => format!(" stroke-dasharray=\"{} {}\" stroke-linecap=\"round\"", n(0.01 * u), n(4.0 * u)),
+        Some("solid") => " stroke-dasharray=\"none\"".to_string(),
         _ => String::new(),
     };
     let dash = match drawn {
@@ -619,7 +638,13 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
         // An author's text at a point (D-076).
         "note" => {
             let p = map.to(pt(&r["at"]));
-            *out += &text(p[0], p[1], s(&r["value"]), 13.0 * u, false, custom.as_deref().unwrap_or(th.ink), " class=\"note\"");
+            // Lined up with its point (D-095): starting at it, centred on it, or ending at it.
+            let anchor = match r["align"].as_str() {
+                Some("center") => " text-anchor=\"middle\"",
+                Some("right") => " text-anchor=\"end\"",
+                _ => "",
+            };
+            *out += &text(p[0], p[1], s(&r["value"]), 13.0 * u, false, custom.as_deref().unwrap_or(th.ink), &format!(" class=\"note\"{anchor}"));
         }
         "arrow" => {
             let (a, b) = (map.to(pt(&r["from"])), map.to(pt(&r["to"])));
@@ -631,7 +656,7 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
                 n(a[1]),
                 n(b[0]),
                 n(b[1]),
-                n(2.0 * u)
+                n(2.0 * u * thick)
             );
             if let Some(head) = arrow_head(a, b, 11.0 * u * grow) {
                 // Under `reveal draw` the head appears once the shaft is nearly drawn.
@@ -671,7 +696,7 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
                 n(a[1]),
                 n(b[0]),
                 n(b[1]),
-                n(2.0 * u)
+                n(2.0 * u * thick)
             );
         }
         "polyline" => {
@@ -688,15 +713,30 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
             cuts.push(all.len());
             for w in cuts.windows(2) {
                 let piece = all[w[0].min(all.len())..w[1].min(all.len())].iter().map(|p| map.to(pt(p))).map(|p| format!("{},{}", n(p[0]), n(p[1]))).collect::<Vec<_>>().join(" ");
-                let _ = write!(out, "<polyline class=\"{cls}\" points=\"{piece}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{}\"{extra}/>", n(width * u));
+                let _ = write!(out, "<polyline class=\"{cls}\" points=\"{piece}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{}\"{extra}/>", n(width * u * thick));
             }
+        }
+        // Coloured cells of a field in the plane (D-091), one rectangle per cell.
+        "raster" => {
+            let (from, to) = (map.to(pt(&r["from"])), map.to(pt(&r["to"])));
+            let (cols, rows) = (r["cols"].as_u64().unwrap_or(1) as usize, r["rows"].as_u64().unwrap_or(1) as usize);
+            let (cw, ch) = ((to[0] - from[0]) / cols as f64, (to[1] - from[1]) / rows as f64);
+            let pal = s(&r["palette"]);
+            let _ = write!(out, "<g class=\"raster\" shape-rendering=\"crispEdges\">");
+            for (k, v) in arr(&r["values"]).iter().enumerate() {
+                let (i, j) = ((k % cols) as f64, (k / cols) as f64);
+                let (x0, y0) = (from[0] + i * cw, from[1] + j * ch);
+                let (x, y) = (x0.min(x0 + cw), y0.min(y0 + ch));
+                let _ = write!(out, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>", n(x), n(y), n(cw.abs() + 0.5), n(ch.abs() + 0.5), palette(pal, v.as_f64().unwrap_or(0.0)));
+            }
+            out.push_str("</g>");
         }
         "polygon" => {
             let _ = write!(
                 out,
                 "<polygon class=\"shape\" points=\"{}\" fill=\"{accent}\" fill-opacity=\"0.12\" stroke=\"{accent}\" stroke-width=\"{}\"{dash}/>",
                 pts("points"),
-                n(2.0 * u),
+                n(2.0 * u * thick),
                 accent = custom.as_deref().unwrap_or(th.accent)
             );
         }
@@ -706,7 +746,7 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
             let accent = custom.as_deref().unwrap_or(th.accent);
             let fill = if r["closed"] == true { format!("fill=\"{accent}\" fill-opacity=\"0.12\"") } else { "fill=\"none\"".to_string() };
             let cls = if r["closed"] == true { "shape" } else { "curve" };
-            let _ = write!(out, "<path class=\"{cls}\" d=\"{}\" {fill} stroke=\"{}\" stroke-width=\"{}\"{dash}/>", curve_path(r), accent, n(2.0 * u));
+            let _ = write!(out, "<path class=\"{cls}\" d=\"{}\" {fill} stroke=\"{}\" stroke-width=\"{}\"{dash}/>", curve_path(r), accent, n(2.0 * u * thick));
         }
         "group" => {
             // Members are placed by the kernel; the group carries opacity and highlight
@@ -884,6 +924,9 @@ fn control_display(r: &Json, value: f64) -> String {
     if r["control"] == "toggle" {
         return if value != 0.0 { "true" } else { "false" }.into();
     }
+    if let Some(options) = r["options"].as_array() {
+        return options.get(value as usize).and_then(|o| o.as_str()).unwrap_or("").into();
+    }
     if r["display_unit"].is_object() {
         return format!("{} {}", fmt(value / f(&r["display_unit"]["scale"])), s(&r["display_unit"]["text"]));
     }
@@ -941,6 +984,21 @@ fn control_block(r: &Json, disabled: bool, th: &Theme) -> Block {
                 let _ = write!(body, "<polyline points=\"{},12 {},15 {},8\" fill=\"none\" stroke=\"{}\" stroke-width=\"2\"/>", n(x + 3.0), n(x + 6.0), n(x + 11.0), th.accent_ink);
             }
             x += 22.0;
+        }
+        // A select (D-094): a box with a caret; its value is printed after it.
+        "select" => {
+            let _ = write!(
+                body,
+                "<rect x=\"{}\" y=\"1.5\" width=\"24\" height=\"21\" rx=\"4\" fill=\"{}\" stroke=\"{}\"/><polyline points=\"{},10 {},15 {},10\" fill=\"none\" stroke=\"{}\" stroke-width=\"1.5\"/>",
+                n(x),
+                th.bg,
+                th.line,
+                n(x + 7.0),
+                n(x + 12.0),
+                n(x + 17.0),
+                th.ink
+            );
+            x += 32.0;
         }
         _ => {
             let v = fmt(value);

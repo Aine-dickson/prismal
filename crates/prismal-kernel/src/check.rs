@@ -3,7 +3,8 @@
 //! The checker types every expression with expected-type propagation (D-030, D-032),
 //! reports the static diagnostics of MK section 18, and produces a compiled model.
 
-use crate::eval::{Arr, CExpr, Value};
+use crate::eval::{Arr, CDraw, CEdge, CExpr, CFieldOp, CGrid, FieldOp, GridAxis, Value};
+use crate::random::fnv1a;
 use crate::model::*;
 use prismal_ir::*;
 use std::collections::{BTreeSet, HashMap};
@@ -31,6 +32,8 @@ pub(crate) struct Scope<'a> {
     pub index: &'a HashMap<Id, usize>,
     /// Declared functions compiled so far, with their types (D-048).
     pub funcs: &'a HashMap<Id, (Rc<CExpr>, Type)>,
+    /// The model's grids, compiled (D-091).
+    pub grids: &'a HashMap<Id, CGrid>,
 }
 
 pub(crate) struct Tc<'a, 'b> {
@@ -43,6 +46,15 @@ pub(crate) struct Tc<'a, 'b> {
     closed: Option<String>,
     /// While checking an event with a payload: its identity, index and payload type (D-050).
     pub payload: Option<(Id, usize, Type)>,
+    /// While checking an event's condition and operations: the event's index, the number of
+    /// its identity and the next draw site's number (D-083).
+    pub draws: Option<(usize, u64, u32)>,
+    /// While checking a flow: the number of its first noise in the model and how many it
+    /// has so far (D-090).
+    pub noise: Option<(usize, usize)>,
+    /// While checking a field's initial value, definition or flow: its grid. A field of that
+    /// grid is read in the cell evaluated (D-091).
+    pub pointwise: Option<Id>,
 }
 
 type Typed = Option<(CExpr, Type)>;
@@ -62,7 +74,7 @@ fn is_dimensioned(t: &Type) -> bool {
 
 impl<'a, 'b> Tc<'a, 'b> {
     pub fn new(scope: &'b Scope<'a>, diags: &'b mut Vec<Diagnostic>, element: &str) -> Self {
-        Tc { scope, diags, element: element.to_string(), lambda: vec![], closed: None, payload: None }
+        Tc { scope, diags, element: element.to_string(), lambda: vec![], closed: None, payload: None, draws: None, noise: None, pointwise: None }
     }
 
     /// MK-E18: a declared function's body reads something other than its parameters,
@@ -152,7 +164,12 @@ impl<'a, 'b> Tc<'a, 'b> {
                     let what = format!("the {} `{}`", role_word(b.role), b.name);
                     self.open_read(&what)
                 }
-                Some((i, b)) => Some((CExpr::Load(i), b.ty.clone())),
+                // D-091: in a pointwise expression a field of its grid is read in the cell.
+                Some((i, b)) => match (&b.ty, &self.pointwise) {
+                    (Type::Field { grid, of }, Some(p)) if grid == p => Some((CExpr::FieldAt(i), (**of).clone())),
+                    (Type::Field { .. }, Some(_)) => self.err("MK-E31", format!("`{}` lies on another grid; a pointwise expression reads fields of its own grid", b.name)),
+                    _ => Some((CExpr::Load(i), b.ty.clone())),
+                },
                 None => self.err("MK-E00", format!("unknown binding `{ref}`", ref = r#ref)),
             },
             Expr::Fn { r#fn } => match self.scope.funcs.get(r#fn) {
@@ -225,6 +242,14 @@ impl<'a, 'b> Tc<'a, 'b> {
                 Builtin::T0 => (CExpr::Time0, Type::Instant { dim: Dim::time() }),
                 Builtin::Elapsed => (CExpr::Elapsed, Type::Quantity { dim: Dim::time() }),
                 Builtin::Index => return self.err("MK-E25", "`index` is the number of a member, read only in the overrides of a collection (D-055)".into()),
+                // MK-14.16 (D-090): white noise, `T^(-1/2)`, only in flows.
+                Builtin::Noise => match &mut self.noise {
+                    Some((base, n)) => {
+                        *n += 1;
+                        (CExpr::Noise(*base + *n - 1), Type::Quantity { dim: Dim::time().pow(Ratio::new(-1, 2)) })
+                    }
+                    None => return self.err("MK-E29", "`noise` is white noise, written only in a flow: `der(x) = a + b * noise` (MK-14.16)".into()),
+                },
             }),
             // A named constant is a bare dimensionless literal (MK-3.8, D-039).
             Expr::Const { r#const } => self.num(r#const.value(), None, exp),
@@ -241,7 +266,12 @@ impl<'a, 'b> Tc<'a, 'b> {
                     return self.err("MK-E06", format!("der({}) of a binding that is not continuous state", b.name));
                 }
                 let t = derivative_type(&b.ty)?;
-                Some((CExpr::Der(i), t))
+                // D-091: in a pointwise expression, `der(T)` of a field of its grid is read in
+                // the cell.
+                match (&t, &self.pointwise) {
+                    (Type::Field { grid, of }, Some(p)) if grid == p => Some((CExpr::Der(i), (**of).clone())),
+                    _ => Some((CExpr::Der(i), t)),
+                }
             }
             Expr::Neg { neg } => {
                 let (c, t) = self.expr(neg, exp)?;
@@ -266,6 +296,16 @@ impl<'a, 'b> Tc<'a, 'b> {
             }
             Expr::Bin { bin, l, r } => self.binary(*bin, l, r, exp),
             Expr::Call { call, args } => self.call(*call, args),
+            Expr::Draw { draw, args } => self.draw(*draw, args, exp),
+            // `T(0.5 m)`: a field read at a coordinate (D-091).
+            Expr::Apply { apply, args } if self.field_ref(apply).is_some() => {
+                let (i, grid, of) = self.field_ref(apply)?;
+                if args.len() != 1 {
+                    return self.err("MK-E01", "a field is read at one coordinate: `T(0.5 m)`".into());
+                }
+                let x = self.expect(&args[0], &self.coord_type(&grid))?;
+                Some((CExpr::Field(Box::new(self.field_op(i, grid, FieldOp::Sample(x))?)), of))
+            }
             Expr::Apply { apply, args } => {
                 let (fc, ft) = self.expr(apply, None)?;
                 let (params, result) = match ft {
@@ -421,7 +461,9 @@ impl<'a, 'b> Tc<'a, 'b> {
         other: impl Fn(&Type) -> Option<Type>,
     ) -> Option<((CExpr, Type), (CExpr, Type))> {
         if Self::needs_ctx(l) && !Self::needs_ctx(r) {
-            let rt = self.expr(r, None)?;
+            // A vector expected of the whole is expected of each operand, so a tuple scaled by
+            // a quantity on the right is a vector too (D-032): `(0 m/s^2, -g) + a * (s, c)`.
+            let rt = self.expr(r, exp_l.filter(|t| matches!(t, Type::Vector { .. })))?;
             let want = other(&rt.1).or_else(|| exp_l.cloned());
             let lt = self.expr(l, want.as_ref())?;
             Some((lt, rt))
@@ -551,6 +593,48 @@ impl<'a, 'b> Tc<'a, 'b> {
     }
 
     fn call(&mut self, f: Func, args: &[Expr]) -> Typed {
+        // D-093: `dot(a, b)` of two vectors of one space, or of two quantities.
+        if f == Func::Dot {
+            if args.len() != 2 {
+                return self.err("MK-E01", "dot takes 2 arguments".into());
+            }
+            let (a, at) = self.expr(&args[0], None)?;
+            let (b, bt) = self.expr(&args[1], None)?;
+            let dim = match (&at, &bt) {
+                (Type::Quantity { dim: x }, Type::Quantity { dim: y }) => x.mul(y),
+                (Type::Vector { space: s, dim: x }, Type::Vector { space: t, dim: y }) if s == t => x.mul(y),
+                _ => return self.err("MK-E01", format!("dot of {} and {}: two vectors of one space, or two quantities", show(&at), show(&bt))),
+            };
+            return Some((CExpr::Call(f, vec![a, b]), Type::Quantity { dim }));
+        }
+        // D-091: operations on a field take its name.
+        let on_field = matches!(f, Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean) || (matches!(f, Func::Min | Func::Max) && args.len() == 1);
+        if on_field {
+            let Some((i, grid, of)) = args.first().filter(|_| args.len() == 1).and_then(|a| self.field_ref(a)) else {
+                return self.err("MK-E01", format!("{} takes the name of a field: `{}(T)`", func_word(f), func_word(f)));
+            };
+            let Type::Quantity { dim } = of else { return self.err("MK-E01", "fields hold numbers and quantities".into()) };
+            let axes = if grid.y.is_some() { 2 } else { 1 };
+            let q = |d: Dim| Type::Quantity { dim: d };
+            let (op, ty) = match f {
+                Func::Laplacian => (FieldOp::Laplacian, q(dim.div(&grid.dim.pow(Ratio::int(2))))),
+                // In the plane the gradient is a vector of the model's space.
+                Func::Gradient => match (grid.y, &self.scope.model.default_space) {
+                    (Some(_), Some(space)) => (FieldOp::Gradient, Type::Vector { space: space.clone(), dim: dim.div(&grid.dim) }),
+                    _ => (FieldOp::Gradient, q(dim.div(&grid.dim))),
+                },
+                Func::Integral => (FieldOp::Integral, q(dim.mul(&grid.dim.pow(Ratio::int(axes))))),
+                Func::Mean => (FieldOp::Mean, q(dim)),
+                Func::Min => (FieldOp::Min, q(dim)),
+                _ => (FieldOp::Max, q(dim)),
+            };
+            let local = matches!(op, FieldOp::Laplacian | FieldOp::Gradient);
+            let here = self.scope.model.bindings[i].ty.clone();
+            if local && !matches!((&here, &self.pointwise), (Type::Field { grid: g, .. }, Some(p)) if g == p) {
+                return self.err("MK-E32", format!("`{}` reads a field's neighbours, so it is written where the field is: in a flow or definition of a field of its grid (MK-9.7)", func_word(f)));
+            }
+            return Some((CExpr::Field(Box::new(self.field_op(i, grid, op)?)), ty));
+        }
         let n = if matches!(f, Func::Min | Func::Max | Func::Atan2) { 2 } else { 1 };
         if args.len() != n {
             return self.err("MK-E01", format!("{f:?} takes {n} arguments"));
@@ -574,7 +658,152 @@ impl<'a, 'b> Tc<'a, 'b> {
                 let rt = if f == Func::Atan2 { Type::real() } else { Type::Quantity { dim } };
                 Some((CExpr::Call(f, vec![a, bc]), rt))
             }
+            Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean | Func::Dot => unreachable!(),
         }
+    }
+
+    /// The coordinate of a grid's cells: a quantity on a line, a point of the model's plane.
+    fn coord_type(&self, g: &CGrid) -> Type {
+        match (g.y, &self.scope.model.default_space) {
+            (Some(_), Some(space)) => Type::Point { space: space.clone() },
+            _ => Type::Quantity { dim: g.dim },
+        }
+    }
+
+    /// The field an expression names, with its grid and the type of its values (D-091).
+    fn field_ref(&self, e: &Expr) -> Option<(usize, CGrid, Type)> {
+        let Expr::Ref { r#ref } = e else { return None };
+        let (i, b) = self.binding(r#ref)?;
+        match &b.ty {
+            Type::Field { grid, of } => Some((i, *self.scope.grids.get(grid)?, (**of).clone())),
+            _ => None,
+        }
+    }
+
+    /// An operation on field `i`, with the conditions on its edges (MK-9.6): held at a value,
+    /// periodic, or insulated where nothing is said. Edge values read no field.
+    fn field_op(&mut self, i: usize, grid: CGrid, op: FieldOp) -> Option<CFieldOp> {
+        let b = &self.scope.model.bindings[i];
+        let of = match &b.ty {
+            Type::Field { of, .. } => (**of).clone(),
+            _ => return None,
+        };
+        let saved = self.pointwise.take();
+        let mut edges = [CEdge::Insulated, CEdge::Insulated, CEdge::Insulated, CEdge::Insulated];
+        if let Some(bd) = &b.boundary {
+            if bd.periodic {
+                edges = [CEdge::Periodic, CEdge::Periodic, CEdge::Periodic, CEdge::Periodic];
+            }
+            for f in &bd.fixed {
+                let Some(side) = EDGES.iter().position(|e| *e == f.edge) else { continue };
+                if let Some(v) = self.expect(&f.value, &of) {
+                    edges[side] = CEdge::Fixed(v);
+                }
+            }
+        }
+        self.pointwise = saved;
+        Some(CFieldOp { op, binding: i, grid, edges })
+    }
+
+    /// A field's initial value, definition or flow, of type `want` in each cell: a function of
+    /// the cell's coordinate (`T(x in rod) = ...`, `der(T(x)) = ...`) or an expression of the
+    /// fields of its grid (D-091).
+    fn pointwise_expr(&mut self, e: &Expr, grid: &Id, want: &Type) -> Option<CExpr> {
+        let g = *self.scope.grids.get(grid)?;
+        let saved = self.pointwise.replace(grid.clone());
+        let c = match e {
+            Expr::Lambda { lambda } if lambda.params.len() == 1 => {
+                self.lambda.push(vec![self.coord_type(&g)]);
+                let c = self.expect(&lambda.body, want);
+                self.lambda.pop();
+                c
+            }
+            _ => self.expect(e, want),
+        };
+        self.pointwise = saved;
+        c
+    }
+}
+
+/// The edges of a grid, in the order of `CFieldOp::edges` (D-091).
+const EDGES: [&str; 4] = ["left", "right", "bottom", "top"];
+
+fn func_word(f: Func) -> &'static str {
+    match f {
+        Func::Laplacian => "laplacian",
+        Func::Gradient => "gradient",
+        Func::Integral => "integral",
+        Func::Mean => "mean",
+        Func::Min => "min",
+        Func::Max => "max",
+        _ => "function",
+    }
+}
+
+impl Tc<'_, '_> {
+    /// A draw from a distribution (MK-10.4, D-083): only in an event's condition and
+    /// operations (MK-E28). Counts (`integer`, `poisson`, `binomial`) are whole numbers of
+    /// type `Real`.
+    fn draw(&mut self, d: Dist, args: &[Expr], exp: Option<&Type>) -> Typed {
+        let Some((event, stream, _)) = self.draws else {
+            return self.err("MK-E28", format!("`{}(...)` draws at random, so it is written only in an event's condition or operations (MK-10.4)", d.name()));
+        };
+        let arity = match d {
+            Dist::Exponential | Dist::Bernoulli | Dist::Poisson => 1,
+            Dist::Choice => args.len().max(1),
+            _ => 2,
+        };
+        if args.len() != arity {
+            return self.err("MK-E01", format!("`{}` takes {arity} argument{}", d.name(), if arity == 1 { "" } else { "s" }));
+        }
+        let real = Type::real();
+        let (cargs, ty) = match d {
+            Dist::Uniform => {
+                let (a, at) = self.expr(&args[0], exp)?;
+                if !matches!(at, Type::Quantity { .. }) {
+                    return self.err("MK-E01", format!("`uniform` draws a quantity, not {}", show(&at)));
+                }
+                let b = self.expect(&args[1], &at)?;
+                (vec![a, b], at)
+            }
+            Dist::Normal => {
+                let (m, mt) = self.expr(&args[0], exp)?;
+                let dim = match &mt {
+                    Type::Quantity { dim } | Type::Vector { dim, .. } => *dim,
+                    Type::Point { .. } => Dim::length(),
+                    other => return self.err("MK-E01", format!("`normal` draws a quantity, vector or point, not {}", show(other))),
+                };
+                let s = self.expect(&args[1], &Type::Quantity { dim })?;
+                (vec![m, s], mt)
+            }
+            Dist::Exponential => {
+                let (r, rt) = self.expr(&args[0], None)?;
+                let Type::Quantity { dim } = rt else {
+                    return self.err("MK-E01", format!("`exponential` takes a rate, not {}", show(&rt)));
+                };
+                (vec![r], Type::Quantity { dim: dim.pow(Ratio::new(-1, 1)) })
+            }
+            Dist::Bernoulli => (vec![self.expect(&args[0], &real)?], Type::Boolean),
+            Dist::Poisson => (vec![self.expect(&args[0], &real)?], real.clone()),
+            Dist::Integer | Dist::Binomial => {
+                let a = self.expect(&args[0], &real)?;
+                let b = self.expect(&args[1], &real)?;
+                (vec![a, b], real.clone())
+            }
+            Dist::Choice => {
+                let (a, at) = self.expr(&args[0], exp)?;
+                let mut v = vec![a];
+                for x in &args[1..] {
+                    v.push(self.expect(x, &at)?);
+                }
+                (v, at)
+            }
+        };
+        let site = self.draws.as_ref().map_or(0, |d| d.2);
+        if let Some(d) = self.draws.as_mut() {
+            d.2 += 1;
+        }
+        Some((CExpr::Draw(Box::new(CDraw { dist: d, args: cargs, event, stream, site })), ty))
     }
 }
 
@@ -585,6 +814,7 @@ fn derivative_type(t: &Type) -> Option<Type> {
         Type::Quantity { dim } => Type::Quantity { dim: dim.mul(&inv_t) },
         Type::Vector { space, dim } => Type::Vector { space: space.clone(), dim: dim.mul(&inv_t) },
         Type::Point { space } => Type::Vector { space: space.clone(), dim: Dim::length().mul(&inv_t) },
+        Type::Field { grid, of } => Type::Field { grid: grid.clone(), of: Box::new(derivative_type(of)?) },
         _ => return None,
     })
 }
@@ -621,6 +851,7 @@ pub fn show(t: &Type) -> String {
         Type::Tuple { items } => format!("Tuple<{}>", items.iter().map(show).collect::<Vec<_>>().join(", ")),
         Type::Enum { r#enum, .. } => r#enum.rsplit('.').next().unwrap_or(r#enum).to_string(),
         Type::Function { params, result } => format!("({}) -> {}", params.iter().map(show).collect::<Vec<_>>().join(", "), show(result)),
+        Type::Field { grid, of } => format!("Field<{}, {}>", grid.rsplit('.').next().unwrap_or(grid), show(of)),
     }
 }
 
@@ -632,6 +863,7 @@ fn role_word(r: Role) -> &'static str {
         Role::Discrete => "discrete state",
         Role::Continuous => "state",
         Role::Derived => "derived binding",
+        Role::Unknown => "unknown",
     }
 }
 
@@ -698,7 +930,8 @@ fn check_functions(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, 
             continue;
         }
         let snapshot = funcs.clone();
-        let scope = Scope { spaces, model, index, funcs: &snapshot };
+        let no_grids = HashMap::new();
+        let scope = Scope { spaces, model, index, funcs: &snapshot, grids: &no_grids };
         let mut tc = Tc::new(&scope, diags, &f.id);
         tc.closed = Some(f.name.clone());
         tc.lambda.push(f.params.iter().map(|p| p.ty.clone()).collect());
@@ -713,6 +946,15 @@ fn check_functions(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, 
 
 /// Checks a model and compiles it (MK section 18). Returns every diagnostic found.
 pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagnostic>> {
+    // D-093: the rate of each enforced constraint that reads an unknown is solved as an
+    // equation (MK-12.7).
+    let elaborated;
+    let model = if model.constraints.iter().any(|k| k.policy == Policy::Enforce && !model.equations.iter().any(|q| q.id == prismal_ir::enforce::equation_id(&k.id))) {
+        elaborated = prismal_ir::enforce::elaborate(model.clone());
+        &elaborated
+    } else {
+        model
+    };
     let mut diags = vec![];
     let mut index = HashMap::new();
     for (i, b) in model.bindings.iter().enumerate() {
@@ -721,22 +963,50 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         }
     }
     let funcs = check_functions(spaces, model, &index, &mut diags);
-    let scope = Scope { spaces, model, index: &index, funcs: &funcs };
+    let grids = check_grids(spaces, model, &index, &funcs, &mut diags);
+    let scope = Scope { spaces, model, index: &index, funcs: &funcs, grids: &grids };
+    check_boundaries(model, &grids, &mut diags);
 
     // Bindings: initial definitions and definitions.
     let mut cbindings = vec![];
     for b in &model.bindings {
         let mut tc = Tc::new(&scope, &mut diags, &b.id);
-        let init = match (&b.init, b.role) {
-            (Some(e), r) if r.is_stored() => tc.expect(e, &b.ty),
-            (None, Role::Input) => None,
-            (None, r) if r.is_stored() => {
+        // D-091: a field's initial value and definition are evaluated in each cell.
+        let field = match &b.ty {
+            Type::Field { grid, of } => match grids.get(grid) {
+                Some(g) if matches!(**of, Type::Quantity { .. }) && matches!(b.role, Role::Continuous | Role::Derived) => Some((*g, grid.clone(), (**of).clone())),
+                Some(_) => {
+                    tc.err("MK-E01", format!("`{}` is a field: state or derived, holding numbers or quantities (MK-9.4)", b.name));
+                    None
+                }
+                None => {
+                    tc.err("MK-E00", format!("unknown grid `{grid}`"));
+                    None
+                }
+            },
+            _ => None,
+        };
+        // D-092: an unknown is a number or quantity; its value, if given, is the solver's
+        // starting guess.
+        if b.role == Role::Unknown && !matches!(b.ty, Type::Quantity { .. }) {
+            tc.err("MK-E01", format!("the unknown `{}` is a number or a quantity (MK-11.6)", b.name));
+        }
+        let init = match (&b.init, b.role, &field) {
+            (Some(e), Role::Unknown, _) => tc.expect(e, &b.ty),
+            (Some(e), Role::Continuous, Some((_, grid, of))) => tc.pointwise_expr(e, grid, of),
+            (Some(e), r, _) if r.is_stored() => tc.expect(e, &b.ty),
+            (None, Role::Input, _) => None,
+            (None, r, _) if r.is_stored() => {
                 tc.err("MK-E00", format!("stored binding `{}` has no initial definition (MK-6.7)", b.name));
                 None
             }
             _ => None,
         };
         let def = match (&b.def, b.role) {
+            (Some(e), Role::Derived) if field.is_some() => {
+                let (_, grid, of) = field.as_ref().unwrap();
+                tc.pointwise_expr(e, grid, of)
+            }
             (Some(e), Role::Derived) => tc.expect(e, &b.ty),
             (None, Role::Derived) => {
                 tc.err("MK-E00", format!("derived binding `{}` has no definition", b.name));
@@ -764,6 +1034,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             def,
             intervenable: b.is_intervenable(),
             when,
+            field: field.map(|f| f.0),
         });
     }
 
@@ -776,6 +1047,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         }
         let len = match &b.ty {
             Type::Quantity { .. } => 1,
+            Type::Field { grid, .. } => grids.get(grid).map(|g| g.cells()).unwrap_or(0),
             Type::Vector { space, .. } | Type::Point { space } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(0),
             _ => {
                 diags.push(Diagnostic { code: "MK-E01", message: format!("continuous state `{}` must be a quantity, vector or point", b.name), element: b.id.clone() });
@@ -786,7 +1058,8 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         offset += len;
     }
 
-    // Flows (MK section 14).
+    // Flows (MK section 14). The stream key of each white noise, in order (D-090).
+    let mut noise_keys: Vec<u64> = vec![];
     for f in &model.flows {
         let mut tc = Tc::new(&scope, &mut diags, &f.id);
         let bi = match index.get(&f.target) {
@@ -805,7 +1078,25 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             Some(t) => t,
             None => continue,
         };
-        let compiled = tc.expect(&f.expr, &want);
+        tc.noise = Some((noise_keys.len(), 0));
+        let compiled = match &want {
+            // D-091: a field's flow is evaluated in each cell.
+            Type::Field { grid, of } => {
+                let c = tc.pointwise_expr(&f.expr, grid, of);
+                if tc.noise.is_some_and(|n| n.1 > 0) {
+                    tc.err("MK-E29", "`noise` in the flow of a field (independent noise in every cell) is a later extension (MK-14.16)".into());
+                }
+                c
+            }
+            _ => tc.expect(&f.expr, &want),
+        };
+        let n_noise = tc.noise.map(|n| n.1).unwrap_or(0);
+        noise_keys.extend((0..n_noise).map(|k| fnv1a(&format!("{}|noise|{k}", f.id))));
+        if n_noise > 0 {
+            if let Err(m) = noise_linear(&f.expr) {
+                diags.push(Diagnostic { code: "MK-E30", message: format!("{m}: a flow is linear in each noise, `der(x) = a + b * noise` with `a` and `b` free of noise (MK-14.16)"), element: f.id.clone() });
+            }
+        }
         flow_conditions(&scope, &mut diags, f);
         let Some(c) = compiled else { continue };
         let cs = cont.iter_mut().find(|c| c.binding == bi).unwrap();
@@ -869,6 +1160,11 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             },
             Trigger::Start => Some(CTrigger::Start),
             Trigger::Request => Some(CTrigger::Request),
+            Trigger::Random { rate } => {
+                let r = tc.expect(rate, &Type::Quantity { dim: Dim::time().pow(Ratio::new(-1, 1)) });
+                let varying = random_rate_varies(&scope, rate);
+                r.map(|rate| CTrigger::Random { rate, varying })
+            }
             Trigger::Input { binding } => index.get(binding).map(|&i| CTrigger::Input(i)),
         };
         // D-050: an event with a payload gets it from a request, or from the event it
@@ -884,6 +1180,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             }
         }
         tc.payload = e.payload.as_ref().map(|p| (e.id.clone(), cevents.len(), p.ty.clone()));
+        tc.draws = Some((cevents.len(), crate::random::fnv1a(&e.id), 0));
         let enable = e.enable.as_ref().and_then(|x| tc.expect(x, &Type::Boolean));
         if e.each.is_some() {
             tc.err("MK-E00", format!("event `{}` is repeated per member in a model that was not elaborated (D-057)", e.name));
@@ -922,6 +1219,21 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     let mut cequations = vec![];
     for q in &model.equations {
         let mut tc = Tc::new(&scope, &mut diags, &q.id);
+        // D-091: an equation that reads a field holds in every cell of its grid.
+        let mut field_grid = None;
+        for side in [&q.lhs, &q.rhs] {
+            side.walk(&mut |x| {
+                let id = match x {
+                    Expr::Ref { r#ref } => r#ref,
+                    Expr::Der { der } => der,
+                    _ => return,
+                };
+                if let Some(Type::Field { grid, .. }) = index.get(id).map(|&i| &model.bindings[i].ty) {
+                    field_grid.get_or_insert(grid.clone());
+                }
+            });
+        }
+        tc.pointwise = field_grid.clone();
         let Some((l, lt)) = tc.expr(&q.lhs, None) else { continue };
         let Some(r) = tc.expect(&q.rhs, &lt) else { continue };
         let tol = match (&q.role, &q.tol) {
@@ -934,7 +1246,12 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             }
             _ => None,
         };
-        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check });
+        let field = field_grid.and_then(|g| grids.get(&g).copied());
+        let width = match &lt {
+            Type::Vector { space, .. } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(1),
+            _ => 1,
+        };
+        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field, width });
     }
 
     // Constraints (MK section 12).
@@ -961,12 +1278,78 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         if cond.is_none() && parts.is_none() {
             continue;
         }
-        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy });
+        let mut levels = vec![];
+        if k.policy == Policy::Enforce {
+            if k.tol.is_some() {
+                tc.err("MK-E01", format!("constraint `{}` is enforced, so it holds exactly: drop `within` (MK-12.6)", k.name));
+                continue;
+            }
+            match prismal_ir::enforce::rates(model, &k.cond) {
+                Err(why) => {
+                    tc.err("MK-E36", format!("constraint `{}` cannot be enforced: {why} (MK-12.7)", k.name));
+                    continue;
+                }
+                Ok(rates) => {
+                    let mut before: BTreeSet<usize> = BTreeSet::new();
+                    for (l, r) in &rates.levels {
+                        let Some((lc, lt)) = tc.expr(l, None) else { break };
+                        let Some(rc) = tc.expect(r, &lt) else { break };
+                        let width = match &lt {
+                            Type::Vector { space, .. } | Type::Point { space } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(1),
+                            _ => 1,
+                        };
+                        let reads: BTreeSet<usize> = prismal_ir::enforce::stored_reads(model, l)
+                            .into_iter()
+                            .chain(prismal_ir::enforce::stored_reads(model, r))
+                            .filter_map(|id| index.get(&id).copied())
+                            .filter(|&i| matches!(model.bindings[i].ty, Type::Quantity { .. } | Type::Vector { .. } | Type::Point { .. }))
+                            .collect();
+                        let fresh: BTreeSet<usize> = reads.difference(&before).copied().collect();
+                        let pool = if fresh.is_empty() { &reads } else { &fresh };
+                        // State moves, continuous before discrete: a bob is moved onto its rod,
+                        // never the pivot. Parameters move only when a change sets them (MK-12.8).
+                        let vars: Vec<usize> = [Role::Continuous, Role::Discrete]
+                            .iter()
+                            .map(|role| pool.iter().copied().filter(|&i| model.bindings[i].role == *role).collect::<Vec<_>>())
+                            .find(|v| !v.is_empty())
+                            .unwrap_or_default();
+                        let params: Vec<usize> = pool.iter().copied().filter(|&i| model.bindings[i].role == Role::Parameter).collect();
+                        if vars.is_empty() && params.is_empty() {
+                            tc.err("MK-E36", format!("constraint `{}` reads nothing the runtime can move: no state or parameter (MK-12.8)", k.name));
+                            break;
+                        }
+                        let refs: Vec<Id> = l.refs().into_iter().chain(r.refs()).collect();
+                        let derived: Vec<usize> = closure_derived(model, &index, &refs).into_iter().filter(|&i| model.bindings[i].role == Role::Derived).collect();
+                        before.extend(reads);
+                        levels.push(CLevel { lhs: lc, rhs: rc, width, vars, params, derived });
+                    }
+                    if levels.len() != rates.levels.len() {
+                        continue;
+                    }
+                }
+            }
+        }
+        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy, levels });
     }
 
+    // Solved equations (MK-11.6 to MK-11.9, D-092).
+    let plan = plan_solve(model, &index, &cequations, spaces, &mut diags);
+    let solve = plan.as_ref().map(|p| CSolve {
+        unknowns: p.unknowns.clone(),
+        guess: p.unknowns.iter().map(|&i| cbindings[i].init.clone()).collect(),
+        inner: p.inner.clone(),
+        equations: p.equations.clone(),
+    });
+
     // Dependency analysis (MK section 13).
-    let derived_order = order_derived(model, &index, &mut diags);
-    let init_order = order_init(model, &index, &mut diags);
+    let derived_order = order_derived(model, &index, plan.as_ref(), &mut diags);
+    let init_order = order_init(model, &index, plan.as_ref(), &mut diags);
+    let flow_order = flow_order(model, &index, plan.as_ref(), &derived_order);
+    for k in &mut cconstraints {
+        for lv in &mut k.levels {
+            lv.derived = derived_order.iter().copied().filter(|i| lv.derived.contains(i)).collect();
+        }
+    }
 
     if !diags.is_empty() {
         return Err(diags);
@@ -978,6 +1361,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         index,
         bindings: cbindings,
         derived_order,
+        flow_order,
         init_order,
         cont,
         events: cevents,
@@ -985,7 +1369,218 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
         constraints: cconstraints,
         functions: funcs,
         is_static,
+        noise: noise_keys,
+        grids,
+        solve,
     })
+}
+
+/// Which bindings and equations a solve involves (D-092).
+struct SolvePlan {
+    unknowns: Vec<usize>,
+    /// Derived bindings the solving equations read that depend on unknowns, in order: they
+    /// are computed inside the solve.
+    inner: Vec<usize>,
+    /// Indices of the solving equations.
+    equations: Vec<usize>,
+}
+
+/// MK-11.6 to MK-11.8 (D-092): the equations that are not checks and read an unknown,
+/// directly or through derived values, determine the unknowns. There are as many of their
+/// components as unknowns, and each unknown can be matched to an equation that reads it.
+fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CEquation], spaces: &[Space], diags: &mut Vec<Diagnostic>) -> Option<SolvePlan> {
+    // MK-11.9: elaboration has given every state of numbers or quantities whose rate an
+    // equation reads a hidden unknown and its flow. A rate still without a flow is of a vector
+    // or a point, whose unknowns are a later extension.
+    for q in model.equations.iter().filter(|q| q.role != EquationRole::Check) {
+        let mut rates = BTreeSet::new();
+        for side in [&q.lhs, &q.rhs] {
+            side.walk(&mut |x| {
+                if let Expr::Der { der } = x {
+                    rates.insert(der.clone());
+                }
+            });
+        }
+        for x in rates {
+            let Some(b) = index.get(&x).map(|&i| &model.bindings[i]) else { continue };
+            if b.role == Role::Continuous && !matches!(b.ty, Type::Field { .. }) && !model.flows.iter().any(|f| f.target == x) {
+                diags.push(Diagnostic {
+                    code: "MK-E35",
+                    message: format!("equation `{}` gives the rate of `{}`, a vector or point: rates of vectors given by equations are a later extension; write its flow, `flow der({}) = ...` (MK-11.9)", q.name, b.name, b.name),
+                    element: q.id.clone(),
+                });
+            }
+        }
+    }
+    let unknowns: Vec<usize> = model.bindings.iter().enumerate().filter(|(_, b)| b.role == Role::Unknown).map(|(i, _)| i).collect();
+    if unknowns.is_empty() {
+        return None;
+    }
+    let is_u = |i: &usize| model.bindings[*i].role == Role::Unknown;
+    let mut err = |code: &'static str, m: String| diags.push(Diagnostic { code, message: m, element: model.id.clone() });
+    // Derived bindings that depend on an unknown.
+    let reads_u = |i: usize| closure_derived(model, index, &model.bindings[i].def.as_ref().map(|d| d.refs()).unwrap_or_default()).iter().any(is_u);
+    let mut equations = vec![];
+    let mut sets: Vec<(usize, BTreeSet<usize>)> = vec![];
+    let mut inner: BTreeSet<usize> = BTreeSet::new();
+    for (k, q) in model.equations.iter().enumerate() {
+        if q.role == EquationRole::Check {
+            continue;
+        }
+        let refs: Vec<Id> = q.lhs.refs().into_iter().chain(q.rhs.refs()).collect();
+        let reach = closure_derived(model, index, &refs);
+        let us: BTreeSet<usize> = reach.iter().copied().filter(is_u).collect();
+        if us.is_empty() {
+            continue;
+        }
+        let mut der = false;
+        for side in [&q.lhs, &q.rhs] {
+            side.walk(&mut |x| der |= matches!(x, Expr::Der { .. }));
+        }
+        if der || eqs.get(k).is_some_and(|c| c.field.is_some()) {
+            err("MK-E35", format!("equation `{}` reads an unknown and a rate or a field; solved equations of rates and fields are a later extension (MK-11.6)", q.name));
+            continue;
+        }
+        for &d in reach.iter().filter(|&&d| model.bindings[d].role == Role::Derived && reads_u(d)) {
+            inner.insert(d);
+        }
+        equations.push(k);
+        sets.push((k, us));
+    }
+    // An equation of vectors has one component per axis of its space.
+    let comps = |k: usize| -> usize { eqs.get(k).map(|c| c.width).unwrap_or(1) };
+    let _ = spaces;
+    let rows: Vec<(usize, &BTreeSet<usize>)> = sets.iter().flat_map(|(k, us)| std::iter::repeat_n((*k, us), comps(*k))).collect();
+    let names = |is: &[usize]| is.iter().map(|&i| format!("`{}`", model.bindings[i].name)).collect::<Vec<_>>().join(", ");
+    let eq_names = |ks: &[usize]| ks.iter().map(|&k| format!("`{}`", model.equations[k].name)).collect::<Vec<_>>().join(", ");
+    let unused: Vec<usize> = unknowns.iter().copied().filter(|u| !sets.iter().any(|(_, us)| us.contains(u))).collect();
+    if !unused.is_empty() {
+        err("MK-E34", format!("no equation determines {}: write an equation that reads it (MK-11.7)", names(&unused)));
+        return None;
+    }
+    if rows.len() != unknowns.len() {
+        let which = if rows.len() < unknowns.len() { "fewer" } else { "more" };
+        err("MK-E34", format!("{} unknowns ({}) and {} equation components ({}): {which} equations than unknowns (MK-11.7)", unknowns.len(), names(&unknowns), rows.len(), eq_names(&equations)));
+        return None;
+    }
+    // A matching of equation components to unknowns (augmenting paths).
+    let mut owner: HashMap<usize, usize> = HashMap::new();
+    fn augment(r: usize, rows: &[(usize, &BTreeSet<usize>)], owner: &mut HashMap<usize, usize>, seen: &mut BTreeSet<usize>) -> bool {
+        for &u in rows[r].1 {
+            if !seen.insert(u) {
+                continue;
+            }
+            let free = match owner.get(&u).copied() {
+                None => true,
+                Some(o) => augment(o, rows, owner, seen),
+            };
+            if free {
+                owner.insert(u, r);
+                return true;
+            }
+        }
+        false
+    }
+    for r in 0..rows.len() {
+        if !augment(r, &rows, &mut owner, &mut BTreeSet::new()) {
+            let lone: Vec<usize> = unknowns.iter().copied().filter(|u| !owner.contains_key(u)).collect();
+            err("MK-E34", format!("the equations {} do not determine {} separately: some of them read the same unknowns only (MK-11.7)", eq_names(&equations), names(&lone)));
+            return None;
+        }
+    }
+    // The derived values inside the solve, in dependency order.
+    let inner: Vec<usize> = order_derived(model, index, None, &mut vec![]).into_iter().filter(|i| inner.contains(i)).collect();
+    Some(SolvePlan { unknowns, inner, equations })
+}
+
+
+/// MK-9.5 (D-091): grids, each one axis (an interval of a quantity, cut into equal cells)
+/// whose bounds and number of cells are constant numbers.
+fn check_grids(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, funcs: &HashMap<Id, (Rc<CExpr>, Type)>, diags: &mut Vec<Diagnostic>) -> HashMap<Id, CGrid> {
+    let mut out = HashMap::new();
+    let no_grids = HashMap::new();
+    let scope = Scope { spaces, model, index, funcs, grids: &no_grids };
+    for g in &model.grids {
+        let mut tc = Tc::new(&scope, diags, &g.id);
+        if g.axes.is_empty() || g.axes.len() > 2 {
+            tc.err("MK-E01", format!("grid `{}` has {} axes; a grid has one or two (MK-9.5)", g.name, g.axes.len()));
+            continue;
+        }
+        let constant = |tc: &mut Tc, e: &Expr, want: Option<&Type>| -> Option<(f64, Type)> {
+            let (c, t) = match want {
+                Some(w) => (tc.expect(e, w)?, w.clone()),
+                None => tc.expr(e, None)?,
+            };
+            let vals = vec![Value::Num(f64::NAN); model.bindings.len()];
+            let ctx = crate::eval::Ctx { vals: &vals, der: None, t: 0.0, t0: 0.0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
+            match c.eval(&ctx) {
+                Ok(Value::Num(x)) if x.is_finite() => Some((x, t)),
+                _ => {
+                    tc.err("MK-E01", format!("the bounds and cells of grid `{}` are numbers, not values of the model", g.name));
+                    None
+                }
+            }
+        };
+        // A grid in the plane lies in the model's space of two dimensions, in lengths.
+        let plane = g.axes.len() == 2;
+        if plane && !model.default_space.as_ref().and_then(|s| spaces.iter().find(|x| &x.id == s)).is_some_and(|s| s.dimension == 2) {
+            tc.err("MK-E01", format!("grid `{}` has two axes, so it lies in the model's plane: `model M in Plane` with `space Plane = euclidean(2)` (MK-9.5)", g.name));
+            continue;
+        }
+        let mut axes = vec![];
+        let mut dim0 = None;
+        for a in &g.axes {
+            let want = if plane { Some(Type::Quantity { dim: Dim::length() }) } else { dim0.map(|d| Type::Quantity { dim: d }) };
+            let Some((lo, lt)) = constant(&mut tc, &a.lo, want.as_ref()) else { break };
+            let Type::Quantity { dim } = lt else {
+                tc.err("MK-E01", format!("grid `{}` spans an interval of a quantity", g.name));
+                break;
+            };
+            dim0 = Some(dim);
+            let Some((hi, _)) = constant(&mut tc, &a.hi, Some(&Type::Quantity { dim })) else { break };
+            let Some((n, _)) = constant(&mut tc, &a.cells, Some(&Type::real())) else { break };
+            if !(hi > lo) || n.fract() != 0.0 || !(1.0..=1_000_000.0).contains(&n) {
+                tc.err("MK-E01", format!("grid `{}` goes from low to high in a whole number of cells, from 1 to 1000000", g.name));
+                break;
+            }
+            axes.push(GridAxis { lo, h: (hi - lo) / n, n: n as usize });
+        }
+        if axes.len() != g.axes.len() {
+            continue;
+        }
+        if axes.iter().map(|a| a.n).product::<usize>() > 1_000_000 {
+            tc.err("MK-E01", format!("grid `{}` has more than a million cells", g.name));
+            continue;
+        }
+        out.insert(g.id.clone(), CGrid { x: axes[0], y: axes.get(1).copied(), dim: dim0.unwrap() });
+    }
+    out
+}
+
+/// MK-9.6 (D-091): boundary conditions name the edges `left` and `right` of a field, once
+/// each, or make it periodic, not both.
+fn check_boundaries(model: &Model, grids: &HashMap<Id, CGrid>, diags: &mut Vec<Diagnostic>) {
+    for b in &model.bindings {
+        let Some(bd) = &b.boundary else { continue };
+        let mut err = |m: String| diags.push(Diagnostic { code: "MK-E33", message: m, element: b.id.clone() });
+        if !matches!(b.ty, Type::Field { .. }) {
+            err(format!("`{}` is not a field; boundary conditions belong to fields (MK-9.6)", b.name));
+            continue;
+        }
+        if bd.periodic && !bd.fixed.is_empty() {
+            err(format!("the boundary of `{}` is periodic or holds edges at values, not both", b.name));
+        }
+        let plane = matches!(&b.ty, Type::Field { grid, .. } if grids.get(grid).is_some_and(|g| g.y.is_some()));
+        let edges = if plane { &EDGES[..] } else { &EDGES[..2] };
+        for (k, f) in bd.fixed.iter().enumerate() {
+            if !edges.contains(&f.edge.as_str()) {
+                let names = edges.iter().map(|e| format!("`{e}`")).collect::<Vec<_>>().join(", ");
+                err(format!("a field on this grid has the edges {names}, not `{}`", f.edge));
+            } else if bd.fixed[..k].iter().any(|g| g.edge == f.edge) {
+                err(format!("the edge `{}` of `{}` is held twice", f.edge, b.name));
+            }
+        }
+    }
 }
 
 fn const_value(c: &CExpr) -> Option<f64> {
@@ -1058,7 +1653,7 @@ fn check_ops(tc: &mut Tc, model: &Model, index: &HashMap<Id, usize>, ops: &[Op],
                 };
                 let b = &model.bindings[bi];
                 match b.role {
-                    Role::Derived | Role::Constant | Role::Input => {
+                    Role::Derived | Role::Constant | Role::Input | Role::Unknown => {
                         tc.err("MK-E06", format!("operation targets `{}`, a {:?} binding", b.name, b.role));
                         continue;
                     }
@@ -1116,6 +1711,20 @@ fn check_ops(tc: &mut Tc, model: &Model, index: &HashMap<Id, usize>, ops: &[Op],
                     continue;
                 }
                 targets.push((bi, target.component));
+                // D-091: a field is set in each cell, as its initial value is given.
+                if let (Type::Field { grid, of }, None) = (&b.ty, target.component) {
+                    let Some(g) = tc.scope.grids.get(grid).copied() else { continue };
+                    let sites = tc.draws.map(|d| d.2);
+                    let v = tc.pointwise_expr(value, grid, of);
+                    if tc.draws.map(|d| d.2) != sites {
+                        tc.err("MK-E28", format!("a draw in each cell of `{}` (a random number per cell) is a later extension (MK-10.4)", b.name));
+                        continue;
+                    }
+                    if let Some(v) = v {
+                        out.push(COp::SetField { binding: bi, grid: g, value: v });
+                    }
+                    continue;
+                }
                 if let Some(v) = tc.expect(value, &want) {
                     out.push(COp::Set { binding: bi, component: target.component, value: v });
                 }
@@ -1163,7 +1772,7 @@ pub fn check_intervention(cm: &CModel, ops: &[Op]) -> Result<Vec<COp>, Vec<Diagn
     if !diags.is_empty() {
         return Err(diags);
     }
-    let scope = Scope { spaces: &cm.spaces, model: &cm.ir, index: &cm.index, funcs: &cm.functions };
+    let scope = Scope { spaces: &cm.spaces, model: &cm.ir, index: &cm.index, funcs: &cm.functions, grids: &cm.grids };
     let mut tc = Tc::new(&scope, &mut diags, "intervention");
     let out = check_ops(&mut tc, &cm.ir, &cm.index, ops, true);
     if diags.is_empty() {
@@ -1176,7 +1785,7 @@ pub fn check_intervention(cm: &CModel, ops: &[Op]) -> Result<Vec<COp>, Vec<Diagn
 /// Compiles an expression over a checked model (used by observations and expectations).
 pub fn compile_expr(cm: &CModel, e: &Expr, expected: Option<&Type>) -> Result<(CExpr, Type), Vec<Diagnostic>> {
     let mut diags = vec![];
-    let scope = Scope { spaces: &cm.spaces, model: &cm.ir, index: &cm.index, funcs: &cm.functions };
+    let scope = Scope { spaces: &cm.spaces, model: &cm.ir, index: &cm.index, funcs: &cm.functions, grids: &cm.grids };
     let mut tc = Tc::new(&scope, &mut diags, "expression");
     let r = match expected {
         Some(t) => tc.expect(e, t).map(|c| (c, t.clone())),
@@ -1214,6 +1823,64 @@ fn flow_conditions(scope: &Scope, diags: &mut Vec<Diagnostic>, f: &Flow) {
             message: format!("a flow condition depends on `{name}` (continuous state or time); use an event that sets discrete state"),
             element: f.id.clone(),
         });
+    }
+}
+
+/// MK-15.16 (D-083, D-086): whether a random event's rate reads continuous state or time,
+/// directly or through derived values; such a rate changes between transitions and its
+/// clock is integrated along the steps (RC-13.8a).
+fn random_rate_varies(scope: &Scope, rate: &Expr) -> bool {
+    let mut time = false;
+    let mut reads_time = |e: &Expr| {
+        e.walk(&mut |x| {
+            if matches!(x, Expr::Builtin { builtin: Builtin::T | Builtin::Elapsed }) {
+                time = true;
+            }
+        })
+    };
+    reads_time(rate);
+    let reads = closure_derived(scope.model, scope.index, &rate.refs());
+    for &i in &reads {
+        if let (Role::Derived, Some(d)) = (scope.model.bindings[i].role, &scope.model.bindings[i].def) {
+            reads_time(d);
+        }
+    }
+    // An unknown follows the state its equations read (D-092), so it may vary too.
+    time || reads.iter().any(|i| matches!(scope.model.bindings[*i].role, Role::Continuous | Role::Unknown))
+}
+
+/// MK-14.16 (D-090): whether `e` is linear in each white noise: noise appears only in sums,
+/// differences, negations, products and quotients by factors free of noise, conditional
+/// branches and the components of a tuple. Returns whether `e` holds noise.
+fn noise_linear(e: &Expr) -> Result<bool, String> {
+    let has = |e: &Expr| {
+        let mut found = false;
+        e.walk(&mut |x| found |= matches!(x, Expr::Builtin { builtin: Builtin::Noise }));
+        found
+    };
+    match e {
+        Expr::Builtin { builtin: Builtin::Noise } => Ok(true),
+        Expr::Neg { neg } => noise_linear(neg),
+        Expr::Bin { bin: BinOp::Add | BinOp::Sub, l, r } => Ok(noise_linear(l)? | noise_linear(r)?),
+        Expr::Bin { bin: BinOp::Mul, l, r } => match (noise_linear(l)?, noise_linear(r)?) {
+            (true, true) => Err("noise multiplies noise".into()),
+            (a, b) => Ok(a || b),
+        },
+        Expr::Bin { bin: BinOp::Div, l, r } => {
+            if has(r) {
+                return Err("noise divides".into());
+            }
+            noise_linear(l)
+        }
+        Expr::If { r#if, then, r#else } => {
+            if has(r#if) {
+                return Err("a condition reads noise".into());
+            }
+            Ok(noise_linear(then)? | noise_linear(r#else)?)
+        }
+        Expr::Tuple { tuple } => tuple.iter().try_fold(false, |acc, x| Ok(noise_linear(x)? | acc)),
+        other if has(other) => Err("noise inside a function, a power or a comparison".into()),
+        _ => Ok(false),
     }
 }
 
@@ -1307,6 +1974,12 @@ fn self_retriggering(model: &Model, index: &HashMap<Id, usize>, guard: &Expr, ha
                     stack.extend(s.refs().iter().filter_map(|r| index.get(r).copied()));
                 }
             }
+            // An unknown depends on what the solved equations read (D-092).
+            Role::Unknown => {
+                for q in model.equations.iter().filter(|q| q.role != EquationRole::Check) {
+                    stack.extend(q.lhs.refs().iter().chain(&q.rhs.refs()).filter_map(|r| index.get(r).copied()));
+                }
+            }
             _ => {}
         }
     }
@@ -1373,43 +2046,118 @@ fn topo(n: usize, deps: &[Vec<usize>], nodes: &[usize]) -> Result<Vec<usize>, Ve
     }
 }
 
-fn order_derived(model: &Model, index: &HashMap<Id, usize>, diags: &mut Vec<Diagnostic>) -> Vec<usize> {
-    let n = model.bindings.len();
-    let mut deps = vec![vec![]; n];
-    let mut nodes = vec![];
-    for (i, b) in model.bindings.iter().enumerate() {
+/// D-095: the derived bindings the flows read, directly, through other derived values and
+/// their conditions, or through the solve (whose equations, inner values and guesses read
+/// more), in the order of `derived_order`.
+fn flow_order(model: &Model, index: &HashMap<Id, usize>, plan: Option<&SolvePlan>, derived_order: &[usize]) -> Vec<usize> {
+    let mut need: BTreeSet<usize> = BTreeSet::new();
+    let mut solve = false;
+    let mut stack: Vec<usize> = model.flows.iter().flat_map(|f| f.expr.refs()).filter_map(|r| index.get(&r).copied()).collect();
+    while let Some(i) = stack.pop() {
+        if !need.insert(i) {
+            continue;
+        }
+        let b = &model.bindings[i];
+        if let Some(p) = plan {
+            if (b.role == Role::Unknown || p.inner.contains(&i)) && !solve {
+                solve = true;
+                stack.extend(solve_refs(p, model).iter().filter_map(|r| index.get(r).copied()));
+            }
+        }
         if b.role == Role::Derived {
+            stack.extend(b.def.iter().chain(b.when.iter()).flat_map(|e| e.refs()).filter_map(|r| index.get(&r).copied()));
+        }
+    }
+    derived_order.iter().copied().filter(|&i| if i == SOLVE { solve } else { need.contains(&i) }).collect()
+}
+
+/// The solve as one node of the dependency graph, `SOLVE` in an order (D-092): it stands for
+/// the unknowns and the derived values computed inside it.
+pub const SOLVE: usize = usize::MAX;
+
+/// The refs of a binding's definitions, with the unknowns and the derived values inside a
+/// solve mapped to the solve's node `n`.
+fn refs_through(plan: Option<&SolvePlan>, model: &Model, index: &HashMap<Id, usize>, refs: impl Iterator<Item = Id>, n: usize) -> Vec<usize> {
+    let mut out: Vec<usize> = refs
+        .filter_map(|r| index.get(&r).copied())
+        .map(|j| match plan {
+            Some(p) if model.bindings[j].role == Role::Unknown || p.inner.contains(&j) => n,
+            _ => j,
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// What the solve node reads: its equations, its inner derived values and its guesses.
+fn solve_refs(plan: &SolvePlan, model: &Model) -> Vec<Id> {
+    let mut refs = vec![];
+    for &k in &plan.equations {
+        refs.extend(model.equations[k].lhs.refs());
+        refs.extend(model.equations[k].rhs.refs());
+    }
+    for &i in plan.inner.iter().chain(&plan.unknowns) {
+        let b = &model.bindings[i];
+        refs.extend(b.def.iter().chain(b.init.iter()).flat_map(|d| d.refs()));
+    }
+    refs
+}
+
+fn order_derived(model: &Model, index: &HashMap<Id, usize>, plan: Option<&SolvePlan>, diags: &mut Vec<Diagnostic>) -> Vec<usize> {
+    let n = model.bindings.len();
+    let mut deps = vec![vec![]; n + 1];
+    let mut nodes = vec![];
+    let keep = |j: &usize| *j == n || model.bindings[*j].role == Role::Derived;
+    for (i, b) in model.bindings.iter().enumerate() {
+        if b.role == Role::Derived && !plan.is_some_and(|p| p.inner.contains(&i)) {
             nodes.push(i);
             if let Some(d) = &b.def {
-                deps[i] = d.refs().into_iter().chain(b.when.iter().flat_map(|w| w.refs())).filter_map(|r| index.get(&r).copied()).filter(|&j| model.bindings[j].role == Role::Derived).collect();
+                let refs = d.refs().into_iter().chain(b.when.iter().flat_map(|w| w.refs()));
+                deps[i] = refs_through(plan, model, index, refs, n).into_iter().filter(keep).collect();
             }
         }
     }
-    match topo(n, &deps, &nodes) {
-        Ok(o) => o,
+    if let Some(p) = plan {
+        nodes.push(n);
+        deps[n] = refs_through(None, model, index, solve_refs(p, model).into_iter(), n)
+            .into_iter()
+            .filter(|j| *j != n && model.bindings[*j].role == Role::Derived && !p.inner.contains(j))
+            .collect();
+    }
+    match topo(n + 1, &deps, &nodes) {
+        Ok(o) => o.into_iter().map(|i| if i == n { SOLVE } else { i }).collect(),
         Err(cycle) => {
-            let names: Vec<_> = cycle.iter().map(|&i| model.bindings[i].name.clone()).collect();
+            let names: Vec<_> = cycle.iter().map(|&i| if i == n { "the unknowns".to_string() } else { model.bindings[i].name.clone() }).collect();
             diags.push(Diagnostic { code: "MK-E14", message: format!("algebraic loop among {}", names.join(", ")), element: model.id.clone() });
             vec![]
         }
     }
 }
 
-fn order_init(model: &Model, index: &HashMap<Id, usize>, diags: &mut Vec<Diagnostic>) -> Vec<usize> {
+fn order_init(model: &Model, index: &HashMap<Id, usize>, plan: Option<&SolvePlan>, diags: &mut Vec<Diagnostic>) -> Vec<usize> {
     let n = model.bindings.len();
-    let mut deps = vec![vec![]; n];
+    let mut deps = vec![vec![]; n + 1];
     let mut nodes = vec![];
     for (i, b) in model.bindings.iter().enumerate() {
+        if b.role == Role::Unknown || plan.is_some_and(|p| p.inner.contains(&i)) {
+            continue;
+        }
         let e = if b.role == Role::Derived { b.def.as_ref() } else { b.init.as_ref() };
         nodes.push(i);
         if let Some(e) = e {
-            deps[i] = e.refs().into_iter().chain(b.when.iter().flat_map(|w| w.refs())).filter_map(|r| index.get(&r).copied()).collect();
+            let refs = e.refs().into_iter().chain(b.when.iter().flat_map(|w| w.refs()));
+            deps[i] = refs_through(plan, model, index, refs, n);
         }
     }
-    match topo(n, &deps, &nodes) {
-        Ok(o) => o,
+    if let Some(p) = plan {
+        nodes.push(n);
+        deps[n] = refs_through(plan, model, index, solve_refs(p, model).into_iter(), n).into_iter().filter(|j| *j != n).collect();
+    }
+    match topo(n + 1, &deps, &nodes) {
+        Ok(o) => o.into_iter().map(|i| if i == n { SOLVE } else { i }).collect(),
         Err(cycle) => {
-            let names: Vec<_> = cycle.iter().map(|&i| model.bindings[i].name.clone()).collect();
+            let names: Vec<_> = cycle.iter().map(|&i| if i == n { "the unknowns".to_string() } else { model.bindings[i].name.clone() }).collect();
             diags.push(Diagnostic { code: "MK-E15", message: format!("cycle among initial definitions: {}", names.join(", ")), element: model.id.clone() });
             vec![]
         }

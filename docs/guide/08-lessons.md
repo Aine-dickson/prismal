@@ -116,6 +116,7 @@ run pressed of FreeFall with DropTry {
 
 - `at 3 s: press drop` presses the button that requests `drop`. With `h` set to 20 m first, the ball falls from 20 m on the branch.
 - Outside an explore beat, or when the beat offers no button for the event, a press is refused, as a slider's setting is.
+- An explore beat may also offer `button(restart)`: it starts the learner's branch again from the beginning with the values the learner has set, so a learner can try a starting height or a number of molecules as often as they like. In a model with chance, `button(reseed)` does the same with another seed (chapter 15). A learner script presses them with `press restart` and `press reseed`. Other runtime controls (`reset`, `undo`, `redo`) belong to labs.
 
 **Goal of this chapter's program.** A narrated lesson: a ball is dropped, the lesson pauses to ask how long the fall took, lets the learner choose a new height, and drops it again.
 **How it is built.** The model only knows about falling (`state`, `flow`, an event `landed`) and an event `drop on request` that a lesson or button can ask for. Everything about the story is in the presentation's `timeline`: `scene`s made of `beat`s, each with actions (`narrate`, `run ... until landed`, `hold`, `highlight`, `explore` with a slider, `request drop`).
@@ -573,9 +574,10 @@ The end of `roll` is found by locating the event `done`, so it is checked within
 |---|---|
 | `animate name color to red [for d]` | blends to a color of the palette (chapter 7) |
 | `animate name line to dashed [for d]` | changes the line style, halfway through `d` (a style has no values between) |
+| `animate name width to 3 [for d]` | thickens the strokes, from the author's `width` (or 1) to three times the kind's own |
 | `animate name scale to 2 [for d]` | draws the shape twice as large about its centre (an arrow about its base); a marker's dot and an arrow's head grow too |
 | `animate name morph to other [for d]` | changes the drawn shape into the shape of the representation `other`, point by point |
-| `... ease linear`, `ease in`, `ease out`, `ease smooth` | at a constant rate; starting slowly; ending slowly; both (the default) |
+| `... ease linear`, `ease in`, `ease out`, `ease smooth` | at a constant rate; starting slowly; ending slowly; both (the default). Also after `reveal`, `hide ... for`, `camera` and `bind`: `camera scene zoom 2 for 1 s ease in` |
 
 A morph's target is usually hidden: it is there to give a shape, and `hide` it in the first beat. Between two shapes of one form, corners are matched in the order they are written: list the target's corners in the same order as the source's, or the shape turns inside out on the way (a triangle whose corners are matched in mirrored order flattens into a line halfway). The morph ends with exactly the target's shape, so a square that becomes a circle is a circle afterwards, drawn with the square's own style.
 

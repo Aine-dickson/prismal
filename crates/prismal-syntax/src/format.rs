@@ -100,8 +100,10 @@ pub fn dim(d: &Dim) -> String {
 
 /// The name of a dimension if it has one (MK-3.3).
 fn named(d: &Dim) -> Option<&'static str> {
-    const NAMES: [&str; 15] =
-        ["Length", "Mass", "Time", "Current", "Amount", "Area", "Volume", "Velocity", "Acceleration", "Frequency", "Momentum", "Force", "Energy", "Power", "Pressure"];
+    const NAMES: [&str; 21] = [
+        "Length", "Mass", "Time", "Current", "Amount", "Area", "Volume", "Velocity", "Acceleration", "Frequency", "Momentum", "Force", "Energy", "Power", "Pressure", "Temperature",
+        "Charge", "Voltage", "Resistance", "Capacitance", "Inductance",
+    ];
     NAMES.into_iter().find(|n| crate::lower::named_dim(n).as_ref() == Some(d))
 }
 
@@ -304,6 +306,7 @@ impl<'a> Printer<'a> {
             Type::Quantity { dim: d } if d.is_none() => "Real".into(),
             Type::Quantity { dim: d } => named(d).map(str::to_string).unwrap_or_else(|| format!("Quantity<{}>", dim(d))),
             Type::Instant { dim: d } => format!("Instant<{}>", dim(d)),
+            Type::Field { grid, of } => format!("Field<{}, {}>", grid.rsplit('.').next().unwrap_or(grid), self.ty(of)),
             Type::Point { space } if Some(space) == self.model.default_space.as_ref() => "Point".into(),
             Type::Point { space } => format!("Point<{}>", self.space_name(space)),
             Type::Vector { space, dim: d } => {
@@ -375,6 +378,7 @@ impl<'a> Printer<'a> {
                 Builtin::T0 => "t0".into(),
                 Builtin::Elapsed => "elapsed".into(),
                 Builtin::Index => "index".into(),
+                Builtin::Noise => "noise".into(),
             },
             Expr::Const { .. } => "π".into(),
             Expr::Origin { .. } => "origin".into(),
@@ -429,9 +433,15 @@ impl<'a> Printer<'a> {
                     Func::Min => "min",
                     Func::Max => "max",
                     Func::Atan2 => "atan2",
+                    Func::Dot => "dot",
+                    Func::Laplacian => "laplacian",
+                    Func::Gradient => "gradient",
+                    Func::Integral => "integral",
+                    Func::Mean => "mean",
                 };
                 format!("{name}({})", args.iter().map(p).collect::<Vec<_>>().join(", "))
             }
+            Expr::Draw { draw, args } => format!("{}({})", draw.name(), args.iter().map(p).collect::<Vec<_>>().join(", ")),
             Expr::Apply { apply, args } => format!("{}({})", w(apply, P_ATOM), args.iter().map(p).collect::<Vec<_>>().join(", ")),
             Expr::If { r#if, then, r#else } => format!("if {} then {} else {}", p(r#if), p(then), p(r#else)),
             Expr::Tuple { tuple } => format!("({})", tuple.iter().map(p).collect::<Vec<_>>().join(", ")),
@@ -493,6 +503,20 @@ impl<'a> Printer<'a> {
             sections.push(enums.join("
 "));
         }
+        // Grids (D-091).
+        let grids: Vec<String> = m
+            .grids
+            .iter()
+            .map(|g| {
+                let axes: Vec<String> = g.axes.iter().zip(["x", "y"]).map(|(a, w)| format!("{w}: [{}, {}]", self.expr(&a.lo), self.expr(&a.hi))).collect();
+                let cells: Vec<String> = g.axes.iter().map(|a| self.expr(&a.cells)).collect();
+                let cells = if cells.len() == 1 { cells[0].clone() } else { format!("({})", cells.join(", ")) };
+                format!("{INDENT}grid {}({}, cells: {cells})", g.name, axes.join(", "))
+            })
+            .collect();
+        if !grids.is_empty() {
+            sections.push(grids.join("\n"));
+        }
         for o in &m.objects {
             sections.push(self.object(o));
         }
@@ -506,6 +530,7 @@ impl<'a> Printer<'a> {
             (Role::Continuous, "state"),
             (Role::Discrete, "discrete"),
             (Role::Derived, "derived"),
+            (Role::Unknown, "unknown"),
         ] {
             let bs: Vec<&Binding> = m.bindings.iter().filter(|b| b.role == role).collect();
             if !bs.is_empty() {
@@ -567,6 +592,23 @@ impl<'a> Printer<'a> {
                 let _ = write!(s, "{INDENT}}}");
             }
             sections.push(s);
+        }
+        // Boundary conditions of fields (D-091).
+        let bounds: Vec<String> = m
+            .bindings
+            .iter()
+            .filter_map(|b| {
+                let bd = b.boundary.as_ref()?;
+                Some(if bd.periodic {
+                    format!("{INDENT}boundary {} periodic", b.name)
+                } else {
+                    let edges: Vec<String> = bd.fixed.iter().map(|f| format!("{INDENT}{INDENT}{} = {}", f.edge, self.expr(&f.value))).collect();
+                    format!("{INDENT}boundary {} {{\n{}\n{INDENT}}}", b.name, edges.join("\n"))
+                })
+            })
+            .collect();
+        if !bounds.is_empty() {
+            sections.push(bounds.join("\n"));
         }
         // Consecutive events of one loop print as one `for` block (D-057).
         let top: Vec<&Event> = m.events.iter().filter(|e| e.process.is_none()).collect();
@@ -681,6 +723,14 @@ impl<'a> Printer<'a> {
             return (b.name.clone(), "Angle".into());
         }
         match (&b.ty, &b.def) {
+            // A field: `T(x in rod): Real` (D-091).
+            (Type::Field { grid, of }, _) => {
+                let x = match b.def.as_ref().or(b.init.as_ref()) {
+                    Some(Expr::Lambda { lambda }) => lambda.names.first().cloned().unwrap_or_else(|| "x".into()),
+                    _ => "x".into(),
+                };
+                (format!("{}({x} in {})", b.name, grid.rsplit('.').next().unwrap_or(grid)), self.ty(of))
+            }
             (Type::Function { params, result }, Some(Expr::Lambda { lambda })) => {
                 let names: Vec<String> = (0..params.len()).map(|i| lambda.names.get(i).cloned().unwrap_or_else(|| format!("x{}", i + 1))).collect();
                 let ps: Vec<String> = names.iter().zip(params).map(|(n, t)| format!("{n}: {}", self.ty(t))).collect();
@@ -696,6 +746,11 @@ impl<'a> Printer<'a> {
             Some(m) => format!("{}.{}", self.member(m, &[]), self.field_name(&f.target)),
             None => self.binding_name(&f.target),
         };
+        // A field's flow with its coordinate: `der(T(x)) = ...` (D-091).
+        if let Expr::Lambda { lambda } = &f.expr {
+            let x = lambda.names.first().cloned().unwrap_or_else(|| "x".into());
+            return format!("der({target}({x})) {op} {}", self.expr(&f.expr));
+        }
         format!("der({target}) {op} {}", self.expr(&f.expr))
     }
 
@@ -712,6 +767,11 @@ impl<'a> Printer<'a> {
 
     fn op(&self, o: &Op) -> String {
         match o {
+            // A field set in each cell: `set h(p) = ...` (D-091).
+            Op::Set { target, value: v @ Expr::Lambda { lambda } } => {
+                let x = lambda.names.first().cloned().unwrap_or_else(|| "x".into());
+                format!("set {}({x}) = {}", self.target(target), self.expr(v))
+            }
             Op::Set { target, value } => format!("set {} = {}", self.target(target), self.expr(value)),
             Op::Contribute { target, value } => format!("contribute {} += {}", self.target(target), self.expr(value)),
             Op::Emit { event, payload } => match payload {
@@ -772,6 +832,7 @@ impl<'a> Printer<'a> {
             Trigger::Start => "start".into(),
             Trigger::Input { binding } => format!("input({})", self.binding_name(binding)),
             Trigger::Request => "request".into(),
+            Trigger::Random { rate } => format!("random({})", self.expr(rate)),
             // Not expressible in the working syntax (MK-E13); printed as a crossing of the
             // condition's value so that the text shows what the IR holds.
             Trigger::Level { cond } => format!("crossing({})", self.expr(cond)),
@@ -820,6 +881,7 @@ impl<'a> Printer<'a> {
             Policy::Report => {}
             Policy::Reject => s.push_str(" policy reject"),
             Policy::Stop => s.push_str(" policy stop"),
+            Policy::Enforce => s.push_str(" policy enforce"),
         }
         s
     }
@@ -833,7 +895,9 @@ impl<'a> Printer<'a> {
             Arg::Range { lo, hi } => format!("[{}, {}]", self.expr(lo), self.expr(hi)),
             Arg::Scale { scale } => format!("{} -> {} px", self.expr(&scale.quantity), number(scale.px)),
             Arg::Word { word } => word.clone(),
-            Arg::Sampled { expr, every } => format!("{} every {}", self.expr(expr), self.expr(every)),
+            Arg::Sampled { expr, every, instrument } => format!("{} every {}", self.read_by(expr, instrument), self.expr(every)),
+            Arg::Ensemble { expr, at, runs, instrument } => format!("{} at {} over {} runs", self.read_by(expr, instrument), self.expr(at), self.expr(runs)),
+            Arg::On { expr, event, instrument } => format!("{} on {}", self.read_by(expr, instrument), self.event_name(event)),
             Arg::Element { element } => self.element_name(element),
             Arg::Texts { texts } => format!("({})", texts.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ")),
         }
@@ -951,6 +1015,22 @@ impl<'a> Printer<'a> {
         if let Some(t) = &p.title {
             sections.push(format!("{INDENT}title \"{t}\""));
         }
+        if let Some(e) = &p.until {
+            sections.push(format!("{INDENT}until {}", self.expr(e)));
+        }
+        for i in &p.instruments {
+            let mut opts = vec![];
+            if let Some(e) = &i.resolution {
+                opts.push(format!("resolution: {}", self.expr(e)));
+            }
+            if let Some((a, b)) = &i.range {
+                opts.push(format!("range: [{}, {}]", self.expr(a), self.expr(b)));
+            }
+            if let Some(e) = &i.noise {
+                opts.push(format!("noise: {}", self.expr(e)));
+            }
+            sections.push(format!("{INDENT}instrument {}({})", i.name, opts.join(", ")));
+        }
         for v in &p.views {
             let head = match &v.kind {
                 ViewKind::Spatial { space, scale, y_up } => format!(
@@ -1067,9 +1147,17 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// A source as written: `ruler(x)` when an instrument reads it (D-087).
+    fn read_by(&self, e: &Expr, instrument: &Option<Id>) -> String {
+        match instrument {
+            Some(id) => format!("{}({})", id.rsplit('.').next().unwrap_or(id), self.expr(e)),
+            None => self.expr(e),
+        }
+    }
+
     fn observation(&self, o: &Observation) -> String {
         let source = match &o.source {
-            Source::Expr { expr } => self.expr(expr),
+            Source::Expr { expr } => self.read_by(expr, &o.instrument),
             Source::EventLog { event, zeno_only } => {
                 let mut s = "event_log".to_string();
                 if let Some(e) = event {
@@ -1089,7 +1177,8 @@ impl<'a> Printer<'a> {
         let schedule = match &o.schedule {
             Schedule::Live => " live".to_string(),
             Schedule::Every { period } => format!(" every {}", self.expr(period)),
-            Schedule::At { time } => format!(" at {}", self.expr(time)),
+            Schedule::At { time, runs: None } => format!(" at {}", self.expr(time)),
+            Schedule::At { time, runs: Some(n) } => format!(" at {} over {} runs", self.expr(time), self.expr(n)),
             Schedule::On { event, microstep } => match microstep {
                 Some(n) => format!(" on {} microstep {n}", self.event_name(event)),
                 None => format!(" on {}", self.event_name(event)),
@@ -1159,14 +1248,18 @@ impl<'a> Printer<'a> {
             }
             Action::Show { view: None, reps } => reps.iter().map(|r| format!("show {}", self.rep(r, depth))).collect::<Vec<_>>().join("; "),
             Action::Highlight { target } => format!("highlight {}", self.rep_names.get(target).cloned().unwrap_or_else(|| target.clone())),
-            Action::Hide { target, duration } => {
+            Action::Hide { target, duration, ease } => {
                 let name = self.rep_names.get(target).cloned().unwrap_or_else(|| target.clone());
-                match duration {
-                    Some(d) => format!("hide {name} for {}", self.expr(d)),
-                    None => format!("hide {name}"),
+                let mut s = format!("hide {name}");
+                if let Some(d) = duration {
+                    let _ = write!(s, " for {}", self.expr(d));
                 }
+                if let Some(e) = ease {
+                    let _ = write!(s, " ease {}", e.word());
+                }
+                s
             }
-            Action::Reveal { view, style, duration, reps } => {
+            Action::Reveal { view, style, duration, ease, reps } => {
                 let mut s = format!("reveal {}", if *style == RevealStyle::Fade { "fade" } else { "draw" });
                 if let Some(d) = duration {
                     let _ = write!(s, " for {}", self.expr(d));
@@ -1175,10 +1268,13 @@ impl<'a> Printer<'a> {
                     let name = p.views.iter().find(|x| &x.id == v).map(|x| x.name.clone()).unwrap_or_else(|| v.clone());
                     let _ = write!(s, " in {name}");
                 }
+                if let Some(e) = ease {
+                    let _ = write!(s, " ease {}", e.word());
+                }
                 let _ = write!(s, " {}", block(reps.iter().map(|r| self.rep(r, depth + 1)).collect()));
                 s
             }
-            Action::Camera { view, center, zoom, duration } => {
+            Action::Camera { view, center, zoom, duration, ease } => {
                 let name = p.views.iter().find(|x| &x.id == view).map(|x| x.name.clone()).unwrap_or_else(|| view.clone());
                 let mut s = format!("camera {name}");
                 if let Some(c) = center {
@@ -1190,6 +1286,9 @@ impl<'a> Printer<'a> {
                 if let Some(d) = duration {
                     let _ = write!(s, " for {}", self.expr(d));
                 }
+                if let Some(e) = ease {
+                    let _ = write!(s, " ease {}", e.word());
+                }
                 s
             }
             Action::Narrate { text, duration } => match duration {
@@ -1200,6 +1299,7 @@ impl<'a> Printer<'a> {
             Action::Hold => "hold".into(),
             Action::Seek { time } => format!("seek {}", self.expr(time)),
             Action::Reset => "reset".into(),
+            Action::Restart => "restart".into(),
             Action::Branch => "branch".into(),
             Action::Intervene { ops } => format!("intervene {}", block(ops.iter().map(|o| self.op(o)).collect())),
             Action::Request { event, payload } => match payload {
@@ -1241,6 +1341,7 @@ impl<'a> Printer<'a> {
                     Animated::Color => "color",
                     Animated::Line => "line",
                     Animated::Scale => "scale",
+                    Animated::Width => "width",
                     Animated::Morph => "morph",
                 };
                 let value = match (to, word) {
@@ -1259,12 +1360,16 @@ impl<'a> Printer<'a> {
                 s
             }
             Action::Release { target } => format!("release {}", self.rep_names.get(target).cloned().unwrap_or_else(|| target.clone())),
-            Action::Bind { target, duration } => {
+            Action::Bind { target, duration, ease } => {
                 let name = self.rep_names.get(target).cloned().unwrap_or_else(|| target.clone());
-                match duration {
-                    Some(d) => format!("bind {name} for {}", self.expr(d)),
-                    None => format!("bind {name}"),
+                let mut s = format!("bind {name}");
+                if let Some(d) = duration {
+                    let _ = write!(s, " for {}", self.expr(d));
                 }
+                if let Some(e) = ease {
+                    let _ = write!(s, " ease {}", e.word());
+                }
+                s
             }
         }
     }
@@ -1303,6 +1408,9 @@ impl<'a> Printer<'a> {
                 cfg.push(format!("{k} = {}", self.expr(v)));
             }
         }
+        if let Some(seed) = r.config.seed {
+            cfg.push(format!("seed = {seed}"));
+        }
         if !cfg.is_empty() {
             let _ = writeln!(s, "{INDENT}config {{ {} }}", cfg.join("; "));
         }
@@ -1315,6 +1423,7 @@ impl<'a> Printer<'a> {
                 let input = match &st.input {
                     LearnerInput::Continue => "continue".to_string(),
                     LearnerInput::Press { event } => format!("press {}", self.event_name(event)),
+                    LearnerInput::Control { control } => format!("press {control}"),
                     LearnerInput::SetControl { control, binding, value } => format!("set {control} {} = {}", self.binding_name(binding), self.expr(value)),
                 };
                 let _ = writeln!(s, "{ind2}at {}: {input}", self.expr(&st.at));
@@ -1349,6 +1458,17 @@ impl<'a> Printer<'a> {
                     Some(k) => format!("{name}[{k}]"),
                     None => name,
                 }
+            }
+            Subject::Statistic { statistic, observation } => {
+                let name = pres
+                    .and_then(|p| p.observations.iter().find(|o| &o.id == observation))
+                    .map(|o| o.name.clone())
+                    .unwrap_or_else(|| observation.rsplit('.').next().unwrap_or(observation).to_string());
+                let f = match statistic {
+                    prismal_ir::present::Statistic::Mean => "mean",
+                    prismal_ir::present::Statistic::Deviation => "deviation",
+                };
+                format!("{f}({name})")
             }
             Subject::On { expr, event, microstep } => match microstep {
                 Some(n) => format!("({} on {} microstep {n})", self.expr(expr), self.event_name(event)),

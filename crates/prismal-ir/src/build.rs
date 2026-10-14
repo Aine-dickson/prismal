@@ -154,6 +154,7 @@ impl ModelBuilder {
                 undirected: false,
                 constraints: vec![],
                 enums: vec![],
+                grids: vec![],
                 functions: vec![],
                 notes: vec![],
             },
@@ -192,6 +193,7 @@ impl ModelBuilder {
             notes: vec![],
             when: None,
             combine: None,
+            boundary: None,
         });
         id
     }

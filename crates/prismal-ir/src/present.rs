@@ -15,6 +15,9 @@ pub struct Presentation {
     pub model: Id,
     #[serde(default)]
     pub observations: Vec<Observation>,
+    /// Instruments that observations and sampled sources read through (PK-3.7, D-087).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instruments: Vec<Instrument>,
     #[serde(default)]
     pub views: Vec<View>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -29,6 +32,10 @@ pub struct Presentation {
     /// The presentation's title, shown above its views (D-076).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// How long the presentation's run lasts, `until t0 + 20 s` (PK-10.1a, D-091); hosts
+    /// choose otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<Expr>,
 }
 
 /// A page layout (PK-7.4a, D-063): views side by side in a row or one below the other in a
@@ -59,6 +66,26 @@ pub struct Observation {
     pub name: String,
     pub source: Source,
     pub schedule: Schedule,
+    /// The instrument that reads the source (PK-3.7, D-087).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instrument: Option<Id>,
+}
+
+/// An instrument (PK-3.7, D-087): how its readings differ from the values it reads. Each
+/// option has the dimension of the values; an instrument without options reads exactly.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Instrument {
+    pub id: Id,
+    pub name: String,
+    /// Readings are rounded to a whole number of this step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Expr>,
+    /// Values outside `[lo, hi]` give no reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<(Expr, Expr)>,
+    /// The deviation of a normal error added to each reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise: Option<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -88,7 +115,13 @@ pub enum Source {
 pub enum Schedule {
     Live,
     Every { period: Expr },
-    At { time: Expr },
+    /// `at τ`; with `runs`, `at τ over n runs`: one value from each of `n` runs, seeded from
+    /// the run's seed on (PK-3.8, D-084).
+    At {
+        time: Expr,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        runs: Option<Expr>,
+    },
     On {
         event: Id,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,8 +242,31 @@ pub enum Arg {
     Range { lo: Expr, hi: Expr },
     Scale { scale: Scale },
     Word { word: String },
-    /// A source sampled over the run: `pos every 0.02 s` (PK-6.3, `trace`, `series_plot`).
-    Sampled { expr: Expr, every: Expr },
+    /// A source sampled over the run: `pos every 0.02 s` (PK-6.3, `trace`, `series_plot`);
+    /// read through an instrument, `ruler(x) every 0.1 s` (PK-3.7, D-087).
+    Sampled {
+        expr: Expr,
+        every: Expr,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instrument: Option<Id>,
+    },
+    /// `n at t0 + 7 s over 200 runs`: the value of `expr` at instant `at` in each of `runs`
+    /// runs, with the seeds from the run's own on (PK-3.8, D-084).
+    Ensemble {
+        expr: Expr,
+        at: Expr,
+        runs: Expr,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instrument: Option<Id>,
+    },
+    /// `gap on decay`: the value of `expr` at each occurrence of an event, up to the instant
+    /// shown (PK-6.3e, D-089).
+    On {
+        expr: Expr,
+        event: Id,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instrument: Option<Id>,
+    },
     /// A model element that is not a value: an event (`button`) or an equation (`equation`).
     Element { element: Id },
     /// Several texts: the words at a slider's two ends, `ends: ("cold", "hot")` (D-077).
@@ -292,6 +348,9 @@ pub enum Action {
         target: Id,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Expr>,
+        /// The easing function; absent is `smooth` (D-095).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ease: Option<Ease>,
     },
     /// Shows representations with an animation (PK-9.2, PK-8.4, D-042).
     Reveal {
@@ -300,6 +359,9 @@ pub enum Action {
         style: RevealStyle,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Expr>,
+        /// The easing function; absent is `smooth` (D-095).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ease: Option<Ease>,
         reps: Vec<Rep>,
     },
     /// Moves a view's camera (PK-9.2, D-042): its centre follows `center`, evaluated at every
@@ -312,6 +374,9 @@ pub enum Action {
         zoom: Option<Expr>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Expr>,
+        /// The easing function; absent is `smooth` (D-095).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ease: Option<Ease>,
     },
     Narrate {
         text: String,
@@ -322,6 +387,8 @@ pub enum Action {
     Hold,
     Seek { time: Expr },
     Reset,
+    /// The run again from `t0`, with the parameter values of the instant shown (D-085).
+    Restart,
     Branch,
     Intervene { ops: Vec<Op> },
     Request {
@@ -375,6 +442,9 @@ pub enum Action {
         target: Id,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Expr>,
+        /// The easing function; absent is `smooth` (D-095).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ease: Option<Ease>,
     },
 }
 
@@ -392,6 +462,8 @@ pub enum Animated {
     Line,
     /// A factor on the drawn size, about the shape's center (D-075).
     Scale,
+    /// A multiple of the kind's own line width (D-095).
+    Width,
     /// The shape of another representation, reached by moving the points (D-075).
     Morph,
 }
@@ -444,7 +516,7 @@ pub enum RevealStyle {
 impl Action {
     /// Run-directing actions apply in written order at a beat's start (PK-9.2a, D-033).
     pub fn is_run_directing(&self) -> bool {
-        matches!(self, Action::Seek { .. } | Action::Reset | Action::Branch | Action::Intervene { .. } | Action::Request { .. } | Action::Run { .. } | Action::Hold)
+        matches!(self, Action::Seek { .. } | Action::Reset | Action::Restart | Action::Branch | Action::Intervene { .. } | Action::Request { .. } | Action::Run { .. } | Action::Hold)
     }
 }
 
@@ -502,6 +574,9 @@ pub struct RunConfig {
     pub rtol: Option<Expr>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub atol: Option<Expr>,
+    /// The seed of the run's random streams (RC-13.1, D-083); 0 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -519,6 +594,8 @@ pub enum LearnerInput {
     SetControl { control: String, binding: Id, value: Expr },
     /// `press drop`: press the button that requests the event (D-069).
     Press { event: Id },
+    /// `press restart`, `press reseed`: press an explore beat's runtime-control button (D-088).
+    Control { control: String },
 }
 
 /// An expectation (PK section 4).
@@ -555,6 +632,17 @@ pub enum Subject {
     },
     BeatStart { beat: Id },
     BeatEnd { beat: Id },
+    /// `mean(ends)`, `deviation(ends)`: a statistic of an observation's values (D-084).
+    Statistic { statistic: Statistic, observation: Id },
+}
+
+/// Statistics of the values of an observation (D-084): the mean, and the sample standard
+/// deviation (divided by `n - 1`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Statistic {
+    Mean,
+    Deviation,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

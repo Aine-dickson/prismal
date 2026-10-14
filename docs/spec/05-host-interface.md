@@ -57,7 +57,8 @@
 
 ## 5. Output
 
-- **HI-5.1** A **layout** lists an instance's views with their coordinate systems (spatial scale and orientation, plot ranges and units), the extent of their content over the run (for an initial viewport), the learner's permissions, and for a lesson its beats, captions, explore windows and continue points (`waits`: `beat`, `at`, `end`, `pending`, `explore`; a host stops its clock at a pending one until the learner continues, PK-9.2e).
+- **HI-5.1a** (D-091) A lab runs until its presentation's `until` (PK-10.1a); otherwise for 60 s, or 20 s when its model's state has more than 4096 components (fields), or to the end of the longest time axis it plots if that is later. A lesson runs until its presentation's `until`, otherwise 60 s.
+- **HI-5.1** A **layout** lists an instance's views with their coordinate systems (spatial scale and orientation, plot ranges and units, and `x_elapsed`: whether a plot's time axis is the run's elapsed time, false where a histogram counts durations, D-089), the extent of their content over the run (for an initial viewport), the learner's permissions, and for a lesson its beats, captions, explore windows and continue points (`waits`: `beat`, `at`, `end`, `pending`, `explore`; a host stops its clock at a pending one until the learner continues, PK-9.2e).
 - **HI-5.1a** **Caption cues** (D-053). Each caption of a lesson's layout has `cue` (its name, PK-9.2d), `start`, `end` and `text`; a frame lists the texts of the captions shown. A host that voices narration plays the recording named after the cue, or synthesized speech, from the cue's start; the cue's timing is the layout's whatever the sound lasts. Sound is the host's: the engine neither loads nor plays audio.
 - **HI-5.2** A **frame** is the frame description of PK-12.1, which holds everything any renderer needs to draw it without the model (PK-12.1a): labels, the part a representation is dragged by, a control's symbol and display unit, the author's color and line by name (PK-6.6a, D-061), and for formulas and equations the symbolic IR and a layout drawable with text and lines (PK-6.5a, D-046). The host interface adds nothing specific to one medium; a binding for a medium may add to frames what that medium uses (the WebAssembly binding adds MathML).
 - **HI-5.2a** **Viewports** (D-047). Each view of a frame carries the viewport every renderer draws it with, and the engine maps raw input with: `box` (x, y, width, height in view coordinates) and `size` (its natural drawn size in pixels). A spatial view's box is its framing (the extent of its content with room around it; in a session grown to keep what it shows in view), changed by the learner's zoom and pan, or the timeline's camera (D-042); it is fitted into the drawn area, uniformly scaled and centred. A plot's box is its ranges, filling the drawn area less `margin` pixels on every side, `y` upwards. A frame also names the representation with keyboard focus (`focus`).
@@ -97,7 +98,7 @@
 | `open` | `document`, `presentation`, `medium`? | `instance`, `layout` |
 | `layout`, `frame` | `instance`, `time`?, `dt`? | the layout, the frame |
 | `seek`, `reset`, `restart` | `instance`, `time`? | the clock or the layout |
-| `set_control`, `press`, `click`, `key`, `pointer_down`, `pointer_move`, `pointer_up`, `cancel`, `undo`, `redo`, `continue` | `instance`, `rep`, value, `time` in a lesson | the outcome |
+| `set_control`, `press`, `click`, `key`, `pointer_down`, `pointer_move`, `pointer_up`, `cancel`, `undo`, `redo`, `continue` | `instance`, `rep`, value (a number in coherent SI units; 0 or 1 for a toggle; for a `select`, the number of the case from 0, as its frame's `options` list them, D-094), `time` in a lesson | the outcome |
 | `set_input` | `instance`, `input`, `value` | the outcome |
 | `request` | `instance`, `event`, `payload`? | the outcome |
 | `pointer` | `instance`, `phase`, `view`, `x`, `y`, `width`?, `height`?, `pointer`?, `time` in a lesson | `handled`, `action`, `target` or `hover`, the outcome |
@@ -134,3 +135,5 @@
 - 2026-09-30 HI-5.1a: caption cues named for voicing narration (D-053).
 - 2026-10-01 HI-5.1: continue points in a lesson's layout (D-067).
 - 2026-10-01 HI-4.3: `press` in lessons, runtime-control buttons (D-069).
+- 2026-10-13 HI-5.1: `x_elapsed` of plot views (D-089).
+- 2026-10-13 HI-5.1a: how long a lab or lesson runs (D-091).

@@ -414,7 +414,7 @@ function drawPlotChrome(v, g) {
   const [ux, uy] = v.units || ['', ''];
   if (ux) {
     const t = svg('text', { class: 'tick', x: v.W - v.m, y: v.H - 8, 'text-anchor': 'end', 'font-size': 12 }, g);
-    t.textContent = ux === 's' ? 'elapsed time (s)' : `(${ux})`;
+    t.textContent = ux === 's' && v.x_elapsed !== false ? 'elapsed time (s)' : `(${ux})`;
   }
   if (uy) {
     const t = svg('text', { class: 'tick', x: v.m, y: v.m - 10, 'font-size': 12 }, g);
@@ -457,6 +457,20 @@ function ownColor(r, colorIndex) {
     case 'polyline': return r.kind === 'trace' ? 'var(--muted)' : 'var(--accent)';
     default: return 'var(--accent)';
   }
+}
+
+// The palettes of frames (D-091), the same stops as prismal-svg: sequential (dark blue,
+// green, yellow) and diverging about 0 (blue, near white, red).
+const PALETTES = {
+  sequential: [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]],
+  diverging: [[59, 76, 192], [242, 242, 242], [180, 4, 38]],
+};
+function paletteRgb(name, v) {
+  const stops = PALETTES[name] || PALETTES.sequential;
+  const x = Math.min(Math.max(v, 0), 1) * (stops.length - 1);
+  const i = Math.min(Math.floor(x), stops.length - 2);
+  const w = x - i;
+  return [0, 1, 2].map((k) => Math.round(stops[i][k] + w * (stops[i + 1][k] - stops[i][k])));
 }
 
 function drawRep(v, g, r, u, colorIndex) {
@@ -515,7 +529,8 @@ function drawRep(v, g, r, u, colorIndex) {
     case 'note': {
       // An author's text at a point (D-076).
       const [X, Y] = m.to(r.at);
-      const t = svg('text', { class: 'note', x: X, y: Y, 'font-size': 13 * u }, grp);
+      const anchor = { center: 'middle', right: 'end' }[r.align] || 'start';
+      const t = svg('text', { class: 'note', x: X, y: Y, 'font-size': 13 * u, 'text-anchor': anchor }, grp);
       t.textContent = r.value;
       break;
     }
@@ -532,6 +547,34 @@ function drawRep(v, g, r, u, colorIndex) {
         const pts = r.points.slice(cuts[k], cuts[k + 1]).map((p) => m.to(p).join(',')).join(' ');
         svg('polyline', { class: trace ? 'trace' : 'graph', points: pts, 'stroke-width': (trace ? 1.5 : 2) * u }, grp);
       }
+      break;
+    }
+    case 'raster': {
+      // Coloured cells of a field in the plane (D-091), with the colours prismal-svg gives
+      // them. One image of one pixel per cell, scaled without smoothing: a ripple tank of
+      // 60 by 60 cells would otherwise be 3600 elements redrawn every frame.
+      const [fx, fy] = m.to(r.from);
+      const [tx, ty] = m.to(r.to);
+      const canvas = document.createElement('canvas');
+      canvas.width = r.cols;
+      canvas.height = r.rows;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(r.cols, r.rows);
+      // Cell k is column k % cols from `from` towards `to`, row k / cols likewise; the image's
+      // rows run downwards on the page.
+      const flipX = tx < fx, flipY = ty < fy;
+      r.values.forEach((v, k) => {
+        const i = k % r.cols, j = Math.floor(k / r.cols);
+        const px = flipX ? r.cols - 1 - i : i, py = flipY ? r.rows - 1 - j : j;
+        const c = paletteRgb(r.palette, v);
+        const o = 4 * (py * r.cols + px);
+        img.data[o] = c[0];
+        img.data[o + 1] = c[1];
+        img.data[o + 2] = c[2];
+        img.data[o + 3] = 255;
+      });
+      ctx.putImageData(img, 0, 0);
+      svg('image', { class: 'raster', href: canvas.toDataURL(), x: Math.min(fx, tx), y: Math.min(fy, ty), width: Math.abs(tx - fx), height: Math.abs(ty - fy), preserveAspectRatio: 'none', style: 'image-rendering: pixelated' }, grp);
       break;
     }
     case 'polygon': {
@@ -555,9 +598,17 @@ function drawRep(v, g, r, u, colorIndex) {
       grp.remove();
       return;
   }
+  if (r.width) {
+    // The author's line width (D-095), a multiple of each stroke's own.
+    for (const e of grp.querySelectorAll('line, polyline, polygon, path')) {
+      if (e.parentNode.classList.contains('arrow') && e.tagName === 'polygon') continue;
+      const w = parseFloat(e.getAttribute('stroke-width'));
+      if (w) e.setAttribute('stroke-width', w * r.width);
+    }
+  }
   if (r.line && r.drawn == null && r.valid !== false) {
     // The author's line style (D-061), as prismal-svg draws it.
-    const dash = r.line === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
+    const dash = r.line === 'solid' ? 'none' : r.line === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
     for (const e of grp.querySelectorAll('line, polyline, polygon, path')) {
       if (e.parentNode.classList.contains('arrow') && e.tagName === 'polygon') continue;
       e.style.strokeDasharray = dash;
@@ -694,6 +745,7 @@ function renderItem(host, r) {
 
 function controlDisplay(r, value) {
   if (r.control === 'toggle') return value ? 'true' : 'false';
+  if (r.options) return r.options[value] ?? '';
   if (r.display_unit) return `${fmt(value / r.display_unit.scale)} ${r.display_unit.text}`;
   return r.unit ? `${fmt(value)} ${r.unit}` : fmt(value);
 }
@@ -713,6 +765,10 @@ function renderControl(it, r) {
       input.addEventListener('keydown', (e) => onControlKey(e, r, it));
     } else if (r.control === 'toggle') {
       input = el('input', { type: 'checkbox' });
+    } else if (r.control === 'select') {
+      // The cases of an enumeration (D-094); the value is the chosen case's number.
+      input = el('select');
+      r.options.forEach((o, k) => input.append(el('option', { value: String(k), text: o })));
     } else {
       input = el('input', { type: 'number', step: r.step ?? 'any' });
       if (r.min != null) input.min = r.min;
@@ -847,7 +903,7 @@ function renderFrame(frame) {
       const top = svg('g', {}, v.svg);
       let arrows = 0;
       for (const r of vf.reps) {
-        if (['point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note'].includes(r.shape)) {
+        if (['point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note', 'raster'].includes(r.shape)) {
           // Draggable and clickable representations are drawn last and outside the plot's clip.
           drawRep(v, r.drag || r.click ? top : reps, r, u, r.shape === 'arrow' ? arrows++ : 0);
         } else if (!['axes', 'grid', 'title'].includes(r.shape)) {

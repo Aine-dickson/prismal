@@ -60,6 +60,7 @@ A marker, an arrow or a graph is labelled with its name (`as ball`) or its sourc
 | `slider(p, range: [a, b] [, step: s] [, ends: ("low", "high")])` | a control for a parameter; `ends` puts a word at each end | any |
 | `number_input(p [, range: [a, b]])` | a typed value for a parameter | any |
 | `toggle(p)` | a switch for a Boolean parameter | any |
+| `select(p)` | a choice of one case of an enumeration parameter (`material: Material = copper`), listed by name | any |
 | `group(at: P, rotate: θ, scale: k) { ... }` | its members, placed, turned and scaled together (see Groups) | spatial |
 
 `as name` after a representation names it (`marker(pos) as ball`), for timelines and for readers.
@@ -77,8 +78,8 @@ marker(pos, color: red) as ball
 ```
 
 - Colors are named: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`, `gray`, `ink`. Each medium draws a name with a value that suits its theme, so a program looks right on a light page, a dark one, or in a video; `ink` is the color of text.
-- Lines are `solid`, `dashed` or `dotted`.
-- Markers take a color; arrows, segments, polylines, polygons, circles, ellipses, arcs, traces, graphs and series take a color and a line. Other kinds, and groups, take neither.
+- Lines are `solid`, `dashed` or `dotted`. `width: 2` draws the strokes twice as thick as the kind's own (a positive number, a multiple of the usual width).
+- Markers take a color; arrows, segments, polylines, polygons, circles, ellipses, arcs, traces, graphs, series and histograms take a color, a line and a width. Other kinds, and groups, take neither.
 - Without them, each kind is drawn its own way (arrows take turns through a few colors, a trace is dashed).
 - Color never carries meaning alone (D-026): what a color distinguishes is also named (`as rod`) or labeled, and the text alternative does not mention it.
 
@@ -212,6 +213,9 @@ run page_layout of Cannon with CannonPage {
 
 A **group** draws several representations with one shared placement: its members are written in the group's own frame, then moved to `at`, turned by `rotate` and scaled by `scale`. A rigid body is drawn this way: its shape once, in its own coordinates, and its position and angle from the model.
 
+**Goal.** A wheel rolling along the ground with its spoke turning, drawn as one rigid body.
+**How it is built.** The model has the wheel's position `x` and angle `φ`; a `group` placed at the hub and turned by `-φ` draws the rim and the spoke in the wheel's own frame.
+
 ```text
 space Plane = euclidean(2)
 
@@ -275,6 +279,9 @@ run quarter_turn of Wheel with WheelView {
 ```
 
 A member of a group may be dragged. The gesture's value is then the pointer's point **in the group's frame**, the frame the member is written in (D-062):
+
+**Goal.** The learner sets a radius by dragging the tip of a dial that is drawn turned.
+**How it is built.** The tip is a member of a turned `group`; its drag gives the pointer in the group's frame, so `p.x` is the radius whichever way the dial is turned.
 
 ```text
 space Plane = euclidean(2)
@@ -405,6 +412,9 @@ A plot's ranges say what part of the curve is drawn. A curve that leaves them is
 - `permit learner { zoom; pan }` lets the learner scroll the wheel over a plot to zoom about the pointer, pinch it with two fingers, and drag it to look beyond its ranges, as in a spatial view. A function graph is drawn over whatever range is shown. `Reset view` returns to the author's framing.
 
 `x_unit` and `y_unit` choose the unit the axis is labelled in. The axis keeps its dimension: `y_unit: cm` on a length axis shows `5` where the value is `0.05 m`.
+
+**Goal.** A spring's swing plotted against time, staying in view when the learner makes it larger than the plot's range, and open to zoom and pan.
+**How it is built.** The plot declares `follow: (x, y)` so its axes grow to the data, `y_unit: cm` to label lengths in centimetres; `permit learner { zoom; pan }` lets the learner look around.
 
 ```text
 model Spring {
@@ -541,7 +551,7 @@ run drop of Dropped with DropLab {
 
 - Inside the quotes, `{...}` holds any value of the model: a binding, a component (`{pos.y}`), a calculation (`{|vel|}`). It is shown with its unit, in the binding's display unit when it has one. To write a brace itself, double it: `{{` and `}}`.
 - `{pos.y:.1}` shows the value with one decimal (`8.3 m`), `{angle:.0}` with none (`45 deg`). Without it a value has up to six significant digits, more than a learner usually needs. Powers in units are written as people read them: an area shows as `25 m²`, an acceleration as `9.81 m/s²` (D-079).
-- `at: P` places a text in a spatial view (`P` a point) or a plot (`P` a pair of axis values); without it, the text is a line in the panel or below the view.
+- `at: P` places a text in a spatial view (`P` a point) or a plot (`P` a pair of axis values); without it, the text is a line in the panel or below the view. A placed text starts at `P`; `align: center` centres it on `P` and `align: right` ends it there (a label under a point, a note left of a wall).
 - `when: c` works on every representation, not only text: `marker(pos, when: airborne)` hides the marker once the ball has landed, `slider(h, ..., when: not airborne)` offers the slider only then. The condition is read at the instant shown.
 - There is no text that is chosen by a condition inside one sentence; write one text per case, each with its `when`, as above.
 

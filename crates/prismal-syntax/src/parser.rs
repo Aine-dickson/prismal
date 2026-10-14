@@ -25,7 +25,8 @@ pub const CONTEXTUAL: &[&str] = &[
     "for", "view", "panel", "observe", "live", "over", "microstep", "show", "as", "drag", "click", "propose", "permit",
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
-    "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title",
+    "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
+    "instrument", "grid", "boundary", "periodic", "unknown", "enforce",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -371,6 +372,8 @@ impl<'a> Parser<'a> {
                 "state" => Some(RoleWord::State),
                 "discrete" => Some(RoleWord::Discrete),
                 "derived" => Some(RoleWord::Derived),
+                // Contextual (D-092): a block or a declaration follows.
+                "unknown" if matches!(self.peek_at(1), Tok::Punct("{") | Tok::Ident(_)) => Some(RoleWord::Unknown),
                 _ => None,
             },
             _ => None,
@@ -397,6 +400,27 @@ impl<'a> Parser<'a> {
         }
         if self.is_word("event") {
             return Ok(vec![Member::Event(self.event_decl()?)]);
+        }
+        // `grid rod(x: [0 m, 1 m], cells: 100)` (D-091); contextual, before a name.
+        if self.is_word("grid") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            self.bump();
+            let name = self.name("a grid name")?;
+            let args = self.args()?;
+            return Ok(vec![Member::Grid { name, args, span: self.since(start) }]);
+        }
+        // `boundary T { left = e; right = e }`, `boundary T periodic` (D-091).
+        if self.is_word("boundary") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            self.bump();
+            let field = self.name("a field name")?;
+            if self.eat_word("periodic") {
+                return Ok(vec![Member::Boundary { field, periodic: true, fixed: vec![], span: self.since(start) }]);
+            }
+            let fixed = self.block(|p| {
+                let edge = p.name("an edge (`left`, `right`)")?;
+                p.expect_punct("=")?;
+                Ok(vec![(edge, p.expr()?)])
+            })?;
+            return Ok(vec![Member::Boundary { field, periodic: false, fixed, span: self.since(start) }]);
         }
         // `for b in drops { event ... }`: events repeated per member (D-057).
         if self.eat_word("for") {
@@ -560,7 +584,18 @@ impl<'a> Parser<'a> {
         let start = self.span();
         let notes = self.notes_before(start.line);
         let name = self.name("a binding name")?;
-        let params = if self.is_punct("(") { Some(self.typed_params()?) } else { None };
+        // `T(x in rod)`: a field over a grid (D-091).
+        let over = if self.is_punct("(") && matches!(self.peek_at(1), Tok::Ident(_)) && matches!(self.peek_at(2), Tok::Ident(w) if w == "in") {
+            self.bump();
+            let x = self.name("a coordinate name")?;
+            self.expect_word("in")?;
+            let g = self.name("a grid name")?;
+            self.expect_punct(")")?;
+            Some((x, g))
+        } else {
+            None
+        };
+        let params = if over.is_none() && self.is_punct("(") { Some(self.typed_params()?) } else { None };
         self.expect_punct(":")?;
         let ty = self.type_expr()?;
         let value = if self.eat_punct("=") { Some(self.expr_no_in()?) } else { None };
@@ -591,7 +626,7 @@ impl<'a> Parser<'a> {
                 },
             }
         }
-        Ok(Decl { role, name, params, ty, value, range, modifiers, notes, span: self.since(start) })
+        Ok(Decl { role, name, params, over, ty, value, range, modifiers, notes, span: self.since(start) })
     }
 
     /// A flow, or `for b in row { flows }` (D-055).
@@ -666,6 +701,14 @@ impl<'a> Parser<'a> {
             member = Some(Expr { kind: ExprKind::Name(first.text.clone()), span: first.span });
             target = self.name("a state name")?;
         }
+        // `der(T(x))`: a field's flow with its coordinate (D-091).
+        let coord = if member.is_none() && self.eat_punct("(") {
+            let x = self.name("a coordinate name")?;
+            self.expect_punct(")")?;
+            Some(x)
+        } else {
+            None
+        };
         self.expect_punct(")")?;
         let contribute = if self.eat_punct("+=") {
             true
@@ -675,7 +718,7 @@ impl<'a> Parser<'a> {
             return Err(self.unexpected("`=` or `+=`"));
         };
         let expr = self.expr()?;
-        Ok(FlowStmt { target, member, each: None, contribute, expr, span: self.since(start) })
+        Ok(FlowStmt { target, member, each: None, coord, contribute, expr, span: self.since(start) })
     }
 
     fn event_decl(&mut self) -> P<EventDecl> {
@@ -741,12 +784,21 @@ impl<'a> Parser<'a> {
         if self.eat_word("request") {
             return Ok(TriggerExpr::Request(self.payload_decl()?));
         }
+        // `random(λ)` (D-083), a contextual word: `random(p: T)` still follows an event named
+        // `random` with a payload.
+        if self.is_word("random") && matches!(self.peek_at(1), Tok::Punct("(")) {
+            let payload = matches!(self.peek_at(2), Tok::Ident(_)) && (matches!(self.peek_at(3), Tok::Punct(":")) || self.is_word_at(3, "in"));
+            if !payload {
+                self.bump();
+                return Ok(TriggerExpr::Random(paren(self)?));
+            }
+        }
         match self.peek() {
             Tok::Ident(s) if !is_reserved(s) => {
                 let e = self.name("an event name")?;
                 Ok(TriggerExpr::On(e, self.payload_decl()?))
             }
-            _ => Err(self.unexpected("a trigger (`rising(g)`, `falling(g)`, `crossing(g)`, `at`, `every`, `start`, `input(i)`, `request` or an event name)")),
+            _ => Err(self.unexpected("a trigger (`rising(g)`, `falling(g)`, `crossing(g)`, `at`, `every`, `start`, `input(i)`, `request`, `random(rate)` or an event name)")),
         }
     }
 
@@ -829,9 +881,17 @@ impl<'a> Parser<'a> {
         let start = self.span();
         if self.eat_word("set") {
             let target = self.path()?;
+            // `set T(p) = e`: a field set in each cell (D-091).
+            let coord = if target.member.is_none() && target.component.is_none() && self.eat_punct("(") {
+                let x = self.name("a coordinate name")?;
+                self.expect_punct(")")?;
+                Some(x)
+            } else {
+                None
+            };
             self.expect_punct("=")?;
             let value = self.expr()?;
-            return Ok(OpStmt::Set { target, value, span: self.since(start) });
+            return Ok(OpStmt::Set { target, coord, value, span: self.since(start) });
         }
         if self.eat_word("contribute") {
             let target = self.path()?;
@@ -1001,7 +1061,12 @@ impl<'a> Parser<'a> {
                 if self.tok().space_before {
                     return Err(self.unexpected("an exponent written without spaces"));
                 }
-                let n = self.int()?;
+                // A whole or half number (D-090): `s^2`, `s^0.5`.
+                let n = match self.peek() {
+                    Tok::Num(n) if (2.0 * n).fract() == 0.0 && n.abs() < 1e6 => *n,
+                    _ => return Err(self.unexpected("a whole or half number as a unit's exponent")),
+                };
+                self.bump();
                 text.push_str(&format!("^{}{n}", if neg { "-" } else { "" }));
                 continue;
             }
@@ -1228,7 +1293,19 @@ impl<'a> Parser<'a> {
                     value = Expr { kind: ExprKind::Aggregate { agg, body: Box::new(value), var, over, filter }, span: self.since(s) };
                 }
                 let every = if self.eat_word("every") { Some(self.expr()?) } else { None };
-                out.push(Arg { name, value, every });
+                // An ensemble source (D-084): `n at t0 + 7 s over 200 runs`.
+                let ensemble = if every.is_none() && self.eat_word("at") {
+                    let at = self.expr()?;
+                    self.expect_word("over")?;
+                    let n = self.expr()?;
+                    self.expect_word("runs")?;
+                    Some((at, n))
+                } else {
+                    None
+                };
+                // The values at each occurrence of an event (D-089): `gap on decay`.
+                let on = if every.is_none() && ensemble.is_none() && self.eat_word("on") { Some(self.name("an event name")?) } else { None };
+                out.push(Arg { name, value, every, ensemble, on });
                 if !self.eat_punct(",") {
                     break;
                 }
@@ -1431,6 +1508,16 @@ impl<'a> Parser<'a> {
         if self.eat_word("layout") {
             return Ok(vec![PresItem::Layout(self.layout_node()?)]);
         }
+        // `instrument ruler(resolution: 1 mm, noise: 2 mm)` (PK-3.7, D-087).
+        if self.eat_word("instrument") {
+            let name = self.name("an instrument name")?;
+            let args = self.args()?;
+            return Ok(vec![PresItem::Instrument { name, args, span: self.since(start) }]);
+        }
+        // `until t0 + 20 s`: the run's length (D-091), as in a case.
+        if self.eat_word("until") {
+            return Ok(vec![PresItem::Until(self.expr()?)]);
+        }
         // `title "Projectile motion"` (D-076).
         if self.eat_word("title") {
             return match self.peek().clone() {
@@ -1441,7 +1528,7 @@ impl<'a> Parser<'a> {
                 _ => Err(self.unexpected("a title in quotes")),
             };
         }
-        Err(self.unexpected("`observe`, `view`, `panel`, `permit`, `timeline` or `layout`"))
+        Err(self.unexpected("`observe`, `view`, `panel`, `instrument`, `permit`, `timeline` or `layout`"))
     }
 
     /// A view name, or `row(...)` or `column(...)` of layout nodes.
@@ -1471,7 +1558,16 @@ impl<'a> Parser<'a> {
         } else if self.eat_word("every") {
             Some(Schedule::Every(self.expr()?))
         } else if self.eat_word("at") {
-            Some(Schedule::At(self.expr()?))
+            let at = self.expr()?;
+            // `at τ over n runs` (D-084).
+            let runs = if self.eat_word("over") {
+                let n = self.expr()?;
+                self.expect_word("runs")?;
+                Some(n)
+            } else {
+                None
+            };
+            Some(Schedule::At(at, runs))
         } else if self.eat_word("on") {
             let ev = self.name("an event name")?;
             let micro = if self.eat_word("microstep") { Some(self.int()? as u32) } else { None };
@@ -1624,6 +1720,9 @@ impl<'a> Parser<'a> {
         if self.eat_word("reset") {
             return Ok(Action::Reset);
         }
+        if self.eat_word("restart") {
+            return Ok(Action::Restart);
+        }
         if self.eat_word("branch") {
             return Ok(Action::Branch);
         }
@@ -1632,26 +1731,37 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("hide") {
             let n = self.name("a representation name")?;
-            let d = if self.eat_word("for") { Some(self.expr()?) } else { None };
-            return Ok(Action::Hide(n, d));
+            let (mut d, mut ease, mut seen) = (None, None, vec![]);
+            while let Some(w) = self.clause(&["for", "ease"], &mut seen)? {
+                if w == "for" {
+                    d = Some(self.expr()?);
+                } else {
+                    ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?);
+                }
+            }
+            return Ok(Action::Hide(n, d, ease));
         }
         if self.eat_word("reveal") {
             let style = self.any_name("`fade` or `draw`")?;
-            let (mut duration, mut view, mut seen) = (None, None, vec![]);
-            while let Some(w) = self.clause(&["for", "in"], &mut seen)? {
-                if w == "for" {
-                    duration = Some(self.expr_no_in()?);
-                } else {
-                    view = Some(self.name("a view name")?);
+            let (mut duration, mut view, mut ease, mut seen) = (None, None, None, vec![]);
+            while let Some(w) = self.clause(&["for", "in", "ease"], &mut seen)? {
+                match w {
+                    "for" => duration = Some(self.expr_no_in()?),
+                    "in" => view = Some(self.name("a view name")?),
+                    _ => ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?),
                 }
             }
             let reps = self.block(|p| p.rep_item())?;
-            return Ok(Action::Reveal { style, duration, view, reps });
+            return Ok(Action::Reveal { style, duration, view, ease, reps });
         }
         if self.eat_word("camera") {
             let view = self.name("a view name")?;
-            let (mut center, mut zoom, mut duration, mut seen) = (None, None, None, vec![]);
-            while let Some(w) = self.clause(&["to", "zoom", "for"], &mut seen)? {
+            let (mut center, mut zoom, mut duration, mut ease, mut seen) = (None, None, None, None, vec![]);
+            while let Some(w) = self.clause(&["to", "zoom", "for", "ease"], &mut seen)? {
+                if w == "ease" {
+                    ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?);
+                    continue;
+                }
                 let e = Some(self.expr()?);
                 match w {
                     "to" => center = e,
@@ -1659,7 +1769,7 @@ impl<'a> Parser<'a> {
                     _ => duration = e,
                 }
             }
-            return Ok(Action::Camera { view, center, zoom, duration });
+            return Ok(Action::Camera { view, center, zoom, duration, ease });
         }
         if self.eat_word("seek") {
             return Ok(Action::Seek(self.expr()?));
@@ -1707,7 +1817,7 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("animate") {
             let target = self.name("a representation name")?;
-            let property = self.any_name("`opacity`, `offset`, `color`, `line`, `scale` or `morph`")?;
+            let property = self.any_name("`opacity`, `offset`, `color`, `line`, `width`, `scale` or `morph`")?;
             self.expect_word("to")?;
             let to = self.expr()?;
             // `ease linear`: the easing function (D-075).
@@ -1726,8 +1836,15 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("bind") {
             let n = self.name("a representation name")?;
-            let d = if self.eat_word("for") { Some(self.expr()?) } else { None };
-            return Ok(Action::Bind(n, d));
+            let (mut d, mut ease, mut seen) = (None, None, vec![]);
+            while let Some(w) = self.clause(&["for", "ease"], &mut seen)? {
+                if w == "for" {
+                    d = Some(self.expr()?);
+                } else {
+                    ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?);
+                }
+            }
+            return Ok(Action::Bind(n, d, ease));
         }
         Err(self.unexpected("a timeline action"))
     }
@@ -1879,12 +1996,12 @@ fn belongs(word: &str) -> Option<&'static str> {
         "set" | "create" | "destroy" | "connect" | "disconnect" => {
             "An operation like this happens at an instant: it belongs in an event's braces, `event name on falling(...) { set x = 1 }`"
         }
-        "slider" | "number_input" | "toggle" | "button" | "label" => {
+        "slider" | "number_input" | "toggle" | "select" | "button" | "label" => {
             "A control belongs in a presentation, inside `panel name { ... }` (or inside a view's braces)"
         }
-        "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "axes" | "grid"
+        "marker" | "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" | "heatmap" | "axes" | "grid"
         | "formula" | "equation" | "table" | "group" => "A representation is drawn in a view: it belongs inside `view name: plot(...) { ... }` or `view name: spatial(...) { ... }` of a presentation",
-        "view" | "panel" | "observe" | "permit" | "timeline" | "layout" => "This belongs directly inside a `presentation Name for Model { ... }`",
+        "view" | "panel" | "observe" | "instrument" | "permit" | "timeline" | "layout" => "This belongs directly inside a `presentation Name for Model { ... }`",
         "scene" | "beat" | "narrate" | "explore" | "hold" => "This belongs in a presentation's `timeline { ... }` (a lesson)",
         "expect" | "until" | "config" => "This belongs in a test case, `run name of Model with Presentation { ... }`",
         "model" | "presentation" | "run" | "space" => "This starts a new top-level item: close the braces of the item before it first",

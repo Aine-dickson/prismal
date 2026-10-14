@@ -101,6 +101,10 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-079 | Findings from the geometry example: powers in units, morph order | Accepted |
 | D-080 | Findings from the objects example: event detection cost, texts in the framing | Accepted |
 | D-081 | Syntax stability review: options and clauses, and version 1 | Accepted |
+| D-082 | Release numbering: 0.x releases, branch per minor version | Accepted |
+| D-083 | The stochastic slice: random events, draws and seeds | Accepted |
+| D-084 | Many runs: another seed in labs, ensembles, histograms, statistics, staircases | Accepted |
+| D-085 | Findings from the reaction example: `restart`, histogram bars on the values' grid | Accepted |
 
 ---
 
@@ -250,6 +254,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-09-29 opened by the design audit.
   - 2026-09-29 accepted by the owner: one-way in v1.
+  - 2026-10-13 the later extension taken for declared unknowns: D-092 (MK-11.6 to MK-11.9, RC-5.5 to RC-5.9). Evolution stays causal except for rates that equations give (MK-11.9); constraint enforcement stays with D-020.
 
 ## D-008: Algebraic cycles detected statically
 
@@ -262,6 +267,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-09-29 proposed by the design audit.
   - 2026-09-29 accepted by the owner.
+  - 2026-10-13 the explicit solver declaration is an `unknown` block (D-092, MK-13.4): the solve is one node of the dependency graph; cycles through it are still MK-E14.
 
 ## D-009: Explanatory narrative as a first-class layer
 
@@ -431,6 +437,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-09-29 proposed in the model kernel spec v0.
   - 2026-09-29 accepted by the owner: check only.
+  - 2026-10-14 extended by D-093: a constraint may be enforced (`policy enforce`); checked constraints are unchanged.
 
 ## D-021: Plane angle is dimensionless
 
@@ -1522,3 +1529,345 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** `Parser::clause`, `BINARY`, `Parser::unexpected` in `prismal-syntax/src/parser.rs`; `options`, `view_options`, `check_options` in `lower_present.rs`; `prismal-syntax/tests/options.rs`; the tests of a circle's `rotate` and a marker's `line` now expect SX-E08 (`prismal-present/tests/shapes.rs`, `prismal-svg/tests/styles.rs`); working syntax sections 1.6 and 1.7 and status; guide chapter 10 (Options and clauses, SX-E08 and SX-E09), chapter 13 (a misspelled option, the operator message); README, guide README, spec README and 01 status lines.
 - **History:**
   - 2026-10-12 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-082: Release numbering: 0.x releases, branch per minor version
+
+- **Status:** Accepted
+- **Original position:** none. The workspace carried version `0.1.0` since the prototype began, with no tags and no statement of what a release number promises. D-081 called the working syntax "version 1", which could be read as a 1.0 release.
+- **Raised by:** the owner, 2026-10-13, when opening work beyond the first slice.
+- **Builds on:** D-001, D-081.
+- **Question:** What does a Prismal release number promise, and how is the next body of work separated from the finished first slice?
+- **Options considered:**
+  1. Tag the first slice as `v1.0.0`. In Rust (Cargo's semantic versioning) 1.0 promises a stable public API: no breaking change without 2.0. The crates' Rust APIs, the IR and the host protocol carry no such promise yet.
+  2. Tag the first slice as `v0.1.0` and continue on a `v0.2` branch (taken).
+- **Accepted position:** option 2, chosen by the owner.
+  - Releases are numbered `0.x.y` until the project chooses to promise API stability. Under Cargo's rules a 0.x minor version may break the crates' APIs, the IR format and the host protocol.
+  - The language promise is separate and unchanged: programs follow the working syntax's own version (D-081, working syntax section 1.7). Working syntax version 1 programs keep compiling with the same meaning, whatever the release number; a break needs a register entry naming the syntax version and the rewrite.
+  - `v0.1.0` tags `main` at the end of the first slice (2D mechanics and supporting math, D-001; working syntax version 1). Work for 0.2 is done on the long-lived branch `v0.2`, with feature branches merged into it; `main` receives only fixes to 0.1 until 0.2 is merged.
+  - 0.2 opens with the stochastic slice (D-013, D-083).
+- **Reason:** a 1.0 number would claim a stability nobody has checked; the crates are a prototype and hosts are expected to drive the API's shape (D-044). Keeping the syntax version separate lets authors rely on their programs while the implementation is still free to change.
+- **Consequences:** tag `v0.1.0`; branch `v0.2`; workspace version `0.2.0` on that branch; PROJECT-STATE conventions.
+- **History:**
+  - 2026-10-13 chosen by the owner and recorded.
+
+## D-083: The stochastic slice: random events, draws and seeds
+
+- **Status:** Accepted
+- **Original position:** D-013 accepted two stochastic modes, per-step sampling and exact event-time sampling (exponential waiting times, Gillespie), to be specified when the stochastic slice is planned. MK-10.4 keeps expressions free of draws; RC section 13 fixed only reproducibility (one seed per run, counter-based streams keyed by element identity). MK-14.2 reserved the `stochastic` process kind.
+- **Raised by:** the owner, 2026-10-13: version 0.2 starts with the stochastic slice (D-082).
+- **Builds on:** D-004, D-013, D-015, D-050, D-057, R-10, R-30, R-61; RC section 13.
+- **Question:** How does a model write random behavior, what exactly does a run compute, and how is it reproduced?
+- **Content the slice serves:** radioactive decay of individual atoms and of a population, random walks and diffusion, reaction kinetics (A + B to C, reversible reactions) compared with their rate equations, epidemics, dice, coins and sampling experiments.
+- **Options considered:**
+  1. **Stochastic processes as a new kind of block** (`process decay stochastic { ... }`), with their own rules for time. A second event machinery beside the existing one.
+  2. **A random trigger and distribution functions inside the existing event machinery** (taken). Event-time sampling is a trigger, `random(λ)`, whose occurrences are the instants of a Poisson process of rate `λ`; per-step sampling is an ordinary time event (`every Δ`) whose condition or handler draws from a distribution. Handlers, payloads, members, conflicts, logs and snapshots stay as they are.
+  3. **Random expressions anywhere** (`derived { noise = normal(0, 1) }`). Breaks MK-10.4: a value read twice would differ, and replay would depend on how often the runtime evaluates.
+- **Accepted position:** option 2, under the owner's standing delegation of 2026-09-30.
+  - **Random trigger.** `event E on random(λ)`: `λ` is a rate, `Quantity<1/T>` (a frequency; `0.5 /s`). Its occurrences are the jumps of a Poisson process whose intensity is `λ` evaluated on the committed state: between two transitions the rate is constant and the waiting time is exponential, and a transition that changes the rate changes the law from that instant on (memorylessness). A rate of `0` makes no occurrence; a negative rate is a model failure. In v0.2 the rate reads only parameters, constants, discrete state and derived values of those, not continuous state or `t` (MK-E27, as MK-14.12 for flow conditions); rates that vary between events are a later extension. Gillespie's direct method is the special case of one event per reaction channel; the runtime computes the same law by the modified next reaction method (Anderson 2007), which keeps one clock per event and so needs no global ordering of draws.
+  - **Zeno.** A random event is not a crossing; MK-15.12 does not apply. A handler may change its own rate (a population decaying at `λ N`).
+  - **Draws.** A distribution is a built-in function, written as any call, `normal(0 m, s)`, and allowed only in an event's enabling condition and its operations (handler and Zeno settle operations), MK-E28 elsewhere; the IR keeps it as its own form, `draw`. A name the author declares wins over a distribution, so no version 1 program changes meaning. Distributions: `uniform(a, b)`, `normal(m, s)` (for a vector `m`, independent components with deviation `s`), `exponential(r)` (a rate; the result has the inverse dimension), `bernoulli(p)` (a Boolean), `integer(a, b)` (both ends included), `poisson(m)`, `binomial(n, p)`, `choice(x1, ..., xk)` (equally likely). Invalid arguments (`s < 0`, `p` outside `[0, 1]`, `a > b`) make the draw invalid, a model failure.
+  - **Streams.** A draw is a pure function of the run's seed, the event's identity, the draw site's number in the event (sites numbered in order through the elaborated condition, handler and settle operations) and the event's due count (how many times the event has been due, from 0). A random event's clock is one more stream of the event. Draws do not depend on the order in which the runtime evaluates events, nor on draws of other events (RC-13.3). The generator is Philox4x32-10 (Salmon and others 2011).
+  - **Seed.** A run's configuration has a `seed` (a whole number, default 0), one more entry of the existing block: `config { seed = 7 }`. The same seed reproduces the run bit for bit on one build and platform (D-015).
+  - **Members.** A random event repeated per member (`for a in atoms { event decay on random(lambda) { destroy a } }`) has one clock per member; a member not alive has rate 0.
+- **Reason:** the event machinery already gives what random behavior needs (atomic handlers, cascades, payloads, members, logs, snapshots), so random events cost one trigger and one expression and keep every guarantee. Keying draws by event identity and due count keeps a run reproducible under edits elsewhere in the model, and lets a learner compare two seeds of one model.
+- **New syntax kept to one form** (owner, 2026-10-13: no new syntax where existing syntax covers the need). Per-step sampling needs none: `every Δ` and a distribution. The seed needs none: an entry of `config`. A keyword `draw` before distributions was considered and dropped: calls already mark a computed value, and the checker confines distributions to events. The trigger `random(λ)` is the one addition, written in the existing trigger form and contextual (no reserved word, working syntax section 1.7). Exact event times written with existing triggers (`at next` with `set next = t + exponential(r)`) are correct only when the author resamples every clock whose rate an event changes, which silently fails for reactions sharing species.
+- **Consequences:** MK-10.4, MK-15.3 (trigger table), MK-15.15 to MK-15.17, MK-E27, MK-E28; RC-13.5 to RC-13.8; 04-ir `random` trigger and `draw` expression; working syntax sections 1.1, 1.3, 1.5; `prismal_kernel::random` (Philox4x32-10 checked against the Random123 known answers, samplers checked by their moments); `CExpr::Draw`, `Ctx::draws`; the runtime's clocks and due counts, kept in snapshots; `Config::seed`, `RunConfig::seed`; parser, lowering and formatter; guide chapter 15 (Chance) and the reference; `prismal-present/tests/random.rs` (population and per-member decay against the exponential law, a random walk, a reversible reaction at equilibrium, seeds, resumed runs, diagnostics, shadowing).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30.
+
+## D-084: Many runs: another seed in labs, ensembles, histograms, statistics, staircases
+
+- **Status:** Accepted
+- **Original position:** D-083 gave runs a seed and left two needs of probability lessons open (PROJECT-STATE, 2026-10-13): a lab replays one seed, so a learner never sees that runs differ; and a lesson or a test could not show or check how results spread over many runs.
+- **Raised by:** the plan of D-083; the owner's guidance of 2026-10-13: reuse existing forms where they serve, and where they limit, choose what serves both old and new needs.
+- **Builds on:** D-069 (runtime-control buttons), D-070, D-078 (breaks of sampled paths), D-083; PK-3, PK-4, PK-6.3a.
+- **Question:** How does a learner draw another run, how are many runs shown and checked, and how is a value that changes only at events plotted?
+- **Options considered:**
+  1. **A seed control** (`slider(seed)`): the seed is configuration, not a model binding, so a control would need a new kind of target; a learner gains nothing from choosing seed 17 over 18.
+  2. **A runtime-control word** in the existing `button(...)` form, beside `reset`, `undo` and `redo` (taken): `button(reseed)`.
+  3. For ensembles, **a reference from a representation to an observation by name** (`histogram(ends)`): one declaration for views and tests, but representations have never referred to observations, and every place that compiles representations would need the presentation's observations.
+  4. **An ensemble source** (taken), the same kind of argument as the sampled source `pos every Δ` of PK-6.3a: `n at τ over 200 runs`. The same phrase is an observation's schedule, so tests and views write ensembles alike. Reuses the words `at` and `over`; adds the contextual word `runs`.
+  5. For statistics, **new expectation forms** (`ends has mean 500 within 6`) or **function calls on an observation** (taken): `mean(ends) == 500 within 6`, `deviation(ends) in [11, 21]`, in the existing expectation forms.
+- **Accepted position:** options 2, 4 and 5, under the owner's standing delegation of 2026-09-30.
+  - `button(reseed)` starts a new run from `t0` with the next seed; `reset` keeps replaying the run shown. Hosts receive the seed in the session's clock (`seed`).
+  - PK-3.8: `x at τ over n runs`, run `k` with the observed run's seed plus `k - 1` (the first run is the one observed), each ending at `τ`; at most 10 000 runs.
+  - PK-6.3e: `histogram(e at τ over n runs, bins: k)` in a plot view whose `x` axis has the values' dimension and whose `y` axis counts runs; drawn as one closed outline, so every renderer already draws it; computed again only when the run's configuration changes.
+  - PK-4.1a: `mean(obs)`, `deviation(obs)` (sample standard deviation).
+  - PK-6.3d: **found while checking a still of the guide's lab**: a `series_plot` of a count was drawn as separate points, because the breaks of D-078 cut the path at every event. A value that changes only at transitions is now drawn as an exact staircase from the committed states (up to 4000 steps); a flowing value that jumps keeps its breaks. Sampling a staircase every `Δ` was tried first and rejected: with 0.5 s samples a decay of single nuclei looked like jumps of 40.
+- **Reason:** each need is met by a form authors already know (a runtime-control button, an argument like a sampled source, a function in an expectation), with one new contextual word. The ensemble keeps the model free of presentation concerns: the runs are the run configuration's, varied only in seed.
+- **Consequences:** `Interactive::reseed`, `seed`; host `session_info.seed`; IR `Arg::Ensemble`, `Schedule::At.runs`, `Subject::Statistic`; `data::ensemble`, `MAX_RUNS`; `CKind::Histogram` with its cache, `piecewise_constant`, `stairs`; parser (`at τ over n runs` in arguments and schedules), lowering, formatter; word lists (`runs`, `reseed`); PK-3.8, PK-4.1a, PK-6.3d, PK-6.3e; 04-ir; working syntax; guide chapter 15 (Many runs) and the reference; tests: a lab that replays or draws another run, a histogram of many runs, statistics in a case, and the count at the half-life against the binomial law by a chi-square test (the earlier tests checked means only).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-085: Findings from the reaction example: `restart`, histogram bars on the values' grid
+
+- **Status:** Accepted
+- **Original position:** D-069 gave labs `button(reset)`: a new run with the presentation's configuration and an empty log. PK-9.2 gave lessons `reset`: the lesson's run shown again from `t0`. D-084's histogram divided its range into equal bins.
+- **Raised by:** the fourth complete example, `examples/reaction.md` (a reversible reaction with few and many molecules), checked by rendering its lab and lesson.
+- **Builds on:** D-069, D-078 to D-080 (findings from examples), D-083, D-084; PK-9.2, PK-9.2a.
+- **Findings:**
+  1. **A setting that is a starting value could not be tried.** The number of molecules `n0` sets the starting counts. In the lesson, `intervene { set n0 = 20 }; reset` showed the first run again (where `n0` was still 1000) and then applied the change at 8 s to the old counts: the panel read "share 37.50". In the lab, a learner who moved the slider to 20 and pressed Replay (`reset`) lost the setting. Neither form can mean "start again with the settings as they are", and `reset` keeps its meaning in `examples/chain.md`, whose lesson resets to the starting spread.
+  2. **A histogram of values on a coarse grid showed a comb.** With 20 molecules the share takes the values `k / 20`; with 25 bins over `[0.5, 1]`, most bins fell between two values and stayed empty.
+  3. A fixed `y` range suits either a narrow histogram (a thousand molecules, over 100 runs in one bin) or a wide one: the plot option `follow: y` (D-070) already grows the range to the bars; the example uses it.
+  4. Two narrations ran shorter than the system voice; the exporter's notes (D-079) gave the durations.
+- **Options considered (finding 1):**
+  1. **Change `reset`** to keep the parameter values. Breaks the meaning `examples/chain.md` relies on and makes "back to the start" impossible to write.
+  2. **A modeling idiom**: an `on request` event that sets the counts from `n0` (as `relaunch` in `examples/projectile.md`). Time does not start again, so plots against elapsed time continue, and every model would repeat its starting values in a handler.
+  3. **A new word, `restart`** (taken), in both places a reset is written: a timeline action and a lab's runtime-control button. A new run from `t0`, every parameter overridden by its value at the instant shown, an empty log.
+- **Accepted position:** option 3 for finding 1; for finding 2, bars on the values' grid. Under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13 (choose the form that serves both existing and new needs).
+  - `restart` (contextual): in a lab, `button(restart)`; in a timeline, an action that makes a new run version and maps the beat to its `t0`. `reseed` is now a restart with the next seed (D-084 had it reset, which also dropped the learner's settings). `reset` is unchanged.
+  - PK-6.3e: values on a grid coarser than the bins get one bar per grid value, `d` wide; values on finer grids or none are binned as before.
+- **Reason:** "start again with what I have chosen" and "back to how it was" are both things learners and lesson authors mean, and one word cannot carry both. The run already separates configuration (parameters, seed) from the log of actions, so a restart is the configuration of the instant shown with an empty log: no new runtime machinery.
+- **Consequences:** `prismal_present::restarted`; `Interactive::restart`, `reseed` reworked; timeline `Restart` (a new run version); IR action `restart`; parser, lowering, formatter, checker, host action list, word lists; frame `grid_step` and grid bars; PK-6.3d, PK-6.3e, PK-9.2 table; reference, working syntax, guide chapter 15; `examples/reaction.md` and its index row; tests `restart_keeps_the_settings` and `histogram_bars_follow_the_grid_of_the_values`.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-086: Rates that vary between events
+
+- **Status:** Accepted
+- **Original position:** D-083 (MK-15.16) let a random event's rate read only parameters, constants, discrete state and derived values of those, so that a rate is constant between transitions; a rate reading continuous state or `t` was MK-E27, "a later extension".
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers); the owner chose on 2026-10-13 to finish the stochastic leftovers before the next capability.
+- **Builds on:** D-004, D-083; MK-15.15, RC-7.5, RC-7.6, RC-13.8.
+- **Question:** How does a model write chance whose rate changes continuously: a counter moving away from a source, an ageing part that fails more often with time, a reaction rate that follows a temperature?
+- **Content the change serves:** inverse-square counting, hazard rates that grow with age (Weibull lifetimes), reactions in a changing environment, infection pressure from a continuous quantity.
+- **Options considered:**
+  1. **Keep MK-E27**; authors approximate with `every Δ` and `bernoulli(λ Δ)`. Wrong by a step-size error, and the step is the author's to choose.
+  2. **Thinning** (Lewis and Shedler 1979): draw candidates at a bounding rate and accept with probability `λ / λ_max`. Needs a bound the author declares or the runtime guesses; a wrong bound gives a wrong law silently.
+  3. **The integral of the rate as hidden continuous state** in the solver, with the occurrence located as a crossing of `Λ = P`. Exact to the solver's accuracy, but the rate's integral enters the solver's error control and changes the steps of every flow in the model.
+  4. **The integral of the rate by quadrature on the dense output of each step** (taken). Within a step the discrete state is fixed and the dense output gives the continuous state at any instant, so the rate is a smooth function of time on the step: its integral is computed by adaptive Gauss-Legendre panels, and the occurrence is located by bisection and cut as a crossing is.
+- **Accepted position:** option 4, under the owner's standing delegation of 2026-09-30.
+  - MK-15.16: a rate may read continuous state and time, directly or through derived values; MK-E27 is retired. The checker marks such a rate as varying (`CTrigger::Random { varying }`).
+  - RC-13.8a: a varying clock has no scheduled instant; its integral grows along each accepted step; reaching its target cuts the step there (to `ε_t`), and it fires as any clock. Targets come from the same stream as before, so a constant rate made varying keeps its draws.
+  - A negative rate inside a step is a model failure, located to `ε_t`.
+  - No new syntax: `random(λ)` takes any rate expression.
+- **Reason:** option 4 is exact to the solver's accuracy (the law tested against the closed forms below), adds no state to the solver, leaves models without varying rates bit for bit as they were, and keeps every guarantee of D-083 (streams by event identity, snapshots, resumed runs).
+- **Consequences:** MK-15.15, MK-15.16; RC-13.8a; `prismal_kernel::check::random_rate_varies`; runtime `integrate_rates`, `locate_clocks`, `fire_clock`; guide chapter 15 (Rates that change between events) and the reference (MK-E27 retired); tests: a count under the rate `k t / tau` against its Poisson law (mean and variance), its waiting time (first two moments), a rate read from cooling continuous state, resumed runs, a rate that turns negative.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-087: Instruments: readings with resolution, range and noise
+
+- **Status:** Accepted
+- **Original position:** PK-3.7 let an observation declare an instrument (resolution, range, a stated uncertainty) and deferred instrument noise to the stochastic slice (D-013). Nothing of it was implemented: no syntax, no IR, no runtime.
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: instrument noise in observations, PK-3.7); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-061, D-081, D-083, D-084, D-085; PK-3.1, PK-3.2, PK-3.7, PK-3.8, PK-6.3a, PK-6.3e; RC-13.5, RC-13.6.
+- **Question:** How does a lesson show that a measurement differs from the quantity measured (rounding, a limited range, random error), how does a learner see readings scatter, and how does a test check them?
+- **Content it serves:** measurement and uncertainty in school physics and chemistry: readings against the true curve, repeated measurements and their spread, the standard uncertainty of an instrument, the mean of many readings.
+- **Options considered:**
+  1. **Noise in the model**, `derived { reading = y + normal(0 m, s) }`. A distribution outside an event (MK-E28, D-083) for a good reason: a value read twice would differ, and the model would change with how it is shown.
+  2. **Options on each observation and representation** (`series_plot(y every 0.05 s, noise: 2 cm)`). Every place that reads would repeat the instrument, and an observation has no place for options.
+  3. **A named instrument in the presentation, applied like a function to a source** (taken): `instrument ruler(resolution: 1 cm, range: [0 m, 2 m], noise: 2 cm)`, then `ruler(y) every 0.05 s` in a series plot, a trace, a table, a histogram's ensemble or an observation. The declaration is a head word with named options, the existing form (D-081); the use is a call, the existing form; the only new word is the contextual `instrument`.
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13 (reuse existing forms; one new word).
+  - PK-3.7: options optional, constants with the dimension of the values; `range` for numbers and quantities only; readings outside the range are not available; noise is normal with the given deviation per component; the resolution rounds last. Text alternatives state the standard uncertainty `sqrt(noise^2 + resolution^2 / 12)`.
+  - RC-13.5a: a reading's noise is a pure function of the seed, the instrument, the source and the instant, so the series a learner sees and the observation a test checks are the same readings, and `button(reseed)` measures again.
+  - Readings never change the run (PK-3.2): the model stays exact.
+  - **Found while checking a still of the guide's lab:** a series of readings joined into a dotted line looked like a second curve; readings are drawn as separate points (a group of markers, which every renderer draws). A histogram of readings rounded to 1 cm in 1 cm bins showed a comb: values on the bins' edges were split by rounding; grid bars (D-085) now apply when the grid step equals the bin width, not only when it is wider.
+- **Reason:** an instrument belongs to how a model is observed, not to the model; naming it once lets every reading of a lesson share it, and writing it as a call reads as what it is, the ruler applied to the height.
+- **Version 1 (D-081):** an addition. `instrument` was not a valid presentation item before, and a call that names an instrument exists only in presentations that declare one.
+- **Consequences:** IR `Instrument`, `Presentation.instruments`, `Observation.instrument`, `instrument` of sampled and ensemble arguments; `prismal_present::measure` (`Meter`); `data::observe` and `compile_rep` take the presentation's instruments; series plots of readings as points; tables write `out of range`; parser, lowering, formatter, word lists; PK-3.7, PK-6.3a, PK-6.3e, RC-13.5a, 04-ir, working syntax, reference; guide chapter 15 (Measuring with an instrument); `prismal-present/tests/instruments.rs`.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-088: `restart` and `reseed` in explore beats
+
+- **Status:** Accepted
+- **Original position:** D-069 made every runtime-control button a static error in a presentation with a timeline (PK-E05): a lesson's timeline is directed by the learner through the player. D-085 gave lessons the timeline action `restart`, so a lesson could restart only in a beat written for it, after the explore beat (`examples/reaction.md`).
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: a `restart` button inside explore beats); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-025, D-069, D-084, D-085; PK-6.3d, PK-9.8, PK-9.9.
+- **Question:** How does a learner, during an explore beat, try a starting value (a number of molecules, a starting height) or another outcome of chance, more than once?
+- **Options considered:**
+  1. **Keep the restart after the beat.** One try per explore beat; the learner who moves the slider sees nothing change until the beat ends.
+  2. **Restart the branch whenever a parameter that sets a starting value changes.** Silent, and wrong for parameters that act during the run (a slider of a rate should take effect at the instant shown).
+  3. **Allow `button(restart)` and `button(reseed)` among an explore beat's controls** (taken): the words labs already use, acting on the learner's branch.
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30.
+  - PK-9.8c: a press makes a new version of the branch from `t0` with the branch's parameters at the instant shown and an empty log, and with the next seed for `reseed`; the beat ends as before (PK-9.9).
+  - A learner script writes `press restart` and `press reseed` (IR `LearnerInput::Control`), read as runtime controls unless the model has an event of that name, as `button(restart)` is.
+  - `reset`, `undo` and `redo` stay lab controls: on a branch, "back to the starting values" and the undo of the lesson's own actions have no clear meaning.
+  - The host's `lesson_press` accepts these buttons; the web player already sends a lesson's buttons through it.
+- **Reason:** the learner's branch is already a run of its own (D-025), so restarting it is the lab's restart applied to it; no new word, and the lesson's run is untouched.
+- **Version 1 (D-081):** an addition: programs that were errors (PK-E05) become valid; no valid program changes meaning.
+- **Consequences:** PK-6.3d, PK-9.8c; IR `LearnerInput::Control`; `EXPLORE_CONTROLS`; checker, timeline (`restart_branch`, shared with the action `restart`), host, formatter; guide chapters 8 and 15, the reference; `examples/reaction.md` offers "Try it" and "Another run" in its explore beat; `prismal-present/tests/explore_restart.rs`.
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-089: Histograms of one run: values at events and sampled values
+
+- **Status:** Accepted
+- **Original position:** D-084 (PK-6.3e) gave `histogram` one source, an ensemble: the values of many runs at one instant. What happens again and again within one run (the faces of a die rolled every second, the waits between clicks of a counter) could be observed (`gap on click`, `x every Δ`) and checked (`mean(gaps)`), not drawn.
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: histograms over a whole run rather than one instant); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-070, D-084, D-085, D-087; PK-3.1, PK-3.4, PK-6.3a, PK-6.3e.
+- **Question:** How does a lesson draw the distribution of values within one run?
+- **Options considered:**
+  1. **A representation that refers to an observation** (`histogram(gaps)`). Rejected for the same reason as in D-084: representations have never referred to observations.
+  2. **New histogram options** (`histogram(gap, over: run)`). A second way to say what the observation phrases already say.
+  3. **The observation phrases as sources** (taken): `histogram(face on roll)` and `histogram(h every 1 s)`. `every Δ` was already a representation source (PK-6.3a); `on E` was an observation schedule (PK-3.4) and becomes a representation source too, the same phrase in both places, as `at τ over n runs` did in D-084.
+- **Accepted position:** option 3, under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13.
+  - PK-6.3e: a histogram takes an ensemble, a sampled source or the values at each occurrence of an event, each in the state after the occurrence's transition (as an observation `on E`). The values of one run are those up to the instant shown, so the histogram grows while a lab plays; with none yet, the axis alone is drawn. Instruments (D-087) apply to all three.
+  - IR argument `{"kind": "on", "expr", "event", "instrument"?}`; `on E` in a model expression's arguments is SX-E08.
+  - **Found while checking a still of the guide's lab:** both renderers labelled every time axis "elapsed time (s)", wrong under a histogram of waits. The host's layout now says whether a plot's time axis is elapsed time (`x_elapsed`, HI-5.1), false in a view with a histogram.
+- **Reason:** one phrase for one meaning: what the observation `gap on click` collects is what `histogram(gap on click)` draws, so a lesson's picture and its test agree by construction.
+- **Version 1 (D-081):** an addition: `on` after an argument was an error before.
+- **Consequences:** IR `Arg::On`; AST `Arg.on`, parser, lowering, formatter, elaboration; `HistSource` in `prismal_present::frame`; host layout `x_elapsed`; SVG and web renderers; PK-6.3e, 04-ir, HI-5.1, working syntax, reference; guide chapter 15 (Waiting times); `prismal-present/tests/histograms.rs` (a die's faces, waits against the exponential law, a sampled level).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-090: Noise in flows: stochastic differential equations
+
+- **Status:** Accepted
+- **Original position:** D-013 accepted per-step and event-time sampling; D-083 implemented both with random events and draws in handlers, and kept expressions free of draws (MK-10.4). Noise inside a flow, a stochastic differential equation, was left for later: it needs a stochastic integrator (2026-10-13 handover).
+- **Raised by:** the 2026-10-13 handover (stochastic leftovers: SDE-style noise in flows); the owner chose to finish the stochastic leftovers on 2026-10-13.
+- **Builds on:** D-004, D-013, D-015, D-083, D-086; MK-10.4, MK-14 (flows), RC-6, RC-7, RC-13, RC-14.
+- **Question:** How does a model write a continuous quantity pushed at random at every instant (Brownian motion, Langevin's equation, a noisy oscillator, geometric Brownian motion), and how is it integrated?
+- **Content it serves:** Brownian motion and Einstein's diffusion law, Langevin's equation and the Ornstein-Uhlenbeck process, thermal noise, first passage times, geometric Brownian motion, noisy population growth.
+- **Options considered:**
+  1. **Per-step draws in an event** (`every Δ` with `set x = x + normal(0 m, s)`). A random walk, not a flow: no drift integrated with it, the step is the author's to tune, and events cannot be located inside the walk's steps.
+  2. **A separate noise statement** (`noise der(x) = b`), the diffusion term apart from the flow. A second statement for one equation; the drift and the diffusion of one quantity are written in two places.
+  3. **White noise as a built-in term of a flow** (taken): `der(x) = a + b * noise`, as physics texts write Langevin's equation (`dv/dt = -γ v + ξ(t)`). `noise` is a quantity of dimension `T^(-1/2)`, so `sqrt(2 * D) * noise` checks with `D` an area per time. Each occurrence is an independent noise, so a vector of independent components is `(k * noise, k * noise)`.
+  For the integrator: **Euler-Maruyama** with a fixed step (taken), weak order 1 and strong order 1/2 (1 for additive noise), the method of textbooks; higher-order schemes (Milstein, stochastic Runge-Kutta) need derivatives of the noise coefficients or more evaluations and can come later behind the same syntax.
+- **Accepted position:** option 3 with Euler-Maruyama, under the owner's standing delegation of 2026-09-30 and the owner's guidance of 2026-10-13 (reuse forms; one built-in name, no new statement).
+  - MK-14.16: flows linear in each noise (MK-E30); `noise` only in flows (MK-E29); Itô's reading; a name the author declares wins over `noise`, so no version 1 program changes meaning.
+  - RC-13.9: a model with noise steps by Euler-Maruyama with the case's `h`, else `t_ref / 1000`. One evaluation of the flows per step, with each noise at `N / sqrt(h)`, is exactly the Euler-Maruyama step because the flows are linear in the noises: no symbolic separation of drift and diffusion. `N` comes from Philox, keyed by the flow's identity and the occurrence, counted by the step's start instant, so runs resume from snapshots bit for bit. The dense output is the straight line between steps; events and varying random clocks (D-086) work on it unchanged.
+  - **Units with half powers.** Noise coefficients have half-integer dimensions (a volatility in `1/s^0.5`). Unit exponents may now be whole or half numbers (`s^0.5`, `s^-1.5`); dimensions already held rational powers.
+  - **Found while checking a still of the guide's lab:** an author's `line: solid` on a trace was dropped from frames (solid being every other shape's default), so a Brownian path could only be drawn dashed, and the web player drew any unnamed style as dotted. Frames now carry `solid`, and both renderers draw it without dashes.
+  - **Found by the step count:** looking up the state at an instant scanned every segment; a run with noise has one per millisecond. The lookup is now a bisection (same segment, same results).
+- **Reason:** writing the noise where the physics puts it keeps one equation in one place, and the dimension of white noise makes a wrong coefficient a type error; linearity in the noise is both what makes the equation meaningful and what lets one evaluation give the Euler-Maruyama step.
+- **Version 1 (D-081):** an addition: `noise` was an unknown name before, and declared names keep their meaning.
+- **Consequences:** IR builtin `noise`; `CExpr::Noise`, `Ctx::noise`, `CModel::noise`, `rhs_noisy`; checker MK-E29, MK-E30 (`noise_linear`); runtime Euler-Maruyama branch, `Dense::Linear`, `Config::h_noise` and `noise_step`, case `h`; unit exponents in halves (parser, `Unit::parse`); formatter, text and formula (`ξ`); frames carry `line: solid`, SVG and web renderers; `Run::state_at` by bisection; MK-14.16, RC-13.9, reference, guide chapter 15 (Noise in flows); `prismal-present/tests/noise.rs` (diffusion `2 D T`, independent components, Ornstein-Uhlenbeck spread, geometric Brownian motion in Itô's sense, first passage, reproducibility and resumed runs, step count, diagnostics).
+- **History:**
+  - 2026-10-13 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-091: Fields on grids
+
+- **Status:** Accepted
+- **Original position:** D-010 accepted two forms of field: formula fields (functions over a domain, done in the first slice as derived functions) and field state, a core state form whose discretization (grid, resolution, boundary treatment) is declared and visible to the author. MK-9.4 left the evolution of field state to "the slice that needs it" (MK section 21: deferred).
+- **Raised by:** the owner, 2026-10-13: after the stochastic leftovers, version 0.2 takes fields on grids (heat, waves, diffusion), the largest remaining gap for science content.
+- **Builds on:** D-010, D-014, D-022, D-034, D-046, D-055, D-060, D-061, D-070, D-090; MK sections 9, 11, 14, 16; RC-6.2; PK-6.3, PK-7.3.
+- **Question:** How does a model declare a quantity with a value at every point of a line or a plane, say how it evolves (heat, diffusion, waves), what happens at its edges, and how is it read, drawn and changed?
+- **Content it serves:** heat conduction in a rod and a plate, steady temperature profiles, diffusion of a dye, the vibrating string and standing waves, ripple tanks with reflection and interference, concentration in a ring (periodic).
+- **Options considered:**
+  1. **Fields as collections of cell objects** (`parts { cells: Cell[100] }` with relations to neighbours): reuses objects and relations, but a Laplacian becomes hand-written sums over relations, every cell is a member with its own identity, and a thousand cells make a model unreadable and slow.
+  2. **Vectorized field values**, every operator lifted to whole fields (`T * 2` a field). Every arithmetic rule of the checker gains a field case, and mixing a field with a scalar of another grid needs its own rules.
+  3. **A field declared like a function of its grid, evaluated pointwise** (taken). `T(x in rod)` uses the form of a derived function `f(x: A): B` (MK-10.7), with the parameter ranging over a grid instead of a type: a field is a function over its grid (MK-9.4, R-15). Its initial value, definition, flow and `set` are expressions evaluated in each cell, where the field reads its cell; `laplacian` and `gradient` read the neighbours. The checker types them as ordinary expressions of the field's values; nothing else of the language changes.
+  For the grid: **declared in the model** (taken) with the head-and-options form (`grid rod(x: [0 m, 1 m], cells: 50)`, D-081), as D-010 requires, rather than a run's configuration, since the grid changes the answer. In the plane the grid lies in the model's space and a cell's coordinate is a point (D-022), so distances and components read as elsewhere.
+  For boundary conditions: **a statement naming the field** (taken), `boundary T { left = e }`, rather than clauses on the declaration: held edges, insulated by default, `periodic`. Values are expressions, so a slider of a parameter moves an edge's temperature.
+  For the discretization: cell-centred finite differences of second order with ghost cells (taken): an insulated grid conserves the integral exactly, held edges are second order, and the method of lines hands the cells to the existing solver as ordinary state.
+- **Accepted position:** option 3, under the owner's direction of 2026-10-13 and the standing delegation of 2026-09-30 for the details.
+  - MK-9.4 to MK-9.8: grids of one or two axes, fields of numbers and quantities, pointwise expressions, boundary conditions, readings `T(x)` (linear, bilinear in the plane), `integral`, `mean`, `min`, `max`; equations over fields hold, and are checked, in every cell; `der(T)` of a field is typeset `∂T/∂t`, `laplacian` `∇²`.
+  - Handlers set a field in each cell, `set h(p) = e` (a stone dropped where the learner clicks, with D-060's clicks).
+  - PK-6.3f: `function_graph(T)` draws a field on a line; `heatmap(T)` draws a field in the plane, frames carrying values scaled to `[0, 1]` and a palette name (`sequential`, `diverging` about 0), as D-061 carries colour names; both renderers map the same stops.
+  - **Found by timing a ripple tank** (two fields of 100 by 100 cells): a step took 20 ms, and keeping each step's interpolant took a quarter of a gigabyte for 5 s. Pointwise expressions are now evaluated over all cells at once where their form allows (the same arithmetic, so the same results; other forms cell by cell), and interior Laplacians read their neighbours directly: 3.6 ms per step. A run with more than 4096 state components keeps each step as the line between its states, shared with the next (RC-6.2a). A presentation may say how long its run lasts, `until τ`, the form of a case (PK-10.1a), and a lab of a large model runs 20 s by default (HI-5.1a).
+  - Not yet: noise in a field's flow and draws in a pointwise `set` (each cell would need its own stream), fields of vectors, fields in object types, meshes, implicit solvers for stiff diffusion on fine grids.
+- **Reason:** a field written as a function of its grid reads as the mathematics does (`T(x)`, `∂T/∂t = α ∇²T`), costs one new declaration (`grid`) and one statement (`boundary`), and keeps every existing guarantee: fields are state, so events, snapshots, resumed runs, observations and tests work on them unchanged.
+- **Version 1 (D-081):** an addition. `grid`, `boundary` and `periodic` are contextual (D-040) and start model items only before a name; `T(x in g)` and `der(T(x))` were syntax errors before; `laplacian`, `gradient`, `integral` and `mean` are built-in functions that a declared name shadows.
+- **Consequences:** IR `Grid`, `GridAxis`, `Type::Field`, `Binding.boundary`, `Func::{Laplacian, Gradient, Integral, Mean}`, `Presentation.until`; kernel `CGrid`, `CFieldOp`, `CEdge`, `Value::Field`, `Ctx::point`, `per_cell`, `eval_cells`, `COp::SetField`, MK-E31 to MK-E33; runtime compact steps, equations per cell; presentation `FieldGraph`, `Heatmap`, frame `raster`; host horizons; SVG and web renderers; parser, lowering, formatter; MK-9.4 to MK-9.8, RC-6.2a, PK-6.3f, PK-10.1a, HI-5.1a, 04-ir, working syntax, reference; guide chapter 16 (a heated rod, a vibrating string, a ripple tank); `prismal-present/tests/fields.rs` (heat mode decay and its half-time, insulated conservation, a held steady line and its flux, the string's half period, periodic conservation, a plate's mode, gradients in the plane, equations, heatmaps, a pointwise set by click, diagnostics).
+- **History:**
+  - 2026-10-13 accepted (owner's direction and standing delegation) and implemented.
+  - 2026-10-14 choices per cell (`if` on the coordinate, parameters or discrete state, with `and`, `or`, `not` and comparisons), `min`, `max` and `atan2` of two values evaluated over all cells at once, with the same arithmetic as cell by cell (a test compares the runs bit for bit); a flow with a choice on 2000 cells about 17 times faster. In the web player a heatmap is one image per frame (the ripple tank plays at the display's rate).
+
+## D-092: Solved equations: unknowns and equations that give rates
+
+- **Status:** Accepted; implemented and specified on branch `acausal`.
+- **Original position:** D-007: v1 is causal; equations are displayed and checked, never solved; acausal solving is "a later, explicit extension" for which the IR keeps equations symbolic. D-008: an algebraic loop is an error unless a solver is declared for it. D-020: constraints are checked, not enforced.
+- **Raised by:** the owner, 2026-10-13: version 0.2 takes another capability after fields; acausal solving chosen as the one that opens the most content (circuits, equilibria, constrained systems).
+- **Builds on:** D-007, D-008, D-015, D-034, D-040, D-081; MK sections 6, 11, 13, 14.
+- **Question:** How does a model state values that only equations determine together (a circuit's currents, an equilibrium's amounts), and rates given by equations (`L der(I) = V - R I`), and how are they computed?
+- **Options considered:**
+  1. **A role keyword on equations** (`equation ohm: V == I * R solve`). Says which equations solve but not for what; unknowns would have to be inferred from what the equations read.
+  2. **Declared unknowns** (taken): `unknown { I: Current; V2: Voltage = 1 V }`, a declaration block like the others, the value an optional starting guess. The equations that read an unknown, directly or through derived values, and are not checks, determine the unknowns. This is the explicit declaration D-008 asks for: no algebraic loop is inferred.
+  3. **Full causalization of every equation** (Modelica): sorting, tearing, index reduction. The subsystem D-007 warned about; not needed for index-1 problems.
+  For computing: **Newton's method at every instant from the guesses** (taken), with a finite-difference Jacobian, Gaussian elimination with pivoting and backtracking, never warm-started from earlier solves, so a run is a pure function of its configuration (D-015).
+- **Accepted position:** option 2, under the owner's direction and the standing delegation of 2026-09-30.
+  - Unknowns are numbers or quantities, read anywhere like derived values; the solve is one node of the dependency order (derived values that the equations read and that depend on unknowns are computed inside it).
+  - As many equation components as unknowns, with a matching of unknowns to equations (MK-E34); a solved equation reads no field and no rate of a state that has a flow (MK-E35).
+  - `der(x)` of a continuous state that no flow defines, read by a solved equation, is an unknown: elaboration adds a hidden unknown `der(x)` and the flow from it, so `m * der(v) == F` gives `v` its rate. The authored IR keeps the equation as written.
+  - Electrical units and types for circuits: `V Ω C F H` with prefixes (`kΩ`, `μF`, `mA`...), `Voltage`, `Charge`, `Resistance`, `Capacitance`, `Inductance`, and `Temperature`.
+  - Not yet: vector unknowns; solved equations over fields. (Constraint enforcement and constrained mechanics: D-093.)
+- **Version 1 (D-081):** `unknown` is contextual (a block or declaration follows). One change of meaning: a display equation that reads `der(x)` of a state without a flow is now solved for that rate; before, such a state stayed constant and the equation could hold only if the rate was zero.
+- **Specification:** MK-3.3, MK-6.2, MK-6.4a, MK-11.4, MK-11.6 to MK-11.9, MK-13.4, MK-E06, MK-E34, MK-E35; RC-5.5 to RC-5.9; 04-ir section 5 (`unknown` role, guesses, hidden rate unknowns); working syntax 1.1 and 1.5.
+- **Consequences:** IR `Role::Unknown`; kernel `CSolve`, `solve_unknowns`, `plan_solve`, `SOLVE` in the orders, `CEquation.width`, MK-E34, MK-E35; `elaborate::solved_rates`; units and named types; reference, guide chapter 17; `prismal-present/tests/solve.rs` (divider, RC charging and its half time, a bridge balanced and not, a diode, an equilibrium, rates from equations for a coil and a spring, diagnostics).
+- **History:**
+  - 2026-10-13 accepted and implemented on `acausal`. Open: the diode circuit is not solved from its default guesses when the battery gives 0 V or -5 V (Newton from 0.6 V diverges through the exponential); MK-11.6 to MK-11.9 and RC-5.6 to be written in the specification.
+  - 2026-10-13 solver robustness: the diode failures were the convergence test, which ignored rounding in residuals; convergence also by Newton correction, equilibrated elimination, an overflow-safe residual norm, step doubling (RC-5.6, RC-5.7). Battery and guess sweeps added as tests.
+  - 2026-10-13 specified (see Specification). Two gaps closed while writing it: an operation that sets an unknown is MK-E06; an equation that gives the rate of a vector or point state is one MK-E35 naming it, instead of errors about a hidden unknown.
+  - 2026-10-14 merged into `v0.2`.
+
+## D-093: Enforced constraints and constrained mechanics
+
+- **Status:** Accepted; implemented on branch `constraints`.
+- **Original position:** D-020: constraints are checked, never enforced; a constrained system is written in coordinates that satisfy the constraint (a pendulum in its angle); enforcement comes later, with acausal solving, "because it needs the same solver machinery". MK-12.5 reserved projection and constrained dragging for that extension. D-092 gave the solver machinery and left constraint enforcement as its next step.
+- **Raised by:** the owner, 2026-10-14: "continue with constraint enforcement and constrained mechanics".
+- **Builds on:** D-007, D-008, D-020, D-023, D-032, D-047, D-092; MK sections 11, 12, 14; RC section 5.
+- **Question:** How does a model state that a body stays on a rod, a wire or a curve, when no single coordinate expresses it (a bob in `x` and `y`, a double pendulum, a point a learner drags around a circle), and how does the runtime keep it so?
+- **Content it serves:** pendulums written as physics texts draw them (forces on a body, the rod's tension as a quantity to plot), beads on wires and normal forces, double pendulums and linkages, unit-circle and locus lessons where a dragged point stays on its curve.
+- **Options considered:**
+  1. **A new statement for joints** (`joint rod(bob, pivot, length: L)`), as physics engines offer. A vocabulary of joint kinds to design and keep, and forces the model never names: the tension a lesson wants to plot would be hidden.
+  2. **Infer the force**: the runtime adds the constraint force itself, as a Lagrange multiplier times the constraint's gradient, from the masses of the bodies. The model would have to say which state is a position, which a velocity and which binding a mass; nothing in the language says so.
+  3. **Enforcement as a policy of the existing constraint statement, with the holding force an `unknown` the flows read** (taken). `constraint rod: |bob - pivot| == L policy enforce`, `unknown { tension: Force }`, `der(vel) = (0 m/s^2, -g) - tension / m * (bob - pivot) / |bob - pivot|`. The runtime differentiates the constraint along the flows until a rate reads the unknown (index reduction, as Modelica tools do), solves that rate with the model's other equations (D-092), and projects the state back onto the constraint and its lower rates after each step and transition, so the solver's errors never accumulate as drift.
+  For the projection: **Baumgarte stabilization** (feedback terms added to the solved rate) needs coefficients tuned per model and still drifts; **projection after each accepted step** (taken) keeps the constraint to rounding at every committed state and needs no tuning (Hairer, Lubich and Wanner, IV.4).
+  For the rates: **finite differences** of the constraint along the trajectory lose half the digits at the second rate; **symbolic differentiation of the IR** (taken) is exact and covers every form a mechanical constraint is written with.
+- **Accepted position:** option 3, under the owner's direction of 2026-10-14 and the standing delegation of 2026-09-30.
+  - MK-12.6 to MK-12.10: an enforced constraint is an equality without tolerance; its rates are taken along the flows; the first that reads an unknown is a solved equation of the model (it counts in the matching of MK-E34); the lower ones are projected onto; a constraint whose rates vanish first (no flows: a point held on a circle) is enforced by projection alone; MK-E36 for a constraint that cannot be enforced.
+  - What moves (MK-12.8): state, positions before velocities; parameters only when the change being committed sets them; when a change sets some of what a level reads, only those move, so a dragged bob moves and the bob above it stays. A point declared off its curve over parameters alone is an error at the start, since the runtime would have to choose which parameter to move.
+  - RC-5.10: Gauss-Newton of minimum scaled norm, level by level, at initialization, at the end of each accepted step and in each transition.
+  - `dot(a, b)`: the dot product, needed to differentiate a norm, `d|v| = dot(v, dv) / |v|`, and useful in its own right (work, projections, angles between vectors).
+- **Findings while building it:**
+  1. **Residual sizes** (RC-5.6a). The solve judged a residual against `|lhs| + |rhs|`. A constraint's second rate is a sum of terms that cancels to 0 at the solution, with a right side of 0, so its residual could never be small against its sides: a double pendulum released from rest failed to solve at its first step. Residuals are now judged against the size of the terms their sides are computed from (sums add sizes, products multiply them). Every earlier solve still passes; the convergence by Newton correction of D-092 is unchanged.
+  2. **Tuples scaled in a sum** (D-032). `(0 m/s^2, -g) + N / m * (sin(α), cos(α))` was MK-E01: in a sum whose left side is a tuple, the right side was checked without the expected vector type, so its tuple stayed a tuple. The expected vector type now reaches both sides, as D-032 always said ("through scaling").
+  3. **Flows inside rates.** A rate replaces each state by its flow; the flow, moved out of its declaration, lost the expected type its tuples need. The checked model holds each flowing state's rate as a private derived binding `x@flow` of the rate's type, read by the rates instead.
+- **Reason:** the forces of constrained mechanics are quantities lessons want to show (a rod's tension, a wire's push), so the model names them, as a physics text does; the constraint is the statement authors already write as a check, now kept true. Projection makes enforcement exact at every committed state with no tuning, and the solve of D-092 needed no change beyond the residual sizes.
+- **New syntax kept to one word** (owner, 2026-10-13: no new syntax where existing syntax covers the need; where it limits, choose the form that serves both). The constraint statement, its `policy` clause, `unknown` blocks and flows already existed; only the policy value `enforce` is new, contextual (D-040). `dot` is a built-in function in the existing call form. A joint statement, a constraint-force keyword and a mass declaration were all avoided.
+- **Version 1 (D-081):** additions. `policy enforce` was SX-E02 before; a name the author declares `dot` wins over the function. No valid program changes meaning: the residual sizes change only when a solve is judged converged, and every earlier case gives the same results.
+- **Not yet:** inequality constraints (contact, a rope that goes slack: complementarity), constraints whose rates read a rate (`der`), constraints on fields; constraints inside object types work as written (elaborated per member) but have no test of their own.
+- **Consequences:** IR `Policy::Enforce`, `Func::Dot`, `prismal_ir::enforce` (`rates`, `ddt`, `elaborate`, identities `c@solved`, `x@flow`); kernel `CConstraint.levels`, `CLevel`, `CModel::project`, `CExpr::eval_sized`, typing and evaluation of `dot`, MK-E36; `check_model` elaborates enforced constraints; the runtime projects at initialization, at the end of each step and in transitions, and skips enforced constraints in checks; parser word `enforce`, lowering, formatter, text and typesetting of `dot` (`a · b`); MK-10.7a, MK-11.4, MK-12.1 to MK-12.10, MK-E36, RC-5.6a, RC-5.7, RC-5.9, RC-5.10, 04-ir; working syntax; guide chapter 18 (Constrained motion: a pendulum on a rod, a bead on a wire, two rods, a point held on a curve), the reference, What goes where, I want to...; `prismal-present/tests/constraints.rs` (the rod pendulum against the exact period of RP-04 and the tensions `m g cos θ0` and `m g (3 - 2 cos θ0)`, the rod's length at every committed state to 1e-14, energy, a shove off the circle, a bead on a slope against `g sin α` and `m g cos α`, a double pendulum's rods and energy, a point dragged onto a ring, diagnostics, `dot`).
+- **History:**
+  - 2026-10-14 accepted (owner's direction and standing delegation) and implemented.
+
+## D-094: Findings from the spoon example: a control for a choice, and what the browser check found
+
+- **Status:** Accepted
+- **Original position:** a lab's controls were `slider`, `number_input` and `toggle` (PK-6.3): numbers, quantities and Booleans. Enumerations (D-049) could be shown (`label`) but not chosen. Older items of the 2026-10-13 handover: fields and chance checked only through the SVG and PNG renderers, a heatmap drawn as one rectangle per cell in the web player, a fifth complete example with fields.
+- **Raised by:** the fifth complete example, `examples/heat.md` (a spoon in hot water: a field along the spoon, a material chosen by the learner), and the first browser check of chapters 15 to 18 (`web/check-content.mjs`).
+- **Builds on:** D-049, D-061, D-077, D-078 to D-080, D-085, D-091, D-092, D-093; PK-6.3, PK-6.3d, PK-10.4, HI-4.3.
+- **Findings:**
+  1. **A choice of kind had no faithful form.** The spoon's material was first discrete state set by a requested event per material, with a button each. `restart` (D-085) starts again from the parameters, so it put the spoon back to copper: in the lab "Into the water again" lost the learner's choice, and in the lesson `request steel; restart` showed copper. A slider over a diffusivity would hide the materials behind numbers. A material is a value of an enumeration, and a setting the learner chooses is a parameter.
+  2. **An unknown was drawn as a staircase.** A series plot of an unknown (D-092), the rod's tension or a capacitor's current, was drawn as a value that changes only at events (PK-6.3d), a flat line between events; also, a random rate or an event guard reading an unknown was taken as constant between transitions.
+  3. **Identities of instruments and grids** were not matched across edits (D-036): a program printed and read again renamed them `ruler~2`; found when chapters 15 to 18 joined the formatter's round-trip test.
+  4. **Heatmaps in the web player** were one SVG element per cell: 3600 elements redrawn each frame for the ripple tank.
+  5. **Units of no name** were printed `m^2 s^-1` on controls and labels.
+  6. A text that interpolates a quantity already prints its unit (`{handle:.1} K` gave `34.3 K K`): an authoring slip, not a defect; the example writes `{handle:.1} above the room`.
+- **Options considered (finding 1):**
+  1. **Buttons that intervene** (`button(set material = steel)`): a statement inside a representation's parentheses, mixing the two option families D-081 keeps apart.
+  2. **A slider over an enumeration's cases**: reuses `slider`, but a slider says "more or less", which kinds are not.
+  3. **A control for enumeration parameters, `select(p)`** (taken): one more representation kind, an addition the working syntax allows (section 1.7), with no options; the model states the choice as an enumeration parameter and derives what depends on it with `match`, forms that already exist.
+- **Accepted position:** option 3 for finding 1, under the owner's standing delegation of 2026-09-30 and the guidance of 2026-10-13 (reuse forms; where they limit, choose the one that serves both).
+  - PK-6.3: `select(p)` for an intervenable parameter (or state) of an enumeration; PK-E05 for any other binding, and for a `slider`, `number_input` or `toggle` of an enumeration (the message names `select(p)`). Frames carry the cases as `options` and the chosen case's number as `value`; the text alternative reads `select for material = steel, one of copper, steel, glass`; arrow keys move to the next or previous case and stop at the ends; the protocol's `set_control` takes the case's number (HI-4.3). The web player shows a native drop-down; the SVG renderer a box with a caret and the case's name.
+  - Finding 2: unknowns are treated as varying wherever continuous state is: series are sampled, random rates reading them are integrated along steps (D-086), and an event guard reading one depends on what the solved equations read (D-038).
+  - Findings 3 to 5: instruments and grids are matched and renamed by name like other declarations; the web player draws a heatmap as one image with one pixel per cell, scaled without smoothing (the ripple tank plays at the display's rate, about 60 frames per second in headless Edge); units are written as a numerator over a denominator, `m^2/s`, `1/(m s)`.
+  - Run cases cannot request events (only `param`, `input`, `config`, `until`, `learner`, `expect`); with the material a parameter, the steel case sets `param { material = steel }`, so no new case form is needed.
+- **Reason:** a kind is chosen by name, and a choice that a restart must keep is a setting, which is a parameter; enumerations and `match` already state it in the model, so the only addition is the control that lets the learner choose.
+- **Version 1 (D-081):** an addition: `select` was not a representation kind before.
+- **Consequences:** `Shape::Control.options`, `CKind::Control.options`; `select` in the parser's and host's lists; host `literal` for enumerations; `Interactive::key` for selects; web player and SVG renderer; `piecewise_constant`, `random_rate_varies` and `self_retriggering` treat unknowns as varying; `identity.rs` matches instruments and grids; `unit_text`; web raster as an image; guide chapter 7 and the reference, I want to... (a choice of kind); PK-6.3 table, HI-4.3 table; `examples/heat.md` (lab, lesson, video; steady temperatures against `hot cosh(m (L - x)) / cosh(m L)`); `prismal-web/tests/select.rs`; `prismal-present/tests/constraints.rs` (a series of an unknown); `web/check-content.mjs` in CI; chapters 15 to 18 in the player's program list.
+- **History:**
+  - 2026-10-14 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+
+## D-095: Leftovers closed: easing, line width, text alignment, narration speed, flows' derived values, goal notes
+
+- **Status:** Accepted
+- **Original position:** the handovers of 2026-10-12 and 2026-10-13 listed leftovers to take up "when a lesson needs them": easing for `reveal`, `hide` and `camera` (D-075 gave it to `animate` only); animated line width; text styles, among them alignment at a point (D-080); narration speed as a learner control (PK-9.7); computing in flow evaluations only the derived values flows need (D-080); a declared banded label (D-077 option 3); relation sets with at most one relation per pair; goal notes for the secondary programs of chapters 5, 7 and 9.
+- **Raised by:** the owner, 2026-10-14: "close older items that are still listed".
+- **Builds on:** D-042, D-061, D-068, D-075, D-076, D-077, D-080, D-081; PK-8.4, PK-9.2, PK-9.7.
+- **Accepted position,** item by item, under the owner's standing delegation of 2026-09-30 and the guidance of 2026-10-13 (reuse forms; where they limit, choose the one that serves both):
+  1. **Easing.** The clause `ease e` that `animate` takes (D-075) is taken by `reveal`, `hide ... for`, `camera` and `bind`, with the same four functions (`linear`, `smooth`, `in`, `out`) and the same default, `smooth`, so no existing lesson changes. No new word.
+  2. **Line width.** `width: k`, a positive number, a multiple of the kind's own line width, on the kinds that take a line style (D-061), and `animate R width to k`, from the author's width or 1. Media multiply the widths of the strokes they draw. One new option name and one new animated property, in the existing families.
+  3. **Text alignment.** `align: left|center|right` for a text put `at` a point: it starts at the point (the default, as before), is centred on it, or ends at it. Without `at` it is PK-E05.
+  4. **Narration speed** (PK-9.7) is the speed of the whole lesson: the reference player's Speed already sets the voice's rate, recordings' playback rate and the timeline's together, which keeps a narration with its beat and captions; a voice faster than its timeline would drift from what it describes. The player now offers 0.5x, 0.75x, 1x, 1.25x, 1.5x and 2x. No language change.
+  5. **Derived values in flow evaluations.** A solver's evaluation of the flows computes only the derived values the flows read, directly, through other derived values and their conditions, or through the solve (`CModel::flow_order`); every other evaluation (events, observations, frames) computes them all, so no result changes. The chain example's cases run in 6.1 s instead of 7.8 s.
+  6. **A declared banded label** (D-077 option 3) is not added: `text("...", when: c)` (D-076) already shows words for a band of values, and the guide teaches it (chapter 7, Words for values).
+  7. **Relation sets with at most one relation per pair** need no new form: an event's enabling condition refuses a second link, `if not any(s.has(x) and s.has(y) for s in links)`, as the goal page "Join two members at most once" shows.
+  8. **Goal notes** (a **Goal** and a **How it is built** line) now precede every program of chapters 5, 7 and 9 that is not an exercise's solution.
+- **Reason:** each leftover either completes a family of forms authors already know (easing everywhere a timeline animates, width beside color and line, alignment for placed texts) or is already served by an existing form, which is documented instead of duplicated.
+- **Version 1 (D-081):** additions: `ease` after `reveal`, `hide`, `camera`, `bind`; the options `width` and `align`; the animated property `width`. No valid program changes meaning.
+- **Consequences:** IR `ease` on `Hide`, `Reveal`, `Camera`, `Bind`; `Animated::Width`; frame `width` and `Note.align`; parser clauses, lowering (`ease_of`), formatter, elaboration; timeline easings per action; both renderers draw widths and anchors; `CModel::flow_order`, `update_for_flows`; web player speeds; PK-9.7; guide chapters 5, 7, 8, 9 and the reference; tests `easing_of_reveals_hides_cameras_and_binds`, `animated_line_width`, `widths`, `aligned_texts`.
+- **History:**
+  - 2026-10-14 accepted under the owner's standing delegation of 2026-09-30 and implemented.
+

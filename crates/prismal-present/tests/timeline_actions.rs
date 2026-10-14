@@ -185,3 +185,58 @@ fn an_offset_needs_a_spatial_view() {
     let codes: Vec<&str> = Program::new(doc).err().map(|ds| ds.iter().map(|d| d.code).collect()).unwrap_or_default();
     assert_eq!(codes, ["PK-E05"]);
 }
+
+/// `ease e` on `reveal`, `hide ... for`, `camera` and `bind` (D-095), as on `animate`: a
+/// quarter of the way through, `linear` has gone a quarter, `in` a sixteenth; without the
+/// clause, `smooth` as before.
+#[test]
+fn easing_of_reveals_hides_cameras_and_binds() {
+    let src = SRC.replace(
+        "presentation Moves for FreeFall {",
+        "presentation Eased for FreeFall {
+  view scene: spatial(Plane, scale: 1 m -> 10 px, y: up) { marker(pos) as ball }
+  timeline {
+    scene s {
+      beat show  { reveal fade for 4 s in scene ease linear { marker(origin) as spot } }
+      beat look  { camera scene zoom 2 for 4 s ease in }
+      beat gone  { hide spot for 4 s ease out }
+      beat plain { hide ball for 4 s }
+    }
+  }
+}
+presentation Moves for FreeFall {",
+    );
+    let pb = play(&program(&src), "Eased", Config::until(10.0), Medium::Interactive, vec![]).unwrap_or_else(|d| panic!("{d:?}"));
+    close(pb.frame(1.0, 0.1).rep("spot").unwrap().opacity.unwrap(), 0.25, "reveal, linear");
+    let zoom = pb.frame(5.0, 0.1).views[0].camera.as_ref().map(|c| c.zoom).unwrap();
+    close(zoom, 1.0 + 1.0 / 16.0, "camera, in");
+    close(pb.frame(9.0, 0.1).rep("spot").unwrap().opacity.unwrap(), 1.0 - (1.0 - 0.75f64.powi(2)), "hide, out");
+    close(pb.frame(13.0, 0.1).rep("ball").unwrap().opacity.unwrap(), 1.0 - ease(0.25), "hide, smooth");
+    let printed = prismal_syntax::format::format(&prismal_syntax::compile(&src).unwrap().doc);
+    for line in ["reveal fade for 4 s in scene ease linear", "camera scene zoom 2 for 4 s ease in", "hide spot for 4 s ease out", "hide ball for 4 s"] {
+        assert!(printed.contains(line), "{line} in\n{printed}");
+    }
+    assert!(!printed.contains("hide ball for 4 s ease"), "no clause when none was written");
+    assert_eq!(prismal_syntax::compile(&printed).unwrap().doc, prismal_syntax::compile(&src).unwrap().doc);
+}
+
+/// `animate R width to k` (D-095): from the author's width, or 1, to `k`.
+#[test]
+fn animated_line_width() {
+    let src = SRC.replace(
+        "presentation Moves for FreeFall {",
+        "presentation Thick for FreeFall {
+  view scene: spatial(Plane, scale: 1 m -> 10 px, y: up) { segment(origin, pos, width: 2) as rod }
+  timeline {
+    scene s {
+      beat grow { animate rod width to 4 for 2 s ease linear }
+    }
+  }
+}
+presentation Moves for FreeFall {",
+    );
+    let pb = play(&program(&src), "Thick", Config::until(10.0), Medium::Interactive, vec![]).unwrap_or_else(|d| panic!("{d:?}"));
+    assert_eq!(pb.frame(0.0, 0.1).rep("rod").unwrap().width, Some(2.0));
+    close(pb.frame(1.0, 0.1).rep("rod").unwrap().width.unwrap(), 3.0, "halfway");
+    close(pb.frame(3.0, 0.1).rep("rod").unwrap().width.unwrap(), 4.0, "held");
+}

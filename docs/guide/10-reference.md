@@ -20,35 +20,41 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `state { x: T = e [intervenable] }` | continuous state, with its initial value | 4 |
 | `discrete { x: T = e }` | discrete state: changed only by events | 5 |
 | `derived { x: T = e; f(x: A): B = e }` | derived values and functions, always current | 1 |
+| `unknown { x: T [= guess] }` | unknowns: found at every instant from the equations that read them (the value is the solver's starting guess) | 17 |
 | `fn f(x: A, y: B): R = e` | a declared function: reads only its parameters, constants and other functions | 2 |
 | `enum Phase { a, b, c }` | an enumeration: a type whose values are its cases | 5 |
 | `flow { der(x) = e; der(y) += e }` | rate of change: one definition, or summed contributions | 4 |
 | `process Name { flow ...; event ... }` | a named group of flows and events | 4 |
 | `event E on trigger [if c] [{ ops }] [zeno settle { ops } \| zeno stop]` | an event | 5 |
-| `equation N: a == b [checked within tol]` | a stated relation, shown and optionally checked | 6 |
+| `equation N: a == b [checked within tol]` | a stated relation, shown and optionally checked; an equation that reads an unknown is solved for it | 6, 17 |
 | `constraint N: c [within tol] [policy reject \| report \| stop]` | a checked condition (`within` for `==` only) | 6 |
+| `constraint N: a == b policy enforce` | a condition the runtime keeps true: the state is moved onto it, and the unknown force that holds it is solved for | 18 |
 | `object Name { ... }` | an object type, with the body of a model; declared in a model | 9 |
 | `parts { a: T { x = e }  c: T[n] { x = e } }` | one object, or a collection of `n` members; overrides and input connections, with `index` the member's number | 9 |
 | `flow { for b in c { der(b.x) = e } }` | flows the model writes for each member | 9 |
+| `grid g(x: [a, b], cells: n)`, `grid g(x: [a, b], y: [c, d], cells: (n, m))` | a grid: a line, or a rectangle of the model's plane, cut into equal cells | 16 |
+| `state { T(x in g): R = e }`, `derived { q(x in g): R = e }` | a field over grid `g`: a value of type `R` in each cell, `x` the cell's position (a point in the plane) | 16 |
+| `flow der(T) = e`, `flow der(T(x)) = e` | a field's flow, computed in each cell; `T` and other fields of the grid read the cell | 16 |
+| `boundary T { left = e; right = e; bottom = e; top = e }`, `boundary T periodic` | a field's edges held at values (the others insulated), or wrapped around | 16 |
 
 Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2`, `flow der(x) = v`.
 
 **Modifiers:** `symbol "θ"` (display symbol), `unit deg` (display unit of an angle), `intervenable` (state the learner may change), `private`, `combine sum|product|min|max|any|all` (discrete state that takes contributions).
 
-**Triggers:** `rising(g)`, `falling(g)`, `crossing(g)` (zero crossings of `g`), `at τ`, `every Δ [from τ0]`, `start`, `request`, `E` (after event `E` occurs or is emitted), `input(i)`. `request(p: T)` and `E(p: T)` receive a payload named `p` (chapter 5); `request(b in c)` receives a member of the collection `c`, and `request(b in c, p: T)` several payloads (chapter 9).
+**Triggers:** `rising(g)`, `falling(g)`, `crossing(g)` (zero crossings of `g`), `at τ`, `every Δ [from τ0]`, `start`, `request`, `E` (after event `E` occurs or is emitted), `input(i)`, `random(λ)` (at random instants, on average `λ` per unit of time, chapter 15). `request(p: T)` and `E(p: T)` receive a payload named `p` (chapter 5); `request(b in c)` receives a member of the collection `c`, and `request(b in c, p: T)` several payloads (chapter 9).
 
 **Inputs:** `input { x: T [= default] }`, values from the environment; a case supplies them with `input { x = v; x = v at τ }` (chapter 5).
 
 **Members** (chapter 9): `a.x`, `c[k].x`; `sum`, `min`, `max`, `any`, `all` of `(e for b in c [if cond])`; `count(c)`, `count(b for b in c if cond)`. In views, `for b in c { reps }` draws one representation per member, named `name[k]`.
 
-**Operations:** `set x = e`, `set b.x = e` (a member's binding), `emit E`, `emit E(v)` (with a payload), `emit E(b, v)` (several), `contribute x += e` (into discrete state declared with `combine`; any number combine, a `set` of the same binding conflicts, chapter 5).
+**Operations:** `set x = e`, `set b.x = e` (a member's binding), `set T(p) = e` (a field, in each cell, chapter 16), `emit E`, `emit E(v)` (with a payload), `emit E(b, v)` (several), `contribute x += e` (into discrete state declared with `combine`; any number combine, a `set` of the same binding conflicts, chapter 5).
 
 ## Types and values
 
 | Form | Meaning | Chapter |
 |---|---|---|
 | `Real`, `Boolean`, `Angle` | numbers, truth values, angles (dimensionless) | 1, 2 |
-| `Length`, `Mass`, `Time`, `Velocity`, `Acceleration`, `Force`, `Energy`, `Power`, `Pressure`, `Frequency`, `Momentum`, `Area`, `Volume`, `Current`, `Amount` | named dimensions | 2 |
+| `Length`, `Mass`, `Time`, `Velocity`, `Acceleration`, `Force`, `Energy`, `Power`, `Pressure`, `Frequency`, `Momentum`, `Area`, `Volume`, `Current`, `Amount`, `Temperature`, `Charge`, `Voltage`, `Resistance`, `Capacitance`, `Inductance` | named dimensions | 2, 17 |
 | `Quantity<M/T^2>` | any dimension from `L M T I Θ N J` | 2 |
 | `Point`, `Vector<Length>`, `Vector<Velocity>` | geometry in the model's space | 3 |
 | `9.81 m/s^2`, `45 deg`, `2π`, `0` | literals; `0` has any dimension and is the zero vector | 2, 3 |
@@ -59,9 +65,13 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `match p { a => x, b => y }` | a value per case of an enumeration, every case once | 5 |
 | `a`, `Phase.a` | a case of an enumeration | 5 |
 | `t`, `t0`, `elapsed` | current time, start, time since start | 4 |
+| `noise` | white noise in a flow, `der(x) = a + b * noise`: each occurrence independent, of dimension `T^(-1/2)` | 15 |
 | `sin cos tan sqrt exp log abs min max atan2` | functions | 2 |
+| `dot(a, b)` | the dot product of two vectors of one space (or the product of two quantities) | 18 |
+| `T(x)`, `laplacian(T)`, `gradient(T)`, `integral(T)`, `mean(T)`, `min(T)`, `max(T)` | a field read at a position; its Laplacian and gradient in the cell being computed; over the whole field | 16 |
+| `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
-Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms min h kg g N J W Pa Hz A K mol cd rad deg rev %`.
+Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms min h kg g N J kJ W kW Pa Hz A mA μA K mol cd rad deg rev %`, and the electrical `V mV kV Ω kΩ MΩ C mC μC F mF μF nF pF H mH μH` (`ohm`, `kohm`, `uF`, `uA`... in ASCII); exponents are whole or half numbers, `s^0.5`.
 
 ## Presentation
 
@@ -78,12 +88,13 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms
 | `timeline { scene s { beat b { actions } } }` | a lesson | 8 |
 | `layout row(a, column(b, c))` | where views go on the page | 7 |
 | `title "..."` | the presentation's title, above its views | 7 |
+| `instrument n(resolution: r, range: [a, b], noise: s)` | an instrument; `n(e) every Δ` reads `e` through it in observations, series plots, traces, tables and histograms | 15 |
 
-**Representations:** `text("... {e} ... {e:.N} ..." [, at: P])` (an author's text with values in braces, `:.N` for N decimals; `at` places it in a spatial or plot view), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider` (with `ends: ("low", "high")`, words at its ends), `number_input`, `toggle`, `button(E)`, `button(E(v))`, `button(reset|undo|redo)`, `group(at: P, rotate: θ, scale: k) { members }` (chapter 7). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink` and `line: solid|dashed|dotted` style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7). Markers, arrows and graphs take `label: "..."` or `label: none` (chapter 7).
+**Representations:** `text("... {e} ... {e:.N} ..." [, at: P] [, align: left|center|right])` (an author's text with values in braces, `:.N` for N decimals; `at` places it in a spatial or plot view, starting at `P`, centred on it or ending at it), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `histogram(e at τ over n runs, bins: k)` (how many of `n` runs give each value), `histogram(e on E)`, `histogram(e every Δ)` (the values of one run up to the instant shown, chapter 15), `heatmap(T)` (a field in the plane, coloured cells, chapter 16), `function_graph(T)` (also a field on a line), `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider` (with `ends: ("low", "high")`, words at its ends), `number_input`, `toggle`, `select(p)` (one case of an enumeration parameter), `button(E)`, `button(E(v))`, `button(reset|undo|redo|restart|reseed)` (in a lesson, only `restart` and `reseed`, in an explore beat), `group(at: P, rotate: θ, scale: k) { members }` (chapter 7). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink`, `line: solid|dashed|dotted` and `width: k` (a multiple of the usual line width) style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7). Markers, arrows and graphs take `label: "..."` or `label: none` (chapter 7).
 
 **Observation schedules:** `live`, `every Δ`, `at τ`, `on E [microstep n]`, `over [a, b]`. **Sources:** any expression, `event_log [of E] [where zeno_applied]`, `diagnostics [of element]`, `intervention_log`.
 
-**Timeline actions:** `narrate "..." [for d]`, `run rate r [until E]`, `hold`, `seek τ`, `reset`, `branch`, `highlight name`, `hide name [for d]`, `reveal fade|draw [for d] [in view] { reps }`, `camera view [to P] [zoom z] [for d]`, `in view { reps }`, `show rep`, `intervene { set p = e }`, `request E`, `request E(v)`, `request E(c[k], v)`, `wait d`, `wait learner [limit L] [fallback { actions }]`, `animate name opacity|offset|scale to v [for d] [ease e]`, `animate name color|line to word [for d] [ease e]`, `animate name morph to other [for d] [ease e]`, `release name`, `bind name [for d]`, `sequence { ... }`, `explore [limit L] [keep p, ...] { controls } [fallback { actions }]` (chapter 8).
+**Timeline actions:** `narrate "..." [for d]`, `run rate r [until E]`, `hold`, `seek τ`, `reset`, `restart` (a new run from `t0` with the parameters as they are, chapter 15), `branch`, `highlight name`, `hide name [for d] [ease e]`, `reveal fade|draw [for d] [in view] [ease e] { reps }`, `camera view [to P] [zoom z] [for d] [ease e]`, `in view { reps }`, `show rep`, `intervene { set p = e }`, `request E`, `request E(v)`, `request E(c[k], v)`, `wait d`, `wait learner [limit L] [fallback { actions }]`, `animate name opacity|offset|scale to v [for d] [ease e]`, `animate name color|line to word [for d] [ease e]`, `animate name width to k [for d] [ease e]`, `animate name morph to other [for d] [ease e]`, `release name`, `bind name [for d] [ease e]`, `sequence { ... }`, `explore [limit L] [keep p, ...] { controls } [fallback { actions }]` (chapter 8).
 
 ## Options and clauses
 
@@ -95,18 +106,21 @@ Two forms add details to a form, one for each place they appear (D-081):
 | Kind | Options (every representation also takes `when: c`) |
 |---|---|
 | `marker` | `at`, `color`, `label` |
-| `arrow` | `from`, `scale`, `color`, `line`, `label` |
-| `function_graph` | `color`, `line`, `label` |
-| `segment`, `polyline`, `polygon`, `circle`, `trace`, `series_plot` | `color`, `line` |
-| `ellipse` | `rotate`, `color`, `line` |
-| `arc` | `from`, `to`, `color`, `line` |
-| `text` | `at` |
+| `arrow` | `from`, `scale`, `color`, `line`, `width`, `label` |
+| `function_graph` | `color`, `line`, `width`, `label` |
+| `segment`, `polyline`, `polygon`, `circle`, `trace`, `series_plot` | `color`, `line`, `width` |
+| `histogram` | `bins`, `color`, `line`, `width` |
+| `heatmap` | `range` |
+| `ellipse` | `rotate`, `color`, `line`, `width` |
+| `arc` | `from`, `to`, `color`, `line`, `width` |
+| `text` | `at`, `align` |
 | `formula`, `equation` | `live` |
 | `slider` | `range`, `step`, `ends` |
 | `number_input` | `range`, `step` |
 | `button` | `label` |
 | `group` | `at`, `rotate`, `scale` |
-| `axes`, `grid`, `label`, `title`, `table`, `toggle` | none |
+| `instrument` (not a representation) | `resolution`, `range`, `noise` |
+| `axes`, `grid`, `label`, `title`, `table`, `toggle`, `select` | none |
 | view `spatial(Space, ...)` | `scale`, `y` |
 | view `plot(...)` | `x`, `y`, `follow`, `x_unit`, `y_unit`, `window` |
 
@@ -116,10 +130,11 @@ Two forms add details to a form, one for each place they appear (D-081):
 | `equation` | `checked within tol` |
 | `constraint` | `within tol`, `policy p` |
 | `event` | `on trigger` first, then `if c`, the block, `zeno ...` |
-| `narrate "..."`, `hide`, `bind` | `for d` |
+| `narrate "..."` | `for d` |
+| `hide`, `bind` | `for d`, `ease e` |
 | `run rate r` | `until E` |
-| `reveal fade\|draw` | `for d`, `in view` |
-| `camera view` | `to P`, `zoom z`, `for d` |
+| `reveal fade\|draw` | `for d`, `in view`, `ease e` |
+| `camera view` | `to P`, `zoom z`, `for d`, `ease e` |
 | `animate name property to v` | `for d`, `ease e` |
 | `explore` | `limit L`, `keep p, ...` |
 | `wait learner` | `limit L` |
@@ -129,14 +144,14 @@ Two forms add details to a form, one for each place they appear (D-081):
 ```prismal
 run Name of Model with Presentation {
   param  { p = value; ... }
-  config { solver = rk4; h = 0.01 s }        // or rtol = ...; atol = ...
+  config { solver = rk4; h = 0.01 s }        // or rtol = ...; atol = ...; seed = 7
   until t0 + 10 s
   learner { at 15 s: set slider h = 20 m; at 16 s: continue }
   expect { ... }
 }
 ```
 
-**Expectations** (chapter 6): `a == b within tol`, `a == b within rel r`, `a == b exactly`, `a in [lo, hi]`, `obs[k]`, `(e on E [microstep 0])`, `log == [E1, E2]`, `start of b`, `end of b`, `initialization fails`, `configuration rejected`.
+**Expectations** (chapter 6): `a == b within tol`, `a == b within rel r`, `a == b exactly`, `a in [lo, hi]`, `obs[k]`, `mean(obs)`, `deviation(obs)` (of an observation's values, chapter 15), `(e on E [microstep 0])`, `log == [E1, E2]`, `start of b`, `end of b`, `initialization fails`, `configuration rejected`.
 
 ## Glossary
 
@@ -153,11 +168,11 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `branch` | a timeline action: the lesson continues on a new run version | 8 |
 | `camera` | a timeline animation of a view's centre and zoom | 8 |
 | `checked` | `equation N: a == b checked within tol` is checked while running | 6 |
-| `config` | a run's solver settings | 6 |
+| `config` | a run's solver settings and its seed (`seed = 7`) | 6, 15 |
 | `const` | constants: never change | 2 |
 | `constraint` | a condition checked while running, with a policy | 6 |
 | `continue` | a learner step that ends an explore beat or a continue point | 8 |
-| `press` | a learner step that presses an explore beat's button: `at 3 s: press drop` | 8 |
+| `press` | a learner step that presses an explore beat's button: `at 3 s: press drop`, or its runtime control: `press restart`, `press reseed` | 8, 15 |
 | `crossing` | an event when a value crosses zero either way | 5 |
 | `derived` | values computed from others, always current | 1 |
 | `discrete` | state changed only by events | 5 |
@@ -167,7 +182,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `emit` | an operation that makes another event happen | 5 |
 | `enum`, `match` | enumerations and a choice by case | 5 |
 | `combine` | how contributions combine into discrete state: `combine sum`, `product`, `min`, `max`, `any`, `all` | 5 |
-| `ease` | the easing of an animation: `animate R scale to 2 for 1 s ease linear` (`linear`, `smooth`, `in`, `out`) | 8 |
+| `ease` | the easing of an animation, a reveal, a hide, a camera move or a bind: `animate R scale to 2 for 1 s ease linear` (`linear`, `smooth`, `in`, `out`) | 8 |
 | `title` | a presentation's title, `title "..."`; a view's or panel's, `title("...")` | 7 |
 | `connect`, `disconnect` | operations that make a relation between members and remove one | 9 |
 | `contribute` | an operation adding to discrete state by its combination: `contribute total += 1` | 5 |
@@ -193,6 +208,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `layout`, `row`, `column` | a presentation's page layout: views side by side or one below the other | 7 |
 | `learner` | a run's scripted learner inputs; `wait learner`, a continue point | 8 |
 | `live`, `over`, `microstep` | observation schedules: current value, over an interval, at a microstep; `on drag live`: a drag that steers the running model | 6, 7 |
+| `runs` | an ensemble: `n at t0 + 7 s over 200 runs`, one value from each of 200 runs with consecutive seeds, in an observation or a representation's argument | 15 |
 | `max` | the capacity of a collection whose members come and go (`Drop[max 40]`, or `Drop[max inf]` for no limit); also the aggregate `max(...)` | 9 |
 | `model` | what exists and how it behaves | 1 |
 | `narrate`, `scene`, `sequence`, `timeline` | a lesson's narration, scenes, ordered actions and timeline | 8 |
@@ -205,14 +221,23 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `param` | parameters: changed by cases, controls and lessons | 1 |
 | `permit` | what the learner may do | 7 |
 | `policy`, `reject`, `report`, `stop` | what a failed constraint does; `zeno stop` | 5, 6 |
+| `enforce` | `policy enforce`: the runtime keeps the constraint true instead of checking it | 18 |
 | `presentation` | how a model is shown | 1 |
 | `private` | a binding hidden from outside | 2 |
 | `process` | a named group of flows and events | 4 |
 | `propose` | the binding change an inverse proposes | 7 |
 | `relation` | a relation type, whose endpoints are members of collections | 9 |
 | `undirected` | before `relation`: a relation whose two endpoints have no order, read with `s.has(o)` and `s.other(o)` | 9 |
+| `random` | an event at random instants at a rate: `on random(lambda * n)` | 15 |
 | `request` | an event requested from outside (a button, a lesson) | 5 |
 | `undo`, `redo` | in `button(...)`, a lab's runtime controls, with `reset` | 7, 8 |
+| `reseed` | in `button(...)`, a lab's runtime control: start again with the next seed, keeping the learner's settings | 15 |
+| `unknown` | in a model, a block of unknowns that the equations reading them determine: `unknown { I: Current }` | 17 |
+| `grid` | in a model, a grid of cells for fields: `grid rod(x: [0 m, 1 m], cells: 50)` | 16 |
+| `boundary` | in a model, a field's boundary conditions: `boundary T { left = 100 }` | 16 |
+| `periodic` | `boundary T periodic`: the field's grid wraps around | 16 |
+| `instrument` | in a presentation, declares an instrument whose readings are rounded to `resolution`, limited to `range` and disturbed by normal `noise`; `n(e)` reads `e` through it | 15 |
+| `restart` | a new run from `t0` with the parameters as they are now: a timeline action, and in `button(...)` a lab's runtime control (`reset` goes back to the starting values) | 15 |
 | `run` | a test case; in timelines, `run rate r` | 1, 8 |
 | `set` | an operation that replaces a value | 5 |
 | `show` | a timeline action that adds a representation | 8 |
@@ -230,7 +255,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce`.
 
 ## Diagnostics
 
@@ -265,6 +290,16 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E24 | event payload with no source |
 | MK-E25 | `index` read outside the overrides of a collection |
 | MK-E26 | a member that does not exist, a part used as a value, or an aggregate that has no value |
+| MK-E27 | retired (D-086): rates may read continuous state and `t` |
+| MK-E28 | a distribution outside an event's condition and operations |
+| MK-E29 | `noise` outside a flow, or in a field's flow |
+| MK-E30 | a flow that is not linear in `noise` |
+| MK-E31 | a field of another grid read where a field is computed |
+| MK-E32 | `laplacian` or `gradient` outside a flow or definition of a field of its grid |
+| MK-E33 | a boundary on something that is not a field, an unknown or repeated edge, or periodic with held edges |
+| MK-E34 | unknowns and the equations that read them do not match: an unknown no equation reads, more or fewer equations than unknowns, or equations that cannot determine their unknowns separately |
+| MK-E35 | an equation solved for an unknown reads a rate (`der`) or a field |
+| MK-E36 | an enforced constraint that cannot be enforced: no rate of it reads an unknown, it has a form without a rate (`if`, `match`, `min`, `max`), or it reads nothing the runtime can move |
 
 **Presentation** (`PK`): E01 broken reference, E02 expression does not check (the kernel's message is quoted), E03 control or action targets something the learner may not change, E04 missing or wrong scale or axis dimension, E05 representation unsuited to its sources or view, E06 representation kind not implemented.
 

@@ -107,6 +107,9 @@ Events can also happen at given times:
 
 Every trigger follows the word `on`: `on rising(g)`, `on every 0.5 s`, `on full`.
 
+**Goal.** A metronome that counts its beats, and a test of when they come.
+**How it is built.** A time event, `on every 0.5 s`, adds one to a `discrete` count; observations read the count at an instant and the time of every tick.
+
 ```text
 model Metronome {
   param { period: Time = 0.5 s  where period > 0 s }
@@ -137,6 +140,9 @@ run two_seconds of Metronome with MetronomeChecks {
 ## Repeating events and Zeno behavior
 
 An event whose handler changes what its own trigger depends on can happen again and again. A bouncing ball whose bounces lose energy bounces infinitely often in a finite time (a **Zeno** behavior, after the old puzzle of a runner who must first cover half the distance, then half of the rest, and so on forever). Each bounce is shorter than the last, so infinitely many of them fit before the ball would come to rest, and a simulation that tried to compute each one would never get past that moment. Such an event must say what happens at the limit:
+
+**Goal.** A ball that bounces lower each time and comes to rest, without the run stalling on infinitely many bounces.
+**How it is built.** A `falling` crossing reverses the velocity and keeps a share `e` of it; the event's `zeno settle { ... }` says what happens when the bounces pile up: the ball rests.
 
 ```text
 model Ball {
@@ -200,6 +206,9 @@ RP-03 in the reference programs is the complete bouncing ball, with its expected
 ## Modes with more than two values
 
 A Boolean mode has two values. When a system has more, declare an **enumeration**: a type whose values are a short list of names you choose, such as `rising`, `top`, `falling` (MK-2.2, D-049).
+
+**Goal.** A ball thrown straight up whose stage (climbing, at the top, landed) is named, shown and used by the motion.
+**How it is built.** An `enum` lists the stages; a `discrete` value of it is switched by events at the top and at the ground; `match` gives a value for each stage.
 
 ```text
 model Toss {
@@ -314,6 +323,9 @@ model Tally {
 ## Events that carry values, and values from outside
 
 An event can carry a value, its **payload** (MK-15.1, D-050): a kick carries how hard it is, a click carries where it was. And a model can receive values from its environment while it runs: a sensor, a game controller, a host application. These are **inputs** (RC-11.6, D-051).
+
+**Goal.** A cart moved by kicks of chosen strength and by a thrust from outside the model (a slider of a host application, a game controller).
+**How it is built.** An event `on request(j: Momentum)` receives the kick's strength as its payload; `input { thrust: Force }` is read by the flow and changed by the run's `input` block or the host's `set_input`.
 
 ```text
 model Cart {

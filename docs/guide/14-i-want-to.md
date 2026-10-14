@@ -19,6 +19,23 @@ slider(k, range: [1 N/m, 20 N/m])
 
 The slider names the parameter it moves. The `in [...]` range stops any value outside it, from a slider or a test. See [chapter 1](01-first-program.md).
 
+### Let the learner choose one of a few kinds (a material, a planet)
+
+Combine an **enumeration**, a **parameter** of it, a **derived** value by **match**, and **select**.
+
+```prismal
+// model
+enum Material { copper, steel, glass }
+// model / param
+material: Material = copper
+// model / derived
+alpha: Quantity<L^2/T> = match material { copper => 1.1e-4 m^2/s, steel => 4e-6 m^2/s, glass => 3.4e-7 m^2/s }
+// presentation / panel
+select(material)
+```
+
+The learner picks a case by name. As a parameter, the choice is kept by `button(restart)` and set in a case with `param { material = steel }` or in a lesson with `intervene { set material = steel }`. See the spoon example (`examples/heat.md`).
+
 ### Make a value change over time
 
 Combine a **state** value (its start) with a **flow** (its rate of change).
@@ -46,6 +63,22 @@ model Ball in Plane {                            // `in Plane` gives Point and V
 
 See [chapter 3](03-space-and-vectors.md) and [chapter 4](04-motion.md).
 
+### Give a quantity a value at every point
+
+Combine a **grid**, a **field** in state, a **flow** with `laplacian`, and a **boundary**.
+
+```prismal
+// model
+grid rod(x: [0 m, 1 m], cells: 50)
+state { T(x in rod): Real = 20 }
+flow der(T) = alpha * laplacian(T)
+boundary T { left = 100 }
+// presentation / a plot view
+function_graph(T)
+```
+
+In the plane, the grid takes `y: [...]` and the presentation draws `heatmap(T)` in a spatial view. See [chapter 16](16-fields.md).
+
 ### Add up several influences on one rate
 
 Write each influence as a **contribution** with `+=`, usually in a named **process**.
@@ -69,6 +102,49 @@ energy: Energy = 0.5 * m * v^2 + 0.5 * k * x^2
 
 A derived value is always up to date; it never needs a flow. See [chapter 1](01-first-program.md).
 
+### Find values that only equations give together
+
+Combine **unknowns** with **equations** that read them.
+
+```prismal
+// model / unknown
+I:  Current
+V2: Voltage
+// model
+equation loop: V0 == I * R1 + V2
+equation load: V2 == I * R2
+```
+
+Write one equation per unknown. The runtime solves them at every instant; a value after an unknown's type (`Vd: Voltage = 0.6 V`) is a guess that starts the solver. See [chapter 17](17-solving-equations.md).
+
+### Give a rate by an equation
+
+Write an **equation** that reads `der(x)` of a **state** with no flow.
+
+```prismal
+// model / state
+I: Current = 0 A
+// model
+equation faraday: L * der(I) == V0 - R * I
+```
+
+The equation gives `I` its rate, as a flow would. See [chapter 17](17-solving-equations.md).
+
+### Hold a body on a rod, a wire or a curve
+
+Combine a **constraint** with `policy enforce`, an **unknown** for the force that holds the body, and a **flow** that reads it.
+
+```prismal
+// model / unknown
+tension: Force
+// model / flow
+der(vel) = (0 m/s^2, -g) - tension / m * (bob - pivot) / |bob - pivot|
+// model
+constraint rod: |bob - pivot| == L policy enforce
+```
+
+The runtime keeps the bob at distance `L` and finds the tension at every instant. Write one unknown per constraint, acting in the direction the rod or wire pushes. A point that only the learner moves (no flows) needs no unknown: the constraint alone holds it where it is dragged. See [chapter 18](18-constraints.md).
+
 ### Make something happen when a value crosses a threshold
 
 Combine an **event** with a **crossing trigger** and **set**.
@@ -79,6 +155,22 @@ event full on rising(level - high) { set pumping = false }
 ```
 
 `rising(g)` fires when `g` crosses zero going up, so `level - high` fires when `level` passes `high`. `falling` is the downward crossing. The value changed is usually **discrete**. See [chapter 5](05-events-and-modes.md).
+
+### Find where a thrown object lands, from a height or on a slope
+
+Start the **state** at the height, and combine an **event** with **falling** on the height above the ground.
+
+```prismal
+// model / state
+pos: Point = origin + (0 m, h)
+// model
+event landed on falling(pos.y) { set flying = false }
+event on_hill on falling(pos.y - slope * pos.x)
+// presentation / observe
+range = pos.x on landed
+```
+
+The event fires where the path meets the ground, whatever the starting height: `falling(pos.y)` for flat ground at `y = 0`, `falling(pos.y - ground)` for any ground the model can compute. To show the formula beside the simulation, a **derived** value gives it: `speed * cos(angle) * (vy + sqrt(vy^2 + 2 * g * h)) / g`. See [chapter 5](05-events-and-modes.md) and the projectile example (`examples/projectile.md`).
 
 ### Let several events add to one value at the same instant
 
