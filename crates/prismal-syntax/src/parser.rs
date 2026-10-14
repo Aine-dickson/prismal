@@ -1817,7 +1817,7 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("animate") {
             let target = self.name("a representation name")?;
-            let property = self.any_name("`opacity`, `offset`, `color`, `line`, `scale` or `morph`")?;
+            let property = self.any_name("`opacity`, `offset`, `color`, `line`, `width`, `scale` or `morph`")?;
             self.expect_word("to")?;
             let to = self.expr()?;
             // `ease linear`: the easing function (D-075).

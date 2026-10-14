@@ -576,6 +576,8 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
     };
     // An animated size (D-075): a marker's dot and an arrow's head grow with it.
     let grow = r["scale"].as_f64().unwrap_or(1.0);
+    // The author's line width (D-095), a multiple of each stroke's own.
+    let thick = r["width"].as_f64().unwrap_or(1.0);
     let style = match r["line"].as_str() {
         Some("dashed") => format!(" stroke-dasharray=\"{} {}\"", n(6.0 * u), n(4.0 * u)),
         Some("dotted") => format!(" stroke-dasharray=\"{} {}\" stroke-linecap=\"round\"", n(0.01 * u), n(4.0 * u)),
@@ -648,7 +650,7 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
                 n(a[1]),
                 n(b[0]),
                 n(b[1]),
-                n(2.0 * u)
+                n(2.0 * u * thick)
             );
             if let Some(head) = arrow_head(a, b, 11.0 * u * grow) {
                 // Under `reveal draw` the head appears once the shaft is nearly drawn.
@@ -688,7 +690,7 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
                 n(a[1]),
                 n(b[0]),
                 n(b[1]),
-                n(2.0 * u)
+                n(2.0 * u * thick)
             );
         }
         "polyline" => {
@@ -705,7 +707,7 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
             cuts.push(all.len());
             for w in cuts.windows(2) {
                 let piece = all[w[0].min(all.len())..w[1].min(all.len())].iter().map(|p| map.to(pt(p))).map(|p| format!("{},{}", n(p[0]), n(p[1]))).collect::<Vec<_>>().join(" ");
-                let _ = write!(out, "<polyline class=\"{cls}\" points=\"{piece}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{}\"{extra}/>", n(width * u));
+                let _ = write!(out, "<polyline class=\"{cls}\" points=\"{piece}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{}\"{extra}/>", n(width * u * thick));
             }
         }
         // Coloured cells of a field in the plane (D-091), one rectangle per cell.
@@ -728,7 +730,7 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
                 out,
                 "<polygon class=\"shape\" points=\"{}\" fill=\"{accent}\" fill-opacity=\"0.12\" stroke=\"{accent}\" stroke-width=\"{}\"{dash}/>",
                 pts("points"),
-                n(2.0 * u),
+                n(2.0 * u * thick),
                 accent = custom.as_deref().unwrap_or(th.accent)
             );
         }
@@ -738,7 +740,7 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
             let accent = custom.as_deref().unwrap_or(th.accent);
             let fill = if r["closed"] == true { format!("fill=\"{accent}\" fill-opacity=\"0.12\"") } else { "fill=\"none\"".to_string() };
             let cls = if r["closed"] == true { "shape" } else { "curve" };
-            let _ = write!(out, "<path class=\"{cls}\" d=\"{}\" {fill} stroke=\"{}\" stroke-width=\"{}\"{dash}/>", curve_path(r), accent, n(2.0 * u));
+            let _ = write!(out, "<path class=\"{cls}\" d=\"{}\" {fill} stroke=\"{}\" stroke-width=\"{}\"{dash}/>", curve_path(r), accent, n(2.0 * u * thick));
         }
         "group" => {
             // Members are placed by the kernel; the group carries opacity and highlight

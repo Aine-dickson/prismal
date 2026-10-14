@@ -597,6 +597,14 @@ function drawRep(v, g, r, u, colorIndex) {
       grp.remove();
       return;
   }
+  if (r.width) {
+    // The author's line width (D-095), a multiple of each stroke's own.
+    for (const e of grp.querySelectorAll('line, polyline, polygon, path')) {
+      if (e.parentNode.classList.contains('arrow') && e.tagName === 'polygon') continue;
+      const w = parseFloat(e.getAttribute('stroke-width'));
+      if (w) e.setAttribute('stroke-width', w * r.width);
+    }
+  }
   if (r.line && r.drawn == null && r.valid !== false) {
     // The author's line style (D-061), as prismal-svg draws it.
     const dash = r.line === 'solid' ? 'none' : r.line === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;

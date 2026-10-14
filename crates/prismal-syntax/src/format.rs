@@ -1341,6 +1341,7 @@ impl<'a> Printer<'a> {
                     Animated::Color => "color",
                     Animated::Line => "line",
                     Animated::Scale => "scale",
+                    Animated::Width => "width",
                     Animated::Morph => "morph",
                 };
                 let value = match (to, word) {

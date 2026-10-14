@@ -219,3 +219,24 @@ presentation Moves for FreeFall {",
     assert!(!printed.contains("hide ball for 4 s ease"), "no clause when none was written");
     assert_eq!(prismal_syntax::compile(&printed).unwrap().doc, prismal_syntax::compile(&src).unwrap().doc);
 }
+
+/// `animate R width to k` (D-095): from the author's width, or 1, to `k`.
+#[test]
+fn animated_line_width() {
+    let src = SRC.replace(
+        "presentation Moves for FreeFall {",
+        "presentation Thick for FreeFall {
+  view scene: spatial(Plane, scale: 1 m -> 10 px, y: up) { segment(origin, pos, width: 2) as rod }
+  timeline {
+    scene s {
+      beat grow { animate rod width to 4 for 2 s ease linear }
+    }
+  }
+}
+presentation Moves for FreeFall {",
+    );
+    let pb = play(&program(&src), "Thick", Config::until(10.0), Medium::Interactive, vec![]).unwrap_or_else(|d| panic!("{d:?}"));
+    assert_eq!(pb.frame(0.0, 0.1).rep("rod").unwrap().width, Some(2.0));
+    close(pb.frame(1.0, 0.1).rep("rod").unwrap().width.unwrap(), 3.0, "halfway");
+    close(pb.frame(3.0, 0.1).rep("rod").unwrap().width.unwrap(), 4.0, "held");
+}

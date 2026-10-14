@@ -80,3 +80,27 @@ fn printing_keeps_styles() {
     assert!(printed.contains("segment(origin, pos, color: blue, line: dashed) as rod"), "{printed}");
     assert_eq!(prismal_syntax::compile(&printed).unwrap().doc, doc);
 }
+
+/// `width: k` (D-095): a multiple of the kind's own line width, in frames and drawings;
+/// printed back; a positive number, and only where a line style applies.
+#[test]
+fn widths() {
+    let src = SRC.replace("segment(origin, pos, color: blue, line: dashed) as rod", "segment(origin, pos, color: blue, line: dashed, width: 3) as rod");
+    let (layout, f) = frame(&src);
+    assert_eq!(rep(&f, "rod")["width"], 3.0);
+    assert!(rep(&f, "path").get("width").is_none());
+    let svg = render(&layout, &f, &Options::default());
+    let rod = svg.split("<line class=\"segment\"").nth(1).unwrap();
+    let w: f64 = rod.split("stroke-width=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+    assert!(w > 5.0, "three times the usual 2 units: {w}");
+    let printed = prismal_syntax::format::format(&prismal_syntax::compile(&src).unwrap().doc);
+    assert!(printed.contains("segment(origin, pos, color: blue, line: dashed, width: 3) as rod"), "{printed}");
+    let load = |s: String| match Document::load(Content::Text(s)) {
+        Err(e) => format!("{e:?}"),
+        Ok(d) => format!("{:?}", d.diagnostics()),
+    };
+    let e = load(SRC.replace("marker(pos, color: red) as ball", "marker(pos, width: 2) as ball"));
+    assert!(e.contains("SX-E08") && e.contains("width"), "{e}");
+    let e = load(SRC.replace("segment(origin, pos, color: blue, line: dashed) as rod", "segment(origin, pos, width: 0) as rod"));
+    assert!(e.contains("PK-E05") && e.contains("positive"), "{e}");
+}

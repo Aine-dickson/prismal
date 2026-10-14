@@ -319,6 +319,7 @@ pub enum AnimValue {
     Color(String),
     Line(String),
     Scale(f64),
+    Width(f64),
     Morph(Id),
 }
 
@@ -710,6 +711,7 @@ impl Player {
                     (Animated::Opacity, Some(to)) => AnimValue::Opacity(self.num(to).clamp(0.0, 1.0)),
                     (Animated::Offset, Some(to)) => AnimValue::Offset(self.offset(target, to, p)),
                     (Animated::Scale, Some(to)) => AnimValue::Scale(self.num(to).max(0.0)),
+                    (Animated::Width, Some(to)) => AnimValue::Width(self.num(to).max(0.0)),
                     (Animated::Color, _) => AnimValue::Color(w()),
                     (Animated::Line, _) => AnimValue::Line(w()),
                     (Animated::Morph, _) => AnimValue::Morph(w()),
@@ -1059,6 +1061,8 @@ impl Playback {
             // A color reached so far, and one being blended to (D-075).
             let (mut color, mut mix): (Option<String>, Option<(String, f64)>) = (r.color.clone(), None);
             let mut line: Option<String> = None;
+            // The width reached so far, from the author's (D-095).
+            let mut width: Option<f64> = None;
             let mut morphs: Vec<(&Id, f64)> = vec![];
             for a in self.animations.iter().filter(|a| a.target == r.id && a.from <= p) {
                 let k = if a.duration > 0.0 { a.ease.apply((p - a.from) / a.duration) } else { 1.0 };
@@ -1075,6 +1079,10 @@ impl Playback {
                     AnimValue::Scale(x) => {
                         scale += (x - scale) * k;
                         any.2 = true;
+                    }
+                    AnimValue::Width(x) => {
+                        let w = width.or(r.width).unwrap_or(1.0);
+                        width = Some(w + (x - w) * k);
                     }
                     AnimValue::Color(c) => {
                         if let Some((prev, _)) = mix.take() {
@@ -1117,6 +1125,9 @@ impl Playback {
             }
             if let Some(l) = line {
                 r.line = Some(l);
+            }
+            if width.is_some() {
+                r.width = width;
             }
         };
         if !self.animations.is_empty() {

@@ -130,6 +130,10 @@ pub struct RepFrame {
     /// dot and an arrow's head this much larger.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scale: Option<f64>,
+    /// The author's line width, a multiple of the kind's own (D-095); media multiply the
+    /// widths of the strokes they draw.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
     /// For a path sampled over the run: the indices of points that start a new piece,
     /// where the value jumped at an instant (a ball thrown again). Media lift the pen there.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -156,6 +160,16 @@ fn styled(kind: &str) -> (bool, bool) {
 fn style_props(rep: &Rep) -> Result<Rep, PDiag> {
     let d = |message: String| PDiag { code: "PK-E05", message, element: rep.id.clone() };
     let (color, line) = styled(&rep.kind);
+    // `width: k`, a multiple of the kind's own line width, where a line style applies (D-095).
+    if let Some(p) = rep.props.iter().find(|p| p.name == "width") {
+        if !line {
+            return Err(d(format!("a {} takes no `width` (D-095)", rep.kind)));
+        }
+        match &p.value {
+            Arg::Expr { expr: Expr::Num { num, unit: None } } if *num > 0.0 => {}
+            _ => return Err(d("`width` is a positive number, a multiple of the usual line width: `width: 2` (D-095)".into())),
+        }
+    }
     for p in rep.props.iter().filter(|p| p.name == "color" || p.name == "line") {
         let (ok, words) = if p.name == "color" { (color, COLORS) } else { (line, LINES) };
         if !ok {
@@ -166,7 +180,15 @@ fn style_props(rep: &Rep) -> Result<Rep, PDiag> {
             _ => return Err(d(format!("`{}` is one of {} (PK-6.6a)", p.name, words.join(", ")))),
         }
     }
-    Ok(Rep { props: rep.props.iter().filter(|p| p.name != "color" && p.name != "line").cloned().collect(), ..rep.clone() })
+    Ok(Rep { props: rep.props.iter().filter(|p| !["color", "line", "width"].contains(&p.name.as_str())).cloned().collect(), ..rep.clone() })
+}
+
+/// The author's line width (D-095), checked by `style_props`.
+fn style_width(rep: &Rep) -> Option<f64> {
+    match rep.prop("width") {
+        Some(Arg::Expr { expr: Expr::Num { num, .. } }) => Some(*num),
+        _ => None,
+    }
 }
 
 /// The author's style word (D-061). `line: solid` is carried too: a trace is dashed unless
@@ -1189,7 +1211,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 Some(Ok(v)) => coords(&v),
                 Some(Err(s)) => {
                     let (sh, tx) = status(s);
-                    return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, breaks: vec![] };
+                    return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, width: None, breaks: vec![] };
                 }
                 None => vec![0.0, 0.0],
             };
@@ -1511,7 +1533,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     Ok(v) => pts.push(ctx.to_view(&coords(&v))),
                     Err(s) => {
                         let (sh, tx) = status(s);
-                        return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, breaks: vec![] };
+                        return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, width: None, breaks: vec![] };
                     }
                 }
             }
@@ -1642,7 +1664,8 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
         None => text,
     };
     let (color, line) = (style_word(&r.rep, "color"), style_word(&r.rep, "line"));
-    RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape, text, highlighted: false, valid: None, opacity: None, drawn: None, label, drag, click, color, line, color_to: None, color_mix: None, scale: None, breaks }
+    let width = style_width(&r.rep);
+    RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape, text, highlighted: false, valid: None, opacity: None, drawn: None, label, drag, click, color, line, color_to: None, color_mix: None, scale: None, width, breaks }
 }
 
 /// The grid the finite values lie on, `start + k d`, when there are at least two distinct
@@ -1774,6 +1797,7 @@ fn dot(id: Id, at: [f64; 2], color: Option<String>) -> RepFrame {
         color_to: None,
         color_mix: None,
         scale: None,
+        width: None,
         breaks: vec![],
     }
 }

@@ -78,8 +78,8 @@ marker(pos, color: red) as ball
 ```
 
 - Colors are named: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`, `gray`, `ink`. Each medium draws a name with a value that suits its theme, so a program looks right on a light page, a dark one, or in a video; `ink` is the color of text.
-- Lines are `solid`, `dashed` or `dotted`.
-- Markers take a color; arrows, segments, polylines, polygons, circles, ellipses, arcs, traces, graphs and series take a color and a line. Other kinds, and groups, take neither.
+- Lines are `solid`, `dashed` or `dotted`. `width: 2` draws the strokes twice as thick as the kind's own (a positive number, a multiple of the usual width).
+- Markers take a color; arrows, segments, polylines, polygons, circles, ellipses, arcs, traces, graphs, series and histograms take a color, a line and a width. Other kinds, and groups, take neither.
 - Without them, each kind is drawn its own way (arrows take turns through a few colors, a trace is dashed).
 - Color never carries meaning alone (D-026): what a color distinguishes is also named (`as rod`) or labeled, and the text alternative does not mention it.
 

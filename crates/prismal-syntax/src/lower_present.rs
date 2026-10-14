@@ -30,17 +30,17 @@ const KINDS: &[&str] = &[
 fn options(kind: &str) -> &'static [&'static str] {
     match kind {
         "marker" => &["at", "color", "label"],
-        "arrow" => &["from", "scale", "color", "line", "label"],
-        "function_graph" => &["color", "line", "label"],
-        "segment" | "polyline" | "polygon" | "circle" | "trace" | "series_plot" => &["color", "line"],
-        "ellipse" => &["rotate", "color", "line"],
-        "arc" => &["from", "to", "color", "line"],
+        "arrow" => &["from", "scale", "color", "line", "width", "label"],
+        "function_graph" => &["color", "line", "width", "label"],
+        "segment" | "polyline" | "polygon" | "circle" | "trace" | "series_plot" => &["color", "line", "width"],
+        "ellipse" => &["rotate", "color", "line", "width"],
+        "arc" => &["from", "to", "color", "line", "width"],
         "text" => &["at"],
         "formula" | "equation" => &["live"],
         "slider" => &["range", "step", "ends"],
         "number_input" => &["range", "step"],
         "button" => &["label"],
-        "histogram" => &["bins", "color", "line"],
+        "histogram" => &["bins", "color", "line", "width"],
         "heatmap" => &["range"],
         "group" => &["at", "rotate", "scale"],
         _ => &[],
@@ -732,9 +732,10 @@ impl PresCx<'_, '_> {
                         "color" => Animated::Color,
                         "line" => Animated::Line,
                         "scale" => Animated::Scale,
+                        "width" => Animated::Width,
                         "morph" => Animated::Morph,
                         other => {
-                            self.err("SX-E02", format!("`animate` drives `opacity`, `offset`, `color`, `line`, `scale` or `morph`, not `{other}` (D-068, D-075)"), property.span);
+                            self.err("SX-E02", format!("`animate` drives `opacity`, `offset`, `color`, `line`, `width`, `scale` or `morph`, not `{other}` (D-068, D-075, D-095)"), property.span);
                             Animated::Opacity
                         }
                     };

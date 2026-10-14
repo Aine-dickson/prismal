@@ -303,10 +303,10 @@ fn check_actions(cm: &CModel, p: &Presentation, pr: &Projector, acts: &[Action],
                 let Some(to) = to else { continue };
                 match property {
                     Animated::Color | Animated::Line | Animated::Morph => {}
-                    Animated::Scale => {
+                    Animated::Scale | Animated::Width => {
                         expr(cm, to, Some(&Type::real()), beat, out);
                         if number(cm, to).is_ok_and(|x| x <= 0.0) {
-                            diag(out, "PK-E02", "a scale is positive (D-075)".into());
+                            diag(out, "PK-E02", "a scale or a width is positive (D-075, D-095)".into());
                         }
                     }
                     Animated::Opacity => {

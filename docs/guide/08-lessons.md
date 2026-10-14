@@ -574,6 +574,7 @@ The end of `roll` is found by locating the event `done`, so it is checked within
 |---|---|
 | `animate name color to red [for d]` | blends to a color of the palette (chapter 7) |
 | `animate name line to dashed [for d]` | changes the line style, halfway through `d` (a style has no values between) |
+| `animate name width to 3 [for d]` | thickens the strokes, from the author's `width` (or 1) to three times the kind's own |
 | `animate name scale to 2 [for d]` | draws the shape twice as large about its centre (an arrow about its base); a marker's dot and an arrow's head grow too |
 | `animate name morph to other [for d]` | changes the drawn shape into the shape of the representation `other`, point by point |
 | `... ease linear`, `ease in`, `ease out`, `ease smooth` | at a constant rate; starting slowly; ending slowly; both (the default). Also after `reveal`, `hide ... for`, `camera` and `bind`: `camera scene zoom 2 for 1 s ease in` |

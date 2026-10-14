@@ -462,6 +462,8 @@ pub enum Animated {
     Line,
     /// A factor on the drawn size, about the shape's center (D-075).
     Scale,
+    /// A multiple of the kind's own line width (D-095).
+    Width,
     /// The shape of another representation, reached by moving the points (D-075).
     Morph,
 }
