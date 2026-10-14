@@ -1762,6 +1762,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Consequences:** IR `Grid`, `GridAxis`, `Type::Field`, `Binding.boundary`, `Func::{Laplacian, Gradient, Integral, Mean}`, `Presentation.until`; kernel `CGrid`, `CFieldOp`, `CEdge`, `Value::Field`, `Ctx::point`, `per_cell`, `eval_cells`, `COp::SetField`, MK-E31 to MK-E33; runtime compact steps, equations per cell; presentation `FieldGraph`, `Heatmap`, frame `raster`; host horizons; SVG and web renderers; parser, lowering, formatter; MK-9.4 to MK-9.8, RC-6.2a, PK-6.3f, PK-10.1a, HI-5.1a, 04-ir, working syntax, reference; guide chapter 16 (a heated rod, a vibrating string, a ripple tank); `prismal-present/tests/fields.rs` (heat mode decay and its half-time, insulated conservation, a held steady line and its flux, the string's half period, periodic conservation, a plate's mode, gradients in the plane, equations, heatmaps, a pointwise set by click, diagnostics).
 - **History:**
   - 2026-10-13 accepted (owner's direction and standing delegation) and implemented.
+  - 2026-10-14 choices per cell (`if` on the coordinate, parameters or discrete state, with `and`, `or`, `not` and comparisons), `min`, `max` and `atan2` of two values evaluated over all cells at once, with the same arithmetic as cell by cell (a test compares the runs bit for bit); a flow with a choice on 2000 cells about 17 times faster. In the web player a heatmap is one image per frame (the ripple tank plays at the display's rate).
 
 ## D-092: Solved equations: unknowns and equations that give rates
 

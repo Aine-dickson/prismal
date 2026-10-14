@@ -352,3 +352,38 @@ fn a_handler_sets_a_field() {
     let d = codes(&TANK.replace("set h(p) = h +", "set h(p) = h + normal(0 m, 1 m) +"));
     assert!(d.iter().any(|m| m.contains("MK-E28")), "{d:?}");
 }
+
+/// A field flow with a choice per cell and `max` is evaluated over all cells at once (D-091);
+/// the same flow through a declared function is evaluated cell by cell. Both give the same
+/// run, bit for bit.
+#[test]
+fn choices_per_cell_match_cell_by_cell_evaluation() {
+    let src = r#"model Direct {
+  grid rod(x: [0 m, 1 m], cells: 80)
+  param { k: Frequency = 2 /s }
+  state { T(x in rod): Real = sin(pi * x / 1 m) }
+  flow der(T(x)) = 0.01 m^2/s * laplacian(T) - (if x > 0.3 m and x < 0.7 m then k * (T - 0.5) else max(T - 0.9, 0) * k)
+}
+
+model Through {
+  grid rod(x: [0 m, 1 m], cells: 80)
+  param { k: Frequency = 2 /s }
+  fn sink(t: Real, x: Length, k: Frequency): Frequency = if x > 0.3 m and x < 0.7 m then k * (t - 0.5) else max(t - 0.9, 0) * k
+  state { T(x in rod): Real = sin(pi * x / 1 m) }
+  flow der(T(x)) = 0.01 m^2/s * laplacian(T) - sink(T, x, k)
+}
+"#;
+    let prog = program(src);
+    let end = |m: &str| {
+        let cm = prog.model(m);
+        let r = run(cm, Config::until(2.0));
+        assert!(matches!(r.status, RunStatus::Completed), "{:?}", r.status);
+        match &r.final_value(&format!("{m}.T")) {
+            Value::Field(v) => v.to_vec(),
+            v => panic!("{v:?}"),
+        }
+    };
+    let (a, b) = (end("Direct"), end("Through"));
+    assert!(a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()), "{:?}\n{:?}", &a[..5], &b[..5]);
+    assert!(a.iter().any(|x| *x < 0.5) && a.iter().any(|x| *x > 0.5));
+}

@@ -822,6 +822,71 @@ enum Lanes {
     Each(std::vec::Vec<f64>),
 }
 
+/// A condition in every cell of a grid: the same in all, or one per cell.
+enum Conds {
+    One(bool),
+    Each(std::vec::Vec<bool>),
+}
+
+impl Conds {
+    fn zip(self, o: Conds, f: impl Fn(bool, bool) -> bool, n: usize) -> Conds {
+        match (self, o) {
+            (Conds::One(a), Conds::One(b)) => Conds::One(f(a, b)),
+            (a, b) => {
+                let at = |c: &Conds, k: usize| match c {
+                    Conds::One(v) => *v,
+                    Conds::Each(v) => v[k],
+                };
+                Conds::Each((0..n).map(|k| f(at(&a, k), at(&b, k))).collect())
+            }
+        }
+    }
+}
+
+impl CExpr {
+    /// A Boolean expression in every cell, where its form allows: comparisons of numbers,
+    /// `and`, `or`, `not` and constants; `None` for other forms.
+    fn cond_lanes(&self, c: &Ctx, g: &CGrid) -> Result<Option<Conds>, Status> {
+        let n = g.cells();
+        Ok(Some(match self {
+            CExpr::Const(Value::Bool(b)) => Conds::One(*b),
+            CExpr::Load(i) => match &c.vals[*i] {
+                Value::Bool(b) => Conds::One(*b),
+                _ => return Ok(None),
+            },
+            CExpr::Not(e) => match e.cond_lanes(c, g)? {
+                Some(Conds::One(b)) => Conds::One(!b),
+                Some(Conds::Each(v)) => Conds::Each(v.into_iter().map(|b| !b).collect()),
+                None => return Ok(None),
+            },
+            CExpr::Bin(op @ (BinOp::And | BinOp::Or), l, r) => {
+                let (Some(a), Some(b)) = (l.cond_lanes(c, g)?, r.cond_lanes(c, g)?) else { return Ok(None) };
+                if *op == BinOp::And { a.zip(b, |x, y| x && y, n) } else { a.zip(b, |x, y| x || y, n) }
+            }
+            CExpr::Bin(op @ (BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge), l, r) => {
+                let (Some(a), Some(b)) = (l.lanes(c, g)?, r.lanes(c, g)?) else { return Ok(None) };
+                let f = |x: f64, y: f64| match op {
+                    BinOp::Lt => x < y,
+                    BinOp::Le => x <= y,
+                    BinOp::Gt => x > y,
+                    _ => x >= y,
+                };
+                match (a, b) {
+                    (Lanes::One(x), Lanes::One(y)) => Conds::One(f(x, y)),
+                    (a, b) => {
+                        let at = |l: &Lanes, k: usize| match l {
+                            Lanes::One(v) => *v,
+                            Lanes::Each(v) => v[k],
+                        };
+                        Conds::Each((0..n).map(|k| f(at(&a, k), at(&b, k))).collect())
+                    }
+                }
+            }
+            _ => return Ok(None),
+        }))
+    }
+}
+
 impl Lanes {
     fn map(self, f: impl Fn(f64) -> f64) -> Lanes {
         match self {
@@ -905,6 +970,31 @@ impl CExpr {
                     // Division by zero gives a value that is not finite: evaluated cell by cell.
                     BinOp::Div => a.zip(b, |x, y| x / y),
                     _ => a.zip(b, f64::powf),
+                }
+            }
+            // A choice per cell (D-091): the condition in every cell, then each cell takes its
+            // branch. A branch is computed in every cell, but read only where chosen; one that
+            // cannot be computed sends the whole expression back to cell by cell evaluation,
+            // which evaluates only the branch each cell takes.
+            CExpr::If(k, a, b) => match k.cond_lanes(c, g)? {
+                None => return Ok(None),
+                Some(Conds::One(true)) => return a.lanes(c, g),
+                Some(Conds::One(false)) => return b.lanes(c, g),
+                Some(Conds::Each(which)) => {
+                    let (Ok(Some(x)), Ok(Some(y))) = (a.lanes(c, g), b.lanes(c, g)) else { return Ok(None) };
+                    let at = |l: &Lanes, k: usize| match l {
+                        Lanes::One(v) => *v,
+                        Lanes::Each(v) => v[k],
+                    };
+                    Lanes::Each(which.iter().enumerate().map(|(k, w)| if *w { at(&x, k) } else { at(&y, k) }).collect())
+                }
+            },
+            CExpr::Call(f @ (F::Min | F::Max | F::Atan2), args) if args.len() == 2 => {
+                let (Some(a), Some(b)) = (args[0].lanes(c, g)?, args[1].lanes(c, g)?) else { return Ok(None) };
+                match f {
+                    F::Min => a.zip(b, f64::min),
+                    F::Max => a.zip(b, f64::max),
+                    _ => a.zip(b, f64::atan2),
                 }
             }
             CExpr::Call(f, args) if args.len() == 1 && !matches!(f, F::Laplacian | F::Gradient | F::Integral | F::Mean) => {
