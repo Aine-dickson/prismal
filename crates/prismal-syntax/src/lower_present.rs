@@ -35,7 +35,7 @@ fn options(kind: &str) -> &'static [&'static str] {
         "segment" | "polyline" | "polygon" | "circle" | "trace" | "series_plot" => &["color", "line", "width"],
         "ellipse" => &["rotate", "color", "line", "width"],
         "arc" => &["from", "to", "color", "line", "width"],
-        "text" => &["at"],
+        "text" => &["at", "align"],
         "formula" | "equation" => &["live"],
         "slider" => &["range", "step", "ends"],
         "number_input" => &["range", "step"],
@@ -261,7 +261,7 @@ impl PresCx<'_, '_> {
             let value = match (&a.value.kind, a.name.as_ref().map(|n| n.text.as_str())) {
                 (ExprKind::Str(s), _) => Arg::Text { text: s.clone() },
                 // Style words (D-061): `color: blue`, `line: dashed`.
-                (ExprKind::Name(w), Some("color" | "line")) => Arg::Word { word: w.clone() },
+                (ExprKind::Name(w), Some("color" | "line" | "align")) => Arg::Word { word: w.clone() },
                 // `label: none`: no label drawn beside the representation (D-078).
                 (ExprKind::Name(w), Some("label")) if w == "none" => Arg::Word { word: w.clone() },
                 (ExprKind::List(_), _) => match self.range(&a.value) {

@@ -529,7 +529,8 @@ function drawRep(v, g, r, u, colorIndex) {
     case 'note': {
       // An author's text at a point (D-076).
       const [X, Y] = m.to(r.at);
-      const t = svg('text', { class: 'note', x: X, y: Y, 'font-size': 13 * u }, grp);
+      const anchor = { center: 'middle', right: 'end' }[r.align] || 'start';
+      const t = svg('text', { class: 'note', x: X, y: Y, 'font-size': 13 * u, 'text-anchor': anchor }, grp);
       t.textContent = r.value;
       break;
     }

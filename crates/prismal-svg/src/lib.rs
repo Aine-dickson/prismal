@@ -638,7 +638,13 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
         // An author's text at a point (D-076).
         "note" => {
             let p = map.to(pt(&r["at"]));
-            *out += &text(p[0], p[1], s(&r["value"]), 13.0 * u, false, custom.as_deref().unwrap_or(th.ink), " class=\"note\"");
+            // Lined up with its point (D-095): starting at it, centred on it, or ending at it.
+            let anchor = match r["align"].as_str() {
+                Some("center") => " text-anchor=\"middle\"",
+                Some("right") => " text-anchor=\"end\"",
+                _ => "",
+            };
+            *out += &text(p[0], p[1], s(&r["value"]), 13.0 * u, false, custom.as_deref().unwrap_or(th.ink), &format!(" class=\"note\"{anchor}"));
         }
         "arrow" => {
             let (a, b) = (map.to(pt(&r["from"])), map.to(pt(&r["to"])));

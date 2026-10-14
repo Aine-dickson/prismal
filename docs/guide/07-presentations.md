@@ -542,7 +542,7 @@ run drop of Dropped with DropLab {
 
 - Inside the quotes, `{...}` holds any value of the model: a binding, a component (`{pos.y}`), a calculation (`{|vel|}`). It is shown with its unit, in the binding's display unit when it has one. To write a brace itself, double it: `{{` and `}}`.
 - `{pos.y:.1}` shows the value with one decimal (`8.3 m`), `{angle:.0}` with none (`45 deg`). Without it a value has up to six significant digits, more than a learner usually needs. Powers in units are written as people read them: an area shows as `25 m²`, an acceleration as `9.81 m/s²` (D-079).
-- `at: P` places a text in a spatial view (`P` a point) or a plot (`P` a pair of axis values); without it, the text is a line in the panel or below the view.
+- `at: P` places a text in a spatial view (`P` a point) or a plot (`P` a pair of axis values); without it, the text is a line in the panel or below the view. A placed text starts at `P`; `align: center` centres it on `P` and `align: right` ends it there (a label under a point, a note left of a wall).
 - `when: c` works on every representation, not only text: `marker(pos, when: airborne)` hides the marker once the ball has landed, `slider(h, ..., when: not airborne)` offers the slider only then. The condition is read at the instant shown.
 - There is no text that is chosen by a condition inside one sentence; write one text per case, each with its `when`, as above.
 

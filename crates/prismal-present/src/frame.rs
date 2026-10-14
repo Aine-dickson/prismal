@@ -273,7 +273,14 @@ pub enum Shape {
     /// A group's members, already placed by its transform (D-043).
     Group { members: Vec<RepFrame> },
     /// An author's text placed at a point of a spatial or plot view (D-076).
-    Note { at: [f64; 2], value: String },
+    /// An author's text at a point (D-076); `align` is `left` (the default, the text starts
+    /// at the point), `center` or `right` (D-095).
+    Note {
+        at: [f64; 2],
+        value: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        align: Option<String>,
+    },
     /// A title: the caption of the view or panel it is in (D-076).
     Title { value: String },
 }
@@ -502,7 +509,7 @@ pub enum CKind {
     /// An author's text: the pieces between values, the values with their types and, for a
     /// binding, its index (shown in its display unit), and where it is placed (D-076).
     /// `places`: the decimals each value is shown with, when the author chose (D-078).
-    Text { pieces: Vec<String>, values: Vec<(CExpr, Type, Option<usize>)>, places: Vec<Option<usize>>, at: Option<CExpr> },
+    Text { pieces: Vec<String>, values: Vec<(CExpr, Type, Option<usize>)>, places: Vec<Option<usize>>, at: Option<CExpr>, align: Option<String> },
     Title { value: String },
     Formula { lhs: String, rhs: Expr, params: Vec<String>, refs: Vec<(Id, usize)>, live: bool },
     Control { control: String, binding: Id, idx: usize, min: Option<f64>, max: Option<f64>, step: Option<f64>, ends: Option<[String; 2]>, options: Option<Vec<String>> },
@@ -893,7 +900,14 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
                 }
                 (Some(_), ViewCtx::Panel) => return Err(d("PK-E05", "a text in a panel has no place to be put `at` (D-076)".into())),
             };
-            CKind::Text { pieces, values, places, at }
+            // How a text placed at a point lines up with it (D-095).
+            let align = match rep.prop("align") {
+                None => None,
+                Some(_) if at.is_none() => return Err(d("PK-E05", "`align` lines a text up with the point it is put `at` (D-095)".into())),
+                Some(Arg::Word { word }) if ["left", "center", "right"].contains(&word.as_str()) => Some(word.clone()),
+                Some(_) => return Err(d("PK-E05", "`align` is `left`, `center` or `right` (D-095)".into())),
+            };
+            CKind::Text { pieces, values, places, at, align }
         }
         // `title("The flight")`: the caption of its view or panel (D-076).
         "title" => match rep.sources.first() {
@@ -1455,7 +1469,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 (Shape::Polyline { points: pts }, text)
             }
         }
-        CKind::Text { pieces, values, places, at } => {
+        CKind::Text { pieces, values, places, at, align } => {
             let mut s = pieces[0].clone();
             for (k, (c, ty, idx)) in values.iter().enumerate() {
                 match eval(c) {
@@ -1471,7 +1485,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             }
             match at.as_ref().map(eval) {
                 None => (Shape::Text { value: s.clone() }, s),
-                Some(Ok(p)) => (Shape::Note { at: ctx.to_view(&coords(&p)), value: s.clone() }, s),
+                Some(Ok(p)) => (Shape::Note { at: ctx.to_view(&coords(&p)), value: s.clone(), align: align.clone() }, s),
                 Some(Err(st)) => status(st),
             }
         }

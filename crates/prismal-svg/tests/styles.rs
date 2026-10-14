@@ -104,3 +104,22 @@ fn widths() {
     let e = load(SRC.replace("segment(origin, pos, color: blue, line: dashed) as rod", "segment(origin, pos, width: 0) as rod"));
     assert!(e.contains("PK-E05") && e.contains("positive"), "{e}");
 }
+
+/// `align` of a text put at a point (D-095): `center` and `right` reach frames and anchor
+/// the drawn text; without `at` it is an error.
+#[test]
+fn aligned_texts() {
+    let src = SRC.replace("marker(origin) as plain", "marker(origin) as plain\n    text(\"start\", at: origin, align: center) as tag");
+    let (layout, f) = frame(&src);
+    assert_eq!(rep(&f, "tag")["align"], "center");
+    let svg = render(&layout, &f, &Options::default());
+    assert!(svg.contains("text-anchor=\"middle\""), "{svg}");
+    let printed = prismal_syntax::format::format(&prismal_syntax::compile(&src).unwrap().doc);
+    assert!(printed.contains("text(\"start\", at: origin, align: center) as tag"), "{printed}");
+    let bad = src.replace("text(\"start\", at: origin, align: center)", "text(\"start\", align: center)");
+    let e = match Document::load(Content::Text(bad)) {
+        Err(e) => format!("{e:?}"),
+        Ok(d) => format!("{:?}", d.diagnostics()),
+    };
+    assert!(e.contains("PK-E05") && e.contains("align"), "{e}");
+}

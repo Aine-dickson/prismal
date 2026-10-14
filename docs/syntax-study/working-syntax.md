@@ -586,3 +586,4 @@ run A_keep of Projectile with ProjectileLesson {
 - 2026-10-14 `select(p)`, a control choosing one case of an enumeration parameter (D-094); an addition under section 1.7 (a new representation kind).
 - 2026-10-14 `ease e` after `reveal`, `hide ... for`, `camera` and `bind` (D-095), as after `animate`; additions under section 1.7.
 - 2026-10-14 `width: k` on drawn kinds that take a line style, and `animate R width to k` (D-095); additions under section 1.7.
+- 2026-10-14 `align: left|center|right` for a text put `at` a point (D-095); an addition under section 1.7.
