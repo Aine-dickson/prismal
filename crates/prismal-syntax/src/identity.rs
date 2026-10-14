@@ -97,6 +97,18 @@ fn match_ids(new: &Document, prev: &Document) -> HashMap<Id, Id> {
         let Some(pm) = prev.models.iter().find(|p| p.name == nm.name) else { continue };
         match_body(&mut mt, nm, pm);
     }
+    // Shared definitions and modules (D-099), within the library of the same name.
+    for nl in &new.libraries {
+        let Some(pl) = prev.libraries.iter().find(|p| p.name == nl.name) else { continue };
+        mt.pair(&nl.enums, &pl.enums, |e| e.name.clone(), |e| &e.id);
+        mt.pair(&nl.functions, &pl.functions, |f| f.name.clone(), |f| &f.id);
+        mt.pair(&nl.objects, &pl.objects, |o| o.name.clone(), |o| &o.id);
+        for no in &nl.objects {
+            if let Some(po) = pl.objects.iter().find(|p| p.name == no.name) {
+                match_body(&mut mt, no, po);
+            }
+        }
+    }
     mt.pair(&new.presentations, &prev.presentations, |p| p.name.clone(), |p| &p.id);
     for np in &new.presentations {
         let Some(pp) = prev.presentations.iter().find(|p| p.name == np.name) else { continue };
@@ -284,6 +296,17 @@ fn reorder(doc: &mut Document, prev: &Document) {
     for m in &mut doc.models {
         let Some(p) = prev.models.iter().find(|x| x.id == m.id) else { continue };
         body(m, p);
+    }
+    for l in &mut doc.libraries {
+        let Some(p) = prev.libraries.iter().find(|x| x.name == l.name) else { continue };
+        order(&mut l.enums, &ids(&p.enums, |b| &b.id), |b| &b.id);
+        order(&mut l.functions, &ids(&p.functions, |b| &b.id), |b| &b.id);
+        order(&mut l.objects, &ids(&p.objects, |b| &b.id), |b| &b.id);
+        for o in &mut l.objects {
+            if let Some(po) = p.objects.iter().find(|x| x.id == o.id) {
+                body(o, po);
+            }
+        }
     }
     order(&mut doc.presentations, &ids(&prev.presentations, |p| &p.id), |p| &p.id);
     for pr in &mut doc.presentations {

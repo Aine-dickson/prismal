@@ -357,6 +357,11 @@ pub fn ddt(m: &Model, e: &Expr) -> Result<Option<Expr>, String> {
                     let b = &args[1];
                     add(d(a)?.map(|da| call(Func::Dot, vec![da, b.clone()])), d(b)?.map(|db| call(Func::Dot, vec![a.clone(), db])))
                 }
+                // (a × b)' = a' × b + a × b'
+                Func::Cross => {
+                    let b = &args[1];
+                    add(d(a)?.map(|da| call(Func::Cross, vec![da, b.clone()])), d(b)?.map(|db| call(Func::Cross, vec![a.clone(), db])))
+                }
                 Func::Min | Func::Max => return Err("`min` and `max` have no rate where their arguments meet".into()),
                 Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean => return Err("constraints on fields are a later extension".into()),
             }

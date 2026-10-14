@@ -149,8 +149,16 @@ for (const [key, pres] of [['g18-doublependulum', 'DoubleLab@6'], ['g18-bead', '
   await shot(key);
 }
 
+// A view of three dimensions (D-100): projected axes and floor, the path of a spiral.
+await open('g20-cyclotron/Spiral@30');
+const axes = await count('#views line.axis');
+const floor = await count('#views line.gridline');
+check('a view of three dimensions draws its three axes and its floor', axes >= 3 && floor > 4, `${axes} axes, ${floor} grid lines`);
+await shot('g20-cyclotron');
+
 // The spoon example (D-094): a select chooses the material; the choice survives a restart.
-const md = readFileSync(join(web, '..', 'examples', 'heat.md'), 'utf8');
+// Line ends normalized: a checkout on Windows may write \r\n.
+const md = readFileSync(join(web, '..', 'examples', 'heat.md'), 'utf8').replace(/\r\n/g, '\n');
 const spoon = [...md.matchAll(/```text\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
 await open('rp01');
 await ev(`document.querySelector('#source').value = ${JSON.stringify(spoon)}; document.querySelector('#compile').click(); true`);

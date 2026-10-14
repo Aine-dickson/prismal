@@ -224,6 +224,7 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
         // Field operators as physics texts write them (D-091): ∇²T, ∇T, ∫T dx.
         // The dot product as texts write it (D-093): a · b.
         Expr::Call { call: Func::Dot, args } => row(vec![wrap(&args[0], 7), op("·", OpKind::Binary), wrap(&args[1], 7)]),
+        Expr::Call { call: Func::Cross, args } => row(vec![wrap(&args[0], 7), op("×", OpKind::Binary), wrap(&args[1], 7)]),
         Expr::Call { call: Func::Laplacian, args } => row(vec![upright("∇²"), wrap(&args[0], 8)]),
         Expr::Call { call: Func::Gradient, args } => row(vec![upright("∇"), wrap(&args[0], 8)]),
         Expr::Call { call: Func::Integral, args } => row(vec![upright("∫"), MathBox::Space { em: 0.15 }, wrap(&args[0], 8), MathBox::Space { em: 0.15 }, upright("dx")]),
@@ -238,7 +239,7 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
                 Func::Max => "max",
                 Func::Atan2 => "atan2",
                 Func::Mean => "mean",
-                Func::Sqrt | Func::Abs | Func::Dot | Func::Laplacian | Func::Gradient | Func::Integral => unreachable!(),
+                Func::Sqrt | Func::Abs | Func::Dot | Func::Cross | Func::Laplacian | Func::Gradient | Func::Integral => unreachable!(),
             };
             row(vec![upright(name), parens(list(args.iter().map(p).collect()))])
         }

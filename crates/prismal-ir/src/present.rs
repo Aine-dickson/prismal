@@ -157,8 +157,16 @@ pub struct View {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ViewKind {
-    /// A spatial view of one space (PK-7.2): `scale` maps a model length to view pixels.
-    Spatial { space: Id, scale: Scale, y_up: bool },
+    /// A spatial view of one space (PK-7.2): `scale` maps a model length to view pixels. A
+    /// view of a space of three dimensions looks from `look`, its azimuth and elevation
+    /// (PK-7.2a, D-100), with `z` up; `y_up` applies to a plane.
+    Spatial {
+        space: Id,
+        scale: Scale,
+        y_up: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        look: Option<[Expr; 2]>,
+    },
     /// A plot view (PK-7.3): the axis ranges, the axes whose range follows the data (`x`,
     /// `y`; D-070) and each axis's display unit.
     Plot {

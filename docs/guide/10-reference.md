@@ -70,6 +70,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `noise` | white noise in a flow, `der(x) = a + b * noise`: each occurrence independent, of dimension `T^(-1/2)` | 15 |
 | `sin cos tan sqrt exp log abs min max atan2` | functions | 2 |
 | `dot(a, b)` | the dot product of two vectors of one space (or the product of two quantities) | 18 |
+| `cross(a, b)` | the cross product of two vectors of a space of three dimensions | 20 |
 | `T(x)`, `laplacian(T)`, `gradient(T)`, `integral(T)`, `mean(T)`, `min(T)`, `max(T)` | a field read at a position; its Laplacian and gradient in the cell being computed; over the whole field | 16 |
 | `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
@@ -80,6 +81,7 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km s ms
 | Form | Meaning | Chapter |
 |---|---|---|
 | `view n: spatial(Space, scale: 1 m -> 40 px, y: up) { reps }` | spatial view | 3 |
+| `view n: spatial(Room, scale: 1 m -> 40 px, azimuth: 30 deg, elevation: 20 deg) { reps }` | a view of a space of three dimensions, `z` up | 20 |
 | `view n: plot(x: [a, b], y: [c, d]) { reps }` | plot view; ranges give the axes their dimensions | 1, 4 |
 | `plot(..., follow: y)`, `follow: (x, y)` | those axes grow to keep the data in view | 7 |
 | `plot(..., x_unit: ms, y_unit: cm)` | display units for the axes | 7 |
@@ -123,7 +125,7 @@ Two forms add details to a form, one for each place they appear (D-081):
 | `group` | `at`, `rotate`, `scale` |
 | `instrument` (not a representation) | `resolution`, `range`, `noise` |
 | `axes`, `grid`, `label`, `title`, `table`, `toggle`, `select` | none |
-| view `spatial(Space, ...)` | `scale`, `y` |
+| view `spatial(Space, ...)` | `scale`, `y`; in three dimensions `scale`, `azimuth`, `elevation` |
 | view `plot(...)` | `x`, `y`, `follow`, `x_unit`, `y_unit`, `window` |
 
 | Statement | Clauses |

@@ -290,6 +290,7 @@ pub fn print(e: &Expr, cm: &CModel, params: &[String]) -> String {
                 Func::Max => "max",
                 Func::Atan2 => "atan2",
                 Func::Dot => "dot",
+                Func::Cross => "cross",
                 Func::Laplacian => "laplacian",
                 Func::Gradient => "gradient",
                 Func::Integral => "integral",

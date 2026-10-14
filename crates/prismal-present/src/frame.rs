@@ -242,6 +242,9 @@ pub enum Shape {
     },
     /// The source has no value at this instant (PK-3.3).
     Status { status: String },
+    /// Line segments and their labels, in view coordinates: a view's axes and grid in three
+    /// dimensions, projected (D-100).
+    Lines { lines: Vec<[[f64; 2]; 2]>, labels: Vec<LineLabel> },
     /// A closed path through points.
     Polygon { points: Vec<[f64; 2]> },
     /// Cells coloured by value (D-091): `cols` by `rows` cells filling the rectangle with
@@ -338,10 +341,82 @@ pub struct Symbol {
 
 // ---------------------------------------------------------------- views and representations
 
+/// A label of `Shape::Lines`: its text at a point (D-100).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LineLabel {
+    pub text: String,
+    pub at: [f64; 2],
+}
+
+/// The length of each half of an axis in a view of three dimensions, in pixels (D-100).
+const AXIS_PX: f64 = 160.0;
+
+/// A view's axes in three dimensions: each axis from `-AXIS_PX` to `AXIS_PX` pixels long
+/// through the origin, labelled at its positive end (D-100).
+fn axes_3d(ctx: &ViewCtx) -> (Shape, String) {
+    let ViewCtx::Spatial { px_per_m, .. } = ctx else { unreachable!() };
+    let l = AXIS_PX / px_per_m;
+    let mut lines = vec![];
+    let mut labels = vec![];
+    for (i, name) in ["x", "y", "z"].iter().enumerate() {
+        let mut a = [0.0; 3];
+        let mut b = [0.0; 3];
+        a[i] = -l;
+        b[i] = l;
+        lines.push([ctx.to_view(&a), ctx.to_view(&b)]);
+        let mut at = [0.0; 3];
+        at[i] = l * 1.08;
+        labels.push(LineLabel { text: format!("{name} (m)"), at: ctx.to_view(&at) });
+    }
+    (Shape::Lines { lines, labels }, "axes x, y and z".into())
+}
+
+/// A view's grid in three dimensions: the `x y` plane at `z = 0`, in steps of a round length
+/// near 60 pixels (D-100).
+fn grid_3d(ctx: &ViewCtx) -> (Shape, String) {
+    let ViewCtx::Spatial { px_per_m, .. } = ctx else { unreachable!() };
+    let raw = 60.0 / px_per_m;
+    let p = 10f64.powf(raw.log10().floor());
+    let step = [1.0, 2.0, 5.0, 10.0].iter().map(|m| m * p).find(|s| *s >= raw).unwrap_or(10.0 * p);
+    let n = (AXIS_PX / px_per_m / step).ceil().max(1.0) as i64;
+    let e = n as f64 * step;
+    let mut lines = vec![];
+    for k in -n..=n {
+        let g = k as f64 * step;
+        lines.push([ctx.to_view(&[g, -e, 0.0]), ctx.to_view(&[g, e, 0.0])]);
+        lines.push([ctx.to_view(&[-e, g, 0.0]), ctx.to_view(&[e, g, 0.0])]);
+    }
+    (Shape::Lines { lines, labels: vec![] }, format!("grid in the x y plane, {} m apart", fmt_num(step)))
+}
+
+/// How a view of a space of three dimensions is turned (PK-7.2a, D-100): unit vectors of the
+/// standard frame along the view's right, its up, and toward the viewer. The view looks from
+/// azimuth `a` (from `x` toward `y`) and elevation `e` (from the `x y` plane toward `z`), and
+/// projects along its depth: `z` is up on the screen at any azimuth.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub right: [f64; 3],
+    pub up: [f64; 3],
+    pub toward: [f64; 3],
+}
+
+impl Look {
+    pub fn new(azimuth: f64, elevation: f64) -> Look {
+        let (sa, ca) = azimuth.sin_cos();
+        let (se, ce) = elevation.sin_cos();
+        Look { right: [-sa, ca, 0.0], up: [-se * ca, -se * sa, ce], toward: [ce * ca, ce * sa, se] }
+    }
+    fn dot(a: &[f64; 3], p: &[f64]) -> f64 {
+        (0..3).map(|i| a[i] * p.get(i).copied().unwrap_or(0.0)).sum()
+    }
+}
+
 /// The coordinate context of a view (PK-7.2, PK-7.3).
 #[derive(Clone, Debug)]
 pub enum ViewCtx {
-    Spatial { space: Id, px_per_m: f64, y_up: bool },
+    /// `look`: for a space of three dimensions, the directions of the view's right and up
+    /// and toward the viewer (PK-7.2a, D-100).
+    Spatial { space: Id, px_per_m: f64, y_up: bool, look: Option<Look> },
     /// Ranges in coherent SI units, and the dimension of each axis (PK-7.3); the axes that
     /// follow the data and each axis's display unit (D-070).
     /// `sample_x`: the `x` range a host shows when the learner has zoomed or panned, over
@@ -355,15 +430,22 @@ impl ViewCtx {
     pub fn of(cm: &CModel, v: &View) -> Result<ViewCtx, PDiag> {
         let err = |code, message: String| PDiag { code, message, element: v.id.clone() };
         match &v.kind {
-            ViewKind::Spatial { space, scale, y_up } => {
-                if !cm.spaces.iter().any(|s| &s.id == space) {
+            ViewKind::Spatial { space, scale, y_up, look } => {
+                let Some(sp) = cm.spaces.iter().find(|s| &s.id == space) else {
                     return Err(err("PK-E01", format!("unknown space `{space}` (PK-2.3)")));
-                }
+                };
+                // D-100: a view of a space of three dimensions, from 30 deg and 20 deg unless
+                // the author turns it.
+                let look = match (sp.dimension, look) {
+                    (3, Some([a, e])) => Some(Look::new(number(cm, a).map_err(|m| err("PK-E02", m))?, number(cm, e).map_err(|m| err("PK-E02", m))?)),
+                    (3, None) => Some(Look::new(30f64.to_radians(), 20f64.to_radians())),
+                    _ => None,
+                };
                 let q = match compile_expr(cm, &scale.quantity, None) {
                     Ok((_, Type::Quantity { dim })) if dim == Dim::length() => number(cm, &scale.quantity).map_err(|m| err("PK-E02", m))?,
                     _ => return Err(err("PK-E04", "a spatial view's scale maps a length to pixels: `1 m -> 40 px` (PK-5.5)".into())),
                 };
-                Ok(ViewCtx::Spatial { space: space.clone(), px_per_m: scale.px / q, y_up: *y_up })
+                Ok(ViewCtx::Spatial { space: space.clone(), px_per_m: scale.px / q, y_up: *y_up, look })
             }
             ViewKind::Plot { x, y, follow, units, window } => {
                 let n = |e: &Expr| number(cm, e).map_err(|m| err("PK-E02", m));
@@ -406,13 +488,42 @@ impl ViewCtx {
         }
     }
 
-    /// Model coordinates to view coordinates.
+    /// Model coordinates to view coordinates. In a view of a space of three dimensions, the
+    /// point is projected along the view's depth (D-100).
     pub fn to_view(&self, p: &[f64]) -> [f64; 2] {
         let (x, y) = (p.first().copied().unwrap_or(0.0), p.get(1).copied().unwrap_or(0.0));
         match self {
+            ViewCtx::Spatial { px_per_m, look: Some(l), .. } => [Look::dot(&l.right, p) * px_per_m, -Look::dot(&l.up, p) * px_per_m],
             ViewCtx::Spatial { px_per_m, y_up, .. } => [x * px_per_m, if *y_up { -y * px_per_m } else { y * px_per_m }],
             _ => [x, y],
         }
+    }
+
+    /// A vector's components as a displacement in view pixels, at `px_per_unit` pixels per
+    /// unit of its dimension (arrows).
+    pub fn vec_px(&self, c: &[f64], px_per_unit: f64) -> [f64; 2] {
+        match self {
+            ViewCtx::Spatial { look: Some(l), .. } => [Look::dot(&l.right, c) * px_per_unit, -Look::dot(&l.up, c) * px_per_unit],
+            ViewCtx::Spatial { y_up, .. } => {
+                let (x, y) = (c.first().copied().unwrap_or(0.0), c.get(1).copied().unwrap_or(0.0));
+                [x * px_per_unit, if *y_up { -y } else { y } * px_per_unit]
+            }
+            _ => [c.first().copied().unwrap_or(0.0), c.get(1).copied().unwrap_or(0.0)],
+        }
+    }
+
+    /// Whether the view shows a space of three dimensions (D-100).
+    pub fn is_3d(&self) -> bool {
+        matches!(self, ViewCtx::Spatial { look: Some(_), .. })
+    }
+
+    /// The coordinates of a position as text: `x = 1 m, y = 2 m`, with `z` in three
+    /// dimensions.
+    pub fn at_text(&self, c: &[f64]) -> String {
+        let s = self.shown(c);
+        let unit = if matches!(self, ViewCtx::Spatial { .. }) { " m" } else { "" };
+        let n = if self.is_3d() { 3 } else { 2 };
+        ["x", "y", "z"].iter().take(n).enumerate().map(|(i, a)| format!("{a} = {}{unit}", fmt_num(s.get(i).copied().unwrap_or(0.0)))).collect::<Vec<_>>().join(", ")
     }
 
     /// The coordinates of a position as text shows them. In a spatial view a coordinate that
@@ -435,7 +546,7 @@ impl ViewCtx {
     /// the value of a drag on a member of the group.
     pub fn pointer_in(&self, p: [f64; 2], tf: &Tf) -> Expr {
         match self {
-            ViewCtx::Spatial { space, px_per_m, y_up } => {
+            ViewCtx::Spatial { space, px_per_m, y_up, look: None } => {
                 let m = [p[0] / px_per_m, if *y_up { -p[1] } else { p[1] } / px_per_m];
                 let l = tf.unapply(m);
                 origin(space) + tuple(vec![num(l[0], "m"), num(l[1], "m")])
@@ -448,7 +559,14 @@ impl ViewCtx {
     /// space, or the pair of plot coordinates. This is the value of a gesture (PK-5.6).
     pub fn pointer(&self, p: [f64; 2]) -> Expr {
         match self {
-            ViewCtx::Spatial { space, px_per_m, y_up } => {
+            // In three dimensions: the point of the plane through the origin that faces the
+            // viewer (D-100).
+            ViewCtx::Spatial { space, px_per_m, look: Some(l), .. } => {
+                let (a, b) = (p[0] / px_per_m, -p[1] / px_per_m);
+                let c: Vec<Expr> = (0..3).map(|i| num(a * l.right[i] + b * l.up[i], "m")).collect();
+                origin(space) + tuple(c)
+            }
+            ViewCtx::Spatial { space, px_per_m, y_up, .. } => {
                 let x = p[0] / px_per_m;
                 let y = if *y_up { -p[1] } else { p[1] } / px_per_m;
                 origin(space) + tuple(vec![num(x, "m"), num(y, "m")])
@@ -755,6 +873,9 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
         // A field in the plane as coloured cells (D-091).
         "heatmap" => {
             let ViewCtx::Spatial { .. } = ctx else { return Err(d("PK-E05", "a heatmap belongs in a spatial view, where its grid lies".into())) };
+            if ctx.is_3d() {
+                return Err(d("PK-E05", "a heatmap lies in a plane; a view of three dimensions does not draw one yet (PK-7.2a)".into()));
+            }
             let e = source(rep, 0).ok_or_else(|| needs("a field in the plane: `heatmap(T)`"))?;
             let (_, t) = ce(e, None)?;
             let (Type::Field { grid, of }, Expr::Ref { .. }) = (&t, e) else { return Err(needs("a field in the plane: `heatmap(T)`")) };
@@ -993,6 +1114,11 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
         }
         "circle" | "ellipse" | "arc" => {
             let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", format!("a {} belongs in a spatial view", rep.kind))) };
+            // D-100: a circle in three dimensions is a sphere's outline; an ellipse or an arc
+            // would need the plane it lies in.
+            if ctx.is_3d() && rep.kind != "circle" {
+                return Err(d("PK-E05", format!("an {} lies in a plane; a view of three dimensions draws circles (as spheres), markers, arrows, segments, polylines, polygons and traces (PK-7.2a)", rep.kind)));
+            }
             let what = match rep.kind.as_str() {
                 "circle" => "a centre and a radius: `circle(P, 1 m)`",
                 "ellipse" => "a centre and two radii: `ellipse(P, 2 m, 1 m)`",
@@ -1106,6 +1232,9 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
         }
         "group" => {
             let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", "a group belongs in a spatial view (PK-6.3b)".into())) };
+            if ctx.is_3d() {
+                return Err(d("PK-E05", "a group turns its members in a plane; a view of three dimensions does not take groups yet (PK-7.2a)".into()));
+            }
             if !rep.sources.is_empty() || rep.props.iter().any(|p| !["at", "rotate", "scale"].contains(&p.name.as_str())) {
                 return Err(d("PK-E05", "a group takes `at`, `rotate` and `scale`; its members are written in its block (PK-6.3b)".into()));
             }
@@ -1214,9 +1343,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
         CKind::Marker { pos, label } => match eval(pos) {
             Ok(v) => {
                 let c = coords(&v);
-                let unit = if matches!(ctx, ViewCtx::Spatial { .. }) { " m" } else { "" };
-                let s = ctx.shown(&c);
-                (Shape::Point { at: ctx.to_view(&c) }, format!("{label} at x = {}{unit}, y = {}{unit}", fmt_num(s[0]), fmt_num(s[1])))
+                (Shape::Point { at: ctx.to_view(&c) }, format!("{label} at {}", ctx.at_text(&c)))
             }
             Err(s) => status(s),
         },
@@ -1233,9 +1360,8 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 Ok(v) => {
                     let c = coords(&v);
                     let from_v = ctx.to_view(&base);
-                    let ViewCtx::Spatial { y_up, .. } = ctx else { unreachable!() };
-                    let dy = if *y_up { -c[1] } else { c[1] };
-                    let to = [from_v[0] + c[0] * px_per_unit, from_v[1] + dy * px_per_unit];
+                    let d = ctx.vec_px(&c, *px_per_unit);
+                    let to = [from_v[0] + d[0], from_v[1] + d[1]];
                     let from_text = fmt_value(&Value::Point(prismal_kernel::Arr::from_slice(&base)), &Type::point(""));
                     (Shape::Arrow { from: from_v, to }, format!("arrow {label} = {} from {from_text}", fmt_value(&v, ty)))
                 }
@@ -1564,10 +1690,18 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             let rx_v = num(rx);
             let ry_v = ry.as_ref().map(num).unwrap_or_else(|| rx_v.clone());
             match (eval(center), rx_v, ry_v, opt(rotate, 0.0), opt(from, 0.0), opt(to, std::f64::consts::TAU)) {
-                (Ok(c), Ok(a), Ok(b), Ok(rot), Ok(t1), Ok(t2)) if a >= 0.0 && b >= 0.0 => {
+                (Ok(c), Ok(a), Ok(b), Ok(rot), Ok(t1), Ok(t2)) if a >= 0.0 && b >= 0.0 => 'round: {
                     // In the model's space: centre c, radii scaled by the group, axes turned
                     // by the ellipse's rotation and the group's.
                     let c = coords(&c);
+                    // D-100: in three dimensions a circle is a disc facing the viewer, a
+                    // sphere's outline.
+                    if let ViewCtx::Spatial { px_per_m, look: Some(_), .. } = ctx {
+                        let shape = Shape::Ellipse { center: ctx.to_view(&c), radii: [a * px_per_m, a * px_per_m], rotation: 0.0, start: 0.0, sweep: std::f64::consts::TAU, closed: true };
+                        let name = r.rep.name.as_deref().map(|n| format!(" {n}")).unwrap_or_default();
+                        let text = format!("circle{name} around {}, radius {} m", ctx.at_text(&c), fmt_num(a));
+                        break 'round (shape, text);
+                    }
                     let (a, b, rot) = (a * tf.k, b * tf.k, rot + tf.angle);
                     let (s, co) = rot.sin_cos();
                     let cv = ctx.to_view(&c);
@@ -1658,6 +1792,8 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 (Err(s), _, _) | (_, Err(s), _) | (_, _, Err(s)) => status(s),
             }
         }
+        CKind::Axes if ctx.is_3d() => axes_3d(ctx),
+        CKind::Grid if ctx.is_3d() => grid_3d(ctx),
         CKind::Axes => (Shape::Axes, "axes".into()),
         CKind::Grid => (Shape::Grid, "grid".into()),
     };
@@ -1979,11 +2115,11 @@ mod tests {
 
     #[test]
     fn rounding_near_zero_is_shown_as_zero() {
-        let ground = ViewCtx::Spatial { space: "S".into(), px_per_m: 50.0, y_up: true };
+        let ground = ViewCtx::Spatial { space: "S".into(), px_per_m: 50.0, y_up: true, look: None };
         assert_eq!(ground.shown(&[0.0, -3.74851e-10]), vec![0.0, 0.0]);
         assert_eq!(ground.shown(&[2.0, 0.5]), vec![2.0, 0.5]);
         // Atoms drawn at 1e11 px/m keep a length of 1e-10 m.
-        let atoms = ViewCtx::Spatial { space: "S".into(), px_per_m: 1e11, y_up: true };
+        let atoms = ViewCtx::Spatial { space: "S".into(), px_per_m: 1e11, y_up: true, look: None };
         assert_eq!(atoms.shown(&[1e-10, 0.0]), vec![1e-10, 0.0]);
         let plot = ViewCtx::Plot { x: (0.0, 10.0), y: (-1.0, 1.0), dims: (Dim::default(), Dim::default()), follow: [false; 2], units: [None, None], window: None, sample_x: None };
         assert_eq!(plot.shown(&[1e-12, 0.25]), vec![0.0, 0.25]);
