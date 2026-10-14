@@ -446,7 +446,10 @@ impl<'a> Cx<'a> {
         match e {
             Expr::Ref { r#ref } => Expr::Ref { r#ref: s.local(r#ref) },
             Expr::Der { der } => Expr::Der { der: s.local(der) },
-            Expr::Fn { r#fn } => Expr::Fn { r#fn: s.local(r#fn) },
+            // A function of the member's type is the member's; a shared one (D-099) is the
+            // model's, as linked.
+            Expr::Fn { r#fn } if s.ty.functions.iter().any(|f| &f.id == r#fn) => Expr::Fn { r#fn: s.local(r#fn) },
+            Expr::Fn { r#fn } => Expr::Fn { r#fn: r#fn.clone() },
             Expr::Payload { payload } => match &s.payload {
                 Some((from, to)) if from == payload => Expr::Payload { payload: to.clone() },
                 _ => Expr::Payload { payload: s.local(payload) },

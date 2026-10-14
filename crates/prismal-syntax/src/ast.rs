@@ -20,6 +20,19 @@ pub enum Item {
     Model(ModelDecl),
     Presentation(PresentationDecl),
     Run(RunDecl),
+    /// `use name` or `use name.{A, B}` (D-099).
+    Use(UseDecl),
+    /// An object type, enumeration or function written outside models (D-099).
+    Shared(Member),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UseDecl {
+    /// The module's name, its parts as written: `physics.mechanics`.
+    pub path: Vec<Name>,
+    /// The names imported, or every shared definition of the module.
+    pub names: Option<Vec<Name>>,
+    pub span: Span,
 }
 
 // ---------------------------------------------------------------- models

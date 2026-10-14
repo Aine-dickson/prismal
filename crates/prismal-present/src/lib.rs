@@ -61,8 +61,9 @@ impl Program {
 
     /// [`Program::new`] with working capacities for collections declared without a limit.
     pub fn sized(source: Document, capacities: prismal_ir::elaborate::Capacities) -> Result<Program, Vec<PDiag>> {
-        // Objects and collections become a flat model first (D-055).
-        let doc = prismal_ir::elaborate::document_with(&source, &capacities).map_err(|ds| ds.into_iter().map(|d| PDiag { code: d.code, message: d.message, element: d.element }).collect::<Vec<_>>())?;
+        // Shared definitions are copied into the models that read them (D-099), then objects
+        // and collections become a flat model (D-055).
+        let doc = prismal_ir::elaborate::document_with(&prismal_ir::link::link(source.clone()), &capacities).map_err(|ds| ds.into_iter().map(|d| PDiag { code: d.code, message: d.message, element: d.element }).collect::<Vec<_>>())?;
         // Rates given by solved equations become unknowns (D-092).
         let doc = prismal_ir::elaborate::solved_rates(doc);
         let mut diags = vec![];

@@ -9,7 +9,7 @@
 
 use prismal_present::expect::run_case;
 use prismal_present::Program;
-use prismal_syntax::{compile, markdown_source};
+use prismal_syntax::{compile_with, markdown_source, DirModules};
 use prismal_web::examples;
 
 fn main() {
@@ -40,7 +40,9 @@ fn cases(what: &str) -> i32 {
             }
         },
     };
-    let doc = match compile(&src) {
+    // `use` finds modules beside the file, then the first-party ones (D-099).
+    let dir = std::path::Path::new(what).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let doc = match compile_with(&src, &DirModules { roots: vec![dir] }) {
         Ok(c) => c.doc,
         Err(ds) => {
             for d in &ds {

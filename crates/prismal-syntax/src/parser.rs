@@ -26,7 +26,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
-    "instrument", "grid", "boundary", "periodic", "unknown", "enforce",
+    "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -358,7 +358,38 @@ impl<'a> Parser<'a> {
         if self.eat_word("run") {
             return self.run_decl(start).map(Item::Run);
         }
-        Err(self.unexpected("`space`, `model`, `presentation` or `run`"))
+        // D-099: object types, enumerations and functions written outside models.
+        if self.is_word("object") || self.is_word("enum") || self.is_word("fn") {
+            let mut ms = self.member()?;
+            return Ok(Item::Shared(ms.remove(0)));
+        }
+        // `use name`, `use a.b`, `use a.b.{X, Y}`; `use` is a word only here.
+        if self.is_word("use") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            self.bump();
+            let mut path = vec![self.name("a module name")?];
+            let mut names = None;
+            while self.is_punct(".") {
+                self.bump();
+                if self.is_punct("{") {
+                    self.bump();
+                    let mut ns = vec![];
+                    loop {
+                        ns.push(self.name("a name the module defines")?);
+                        if self.is_punct(",") {
+                            self.bump();
+                            continue;
+                        }
+                        self.expect_punct("}")?;
+                        break;
+                    }
+                    names = Some(ns);
+                    break;
+                }
+                path.push(self.name("a module name")?);
+            }
+            return Ok(Item::Use(UseDecl { path, names, span: self.since(start) }));
+        }
+        Err(self.unexpected("`space`, `model`, `presentation`, `run`, `use`, `object`, `enum` or `fn`"))
     }
 
     // ------------------------------------------------------------ model members

@@ -22,11 +22,27 @@ const INDENT: &str = "  ";
 /// Prints a document in the canonical form.
 pub fn format(doc: &Document) -> String {
     let mut parts = vec![];
+    // D-099: `use` lines, then the document's own shared definitions after its spaces.
+    if !doc.uses.is_empty() {
+        let lines: Vec<String> = doc
+            .uses
+            .iter()
+            .map(|u| match &u.names {
+                Some(ns) => format!("use {}.{{{}}}", u.module, ns.join(", ")),
+                None => format!("use {}", u.module),
+            })
+            .collect();
+        parts.push(lines.join("
+"));
+    }
     for s in &doc.spaces {
         let mut out = String::new();
         notes(&mut out, "", &s.notes);
         let _ = write!(out, "space {} = euclidean({})", s.name, s.dimension);
         parts.push(out);
+    }
+    if let Some(own) = doc.libraries.iter().find(|l| l.name == prismal_ir::SHARED) {
+        parts.extend(shared(doc, own));
     }
     for m in &doc.models {
         parts.push(Printer::new(doc, m).model());
@@ -44,6 +60,24 @@ pub fn format(doc: &Document) -> String {
     let mut s = parts.join("\n\n");
     s.push('\n');
     s
+}
+
+/// The sections of a library printed outside any model: printed as the body of a model in the
+/// library's space, then unindented (D-099).
+fn shared(doc: &Document, lib: &prismal_ir::Library) -> Vec<String> {
+    let mut m = prismal_ir::build::ModelBuilder::new(&lib.name).finish();
+    m.default_space = Some(prismal_ir::ANY_SPACE.into());
+    m.enums = lib.enums.clone();
+    m.functions = lib.functions.clone();
+    m.objects = lib.objects.clone();
+    let text = Printer::new(doc, &m).model();
+    let lines: Vec<&str> = text.lines().collect();
+    let body = &lines[1..lines.len().saturating_sub(1)];
+    let unindented: Vec<String> = body.iter().map(|l| l.strip_prefix(INDENT).unwrap_or(l).to_string()).collect();
+    unindented.join("
+").split("
+
+").map(|s| s.to_string()).filter(|s| !s.trim().is_empty()).collect()
 }
 
 fn notes(out: &mut String, ind: &str, notes: &[String]) {

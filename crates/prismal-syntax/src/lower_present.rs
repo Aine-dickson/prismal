@@ -799,12 +799,13 @@ fn find_model<'m>(models: &'m [Model], n: &ast::Name, diags: &mut Vec<Diag>) -> 
     m
 }
 
-pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: &[Space], diags: &mut Vec<Diag>, map: &mut SourceMap) -> Option<Presentation> {
+pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: &[Space], visible: &crate::modules::Visible, diags: &mut Vec<Diag>, map: &mut SourceMap) -> Option<Presentation> {
     let model = find_model(models, &p.model, diags)?;
     let id = p.name.text.clone();
     map.insert(id.clone(), p.span);
     let equations = model.equations.iter().map(|q| (q.name.clone(), q.id.clone())).collect();
     let mut px = PresCx { cx: ModelCx::scope(model, spaces, diags, map), equations, pres: &id, views: HashMap::new(), aliases: HashMap::new(), instruments: HashMap::new() };
+    px.cx.import(visible);
     // Instruments first: views and observations read through them.
     let mut instruments = vec![];
     for it in &p.items {
@@ -900,6 +901,7 @@ pub(crate) fn run(
     r: &ast::RunDecl,
     models: &[Model],
     spaces: &[Space],
+    visible: &crate::modules::Visible,
     presentations: &[Presentation],
     diags: &mut Vec<Diag>,
     map: &mut SourceMap,
@@ -922,6 +924,7 @@ pub(crate) fn run(
     let id = r.name.text.clone();
     map.insert(id.clone(), r.span);
     let mut cx = ModelCx::scope(model, spaces, diags, map);
+    cx.import(visible);
     let params = r.params.iter().map(|(n, v)| Override { binding: cx.binding(n), value: cx.expr(v, &[]) }).collect();
     let inputs = r.inputs.iter().map(|(n, v, at)| InputValue { binding: cx.binding(n), value: cx.expr(v, &[]), at: at.as_ref().map(|a| cx.expr(a, &[])) }).collect();
     let mut config = RunConfig::default();

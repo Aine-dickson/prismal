@@ -12,11 +12,13 @@ pub mod identity;
 pub mod lexer;
 pub mod lower;
 mod lower_present;
+pub mod modules;
 pub mod parser;
 
 pub use format::format;
 pub use identity::{diff, reconcile, rename, IdentityDiff};
 pub use lower::{lower_expr, SourceMap};
+pub use modules::{DirModules, FirstParty, MapModules, Modules, NoModules};
 
 use prismal_ir::{Document, Model};
 use prismal_kernel::{check_model, CModel};
@@ -110,12 +112,20 @@ impl Compiled {
 }
 
 /// Parses and lowers source text to the IR. Fails with every syntax and lowering diagnostic.
+/// `use` finds the first-party modules (D-099).
 pub fn compile(src: &str) -> Result<Compiled, Vec<Diag>> {
+    compile_with(src, &FirstParty)
+}
+
+/// Parses and lowers source text whose `use` lines find their modules in `modules` (D-099).
+/// The document holds the shared definitions of every module it uses, so it needs no modules
+/// afterwards.
+pub fn compile_with(src: &str, modules: &dyn Modules) -> Result<Compiled, Vec<Diag>> {
     let (file, mut diags) = parse(src);
     if !diags.is_empty() {
         return Err(diags);
     }
-    let (doc, source_map, d) = lower::lower(&file);
+    let (doc, source_map, d) = lower::lower_with(&file, modules);
     diags.extend(d);
     if !diags.is_empty() {
         return Err(diags);
@@ -129,7 +139,8 @@ pub fn check(src: &str) -> Result<(Compiled, Vec<CModel>), Vec<Diag>> {
     let c = compile(src)?;
     let mut diags = vec![];
     let mut out = vec![];
-    for m in &c.doc.models {
+    let linked = prismal_ir::link::link(c.doc.clone());
+    for m in &linked.models {
         match check_model(&c.doc.spaces, m) {
             Ok(cm) => out.push(cm),
             Err(ds) => {
