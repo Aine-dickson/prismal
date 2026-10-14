@@ -269,6 +269,8 @@ pub struct ConstraintDecl {
     pub cond: Expr,
     pub within: Option<Expr>,
     pub policy: Option<Name>,
+    /// `with N`: the unknown that holds an enforced inequality (D-098).
+    pub force: Option<Name>,
     pub span: Span,
 }
 

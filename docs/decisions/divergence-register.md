@@ -117,6 +117,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-095 | Leftovers closed: easing, line width, text alignment, narration speed, flows' derived values, goal notes | Accepted |
 | D-096 | Release 0.2.0 and the scope of 0.3 | Accepted |
 | D-097 | Vector and point unknowns | Accepted |
+| D-098 | Enforced inequalities: contact, release and slack ropes | Accepted |
 
 ---
 
@@ -1924,5 +1925,33 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **No new syntax.** `unknown` blocks already declared names with types; only the types allowed change.
 - **Version 1 (D-081):** additions. A vector or point unknown was MK-E01; a rate of a vector given by an equation was MK-E35; `dot` of a vector and a tuple was MK-E01. No valid program changes meaning.
 - **Consequences:** kernel `CSolve.widths`, `SolvePlan.widths`, matching of components (`plan_solve`), `solve_unknowns` reads and writes vectors and points; `elaborate::rates` uses `enforce::rate_type` for every state type; the obsolete MK-E35 loop in `plan_solve` removed; `dot` typing; MK-10.7a, MK-11.6, MK-11.7, MK-11.9, MK-E35 in 01-model-kernel; working syntax; guide chapter 17 (Vectors and points as unknowns: a weight between two springs, a throw as `m a = F`), chapter 18 (the bead's push as a vector), the reference; `prismal-present/tests/vector_unknowns.rs` (a point at an equilibrium against `m g / 2k`, a nonlinear balance with rest lengths, a holding force, a throw against its closed form, a bead's vector push against `m g cos α` at right angles to the wire, the canonical text, component counts and the type diagnostic).
+- **History:**
+  - 2026-10-14 accepted under the owner's standing delegation and implemented.
+
+## D-098: Enforced inequalities: contact, release and slack ropes
+
+- **Status:** Accepted; implemented on branch `inequality-constraints`.
+- **Original position:** D-093 enforced equalities only and listed "inequality constraints (contact, a rope that goes slack: complementarity)" as not yet. A floor was written as an event that reverses or zeroes a velocity (RP-03), which cannot keep a body resting on it under a varying force, nor say when a body leaves a curved surface.
+- **Raised by:** D-096, second item of the 0.3 headline.
+- **Builds on:** D-004, D-020, D-092, D-093, D-097; MK-12.6 to MK-12.10; RC-5.10, RC-7.
+- **Question:** How does a model state a constraint that holds on one side only (a floor, a dome a particle slides off, a rope that can go slack), and how does the runtime decide when it is in contact?
+- **Content it serves:** a ball landing and resting, a block on a table, a particle leaving a hemisphere at `cos θ = 2/3 cos θ0`, a pendulum on a rope that goes slack when swung over the top, a bob that falls until its rope is taut.
+- **Options considered:**
+  1. **Events written by the author** (as RP-03): a crossing event zeroes the velocity, another lets go. Possible for a floor, but the author computes the release condition (the force turning negative) by hand for each shape, and resting contact under changing forces drifts.
+  2. **A complementarity solve at every instant** (a linear complementarity problem, or Fischer-Burmeister residuals in the Newton solve): general for many simultaneous contacts, but it hides the switch inside the solver, so a lesson cannot point at "the moment it leaves", and a smooth reformulation slows Newton near the switch.
+  3. **An active set with hidden contact state and hidden events** (taken): the inequality is in contact or not; in contact it is the D-093 equality and its force is solved; the switches are crossing events located like any other (RC-7), so the instant of contact or release is exact and appears in the run like an author's event. This is the event-driven method of nonsmooth mechanics for few contacts (Pfeiffer and Glocker 1996).
+  For naming the force: **inference** (the unknown the constraint's rate reads) fails as soon as one flow carries two forces, a ball in a corner: both rates read both. **Naming it** (taken) states the complementarity pair as texts do, "`y >= 0`, `N >= 0`, `N y = 0`": `with N`, a word already contextual (D-040).
+- **Accepted position:** option 3, under the standing delegation of 2026-09-30.
+  - Syntax: `constraint floor: y >= 0 m policy enforce with N`. `with` is a constraint clause, in any order with `within` and `policy` (D-081); `N` is an unknown number or quantity that a rate of the constraint reads (MK-E36 otherwise).
+  - MK-12.11: the gap (`a - b` for `>=`, `b - a` for `<=`); rates and levels of the boundary; in contact: enforced as an equality; out of contact: `N == 0` replaces the solved rate and the state is not projected. Contact is made when the gap falls through zero, and the transition's projection removes the velocity into the boundary (an inelastic impact); contact ends when `N` falls through zero, or at once when made or held at the start with `N` negative; a contact whose gap opens (a ball thrown up from the floor) ends in that transition. `N` is positive while it acts.
+  - RC-5.11: contact is a hidden discrete binding `c@contact`, changed at the start and in transitions only; hidden events `c@touch`, `c@release`, `c@settle`, `c@start`; the separation rule before projection; two checks that fail the run instead of letting a body through its boundary: a force written the wrong way (measured as the change of the gap's solved rate for a change of `N`), and an inequality out of contact found past its boundary (a crossing not found).
+- **Findings while building it:**
+  1. **A loop at a wrong-signed contact.** With `N` pulling, contact was made, settled at once, and the body sat exactly on the boundary, where the guard's sign is zero and the event's reference keeps its earlier sign: the next step's crossing fired the touch again an instant later, without end. The sign check at contact (RC-5.11) stops the run with a message naming `N` instead.
+  2. **Separation only in transitions.** A first version let projection end a contact at the end of any step whose gap rate was positive, which would change a discrete value outside a transition; separation is now done at the start and in transitions only, as discrete state requires (MK section 15).
+- **Reason:** the switch is the physics a lesson shows (the floor stops the ball; the dome lets go where the needed pull exceeds gravity's), so it is an event in the run, at an exact instant; in contact, nothing new is computed: it is the enforced constraint of D-093.
+- **New syntax kept to one clause:** `with F`, a contextual word already in the language; inequalities and `policy enforce` existed.
+- **Version 1 (D-081):** additions. `with` after a constraint was SX-E02; `policy enforce` on an inequality was MK-E36. No valid program changes meaning.
+- **Not yet:** friction (a cone of forces, a second complementarity at the contact); many simultaneous contacts that switch at one instant in ways that depend on each other (a stack of blocks); impacts other than inelastic, except through an author's event.
+- **Consequences:** IR `Constraint.force`; parser clause `with`, lowering, formatter; `enforce::inequality`, `contact_id`, rates of inequalities, hidden contact bindings and events; kernel `CConstraint.contact`, `CEquation.contact`, the solve's `N == 0` out of contact, `project` skips constraints out of contact, `CModel::separate`, `CModel::holds_as_declared`; runtime separation in transitions and the two checks; MK-12.6, MK-12.11, MK-E36, RC-5.11, 04-ir, working syntax; guide chapter 18 (Contact: a ball on a floor, a particle leaving a dome, a slack rope), the reference; `prismal-present/tests/inequality.rs` (landing time against `sqrt(2 h / g)` and the resting push `m g`, a throw from the floor and its landing at `2 v / g`, the release from a hemisphere at `cos θ = 2/3 cos θ0`, a rope taut after a free fall of 0.8 m with the velocity along it removed, never stretched, never pushing, a wrong-signed force, the canonical text, diagnostics).
 - **History:**
   - 2026-10-14 accepted under the owner's standing delegation and implemented.

@@ -825,8 +825,36 @@ impl<'a> Engine<'a> {
     fn check_constraints(&self, vals: &[Value], _initial: bool) -> Result<Vec<RunDiag>, RunDiag> {
         let mut reports = vec![];
         for k in &self.cm.constraints {
-            // An enforced constraint is kept by projection (RC-5.10), not checked.
+            // An enforced constraint is kept by projection (RC-5.10), not checked. An inequality
+            // out of contact holds by itself; one found well past its boundary was crossed
+            // without touching, which a holding force of the wrong sign causes (RC-5.11).
             if k.policy == Policy::Enforce {
+                if let (Some((on, side)), Some(gap)) = (k.contact, k.levels.first()) {
+                    let c = self.ctx(vals);
+                    let force = || self.cm.ir.constraints.iter().find(|x| x.id == k.id).and_then(|x| x.force.clone()).map(|f| self.cm.bindings[self.cm.idx(&f)].name.clone()).unwrap_or_default();
+                    // A contact whose force comes out negative is released, unless a positive
+                    // force would close the gap: then the force is written the wrong way.
+                    let pulls = vals[on].boolean() && self.cm.equations.iter().find(|q| q.contact.is_some_and(|(c, _)| c == on)).is_some_and(|q| vals[q.contact.unwrap().1].num() < 0.0);
+                    if pulls && self.cm.holds_as_declared(vals, on, side, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))? == Some(false) {
+                        let name = force();
+                        return Err(self.diag(
+                            Category::Constraint,
+                            format!("constraint `{}`: a positive `{name}` closes it instead of holding it; write `{name}` in the flows so that it is positive when it holds the constraint (RC-5.11)", k.name),
+                            Some(&k.id),
+                        ));
+                    }
+                    if !vals[on].boolean() {
+                        if let (Ok((a, sa)), Ok((b, sb))) = (gap.lhs.eval_sized(&c, 1), gap.rhs.eval_sized(&c, 1)) {
+                            if side * (a.num() - b.num()) < -(1e-6 * (sa[0] + sb[0]) + 1e-6) {
+                                return Err(self.diag(
+                                    Category::Constraint,
+                                    format!("constraint `{}` is crossed out of contact (RC-5.11): the crossing was not found; give the solver a smaller step", k.name),
+                                    Some(&k.id),
+                                ));
+                            }
+                        }
+                    }
+                }
                 continue;
             }
             let c = self.ctx(vals);
@@ -1492,6 +1520,7 @@ impl<'a> Engine<'a> {
         // RC-5.10: a transition's result is moved onto the enforced constraints (a bob dragged
         // off its circle lands on it).
         let set: Vec<usize> = targets.iter().map(|(b, _)| *b).chain(contributions_set.iter().copied()).collect();
+        self.cm.separate(&mut proposed, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         self.cm.project(&mut proposed, self.t, self.cfg.t0, &set).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         self.cm.update_derived(&mut proposed, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         match self.check_constraints(&proposed, false) {

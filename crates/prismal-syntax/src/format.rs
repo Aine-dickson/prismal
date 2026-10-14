@@ -883,6 +883,9 @@ impl<'a> Printer<'a> {
             Policy::Stop => s.push_str(" policy stop"),
             Policy::Enforce => s.push_str(" policy enforce"),
         }
+        if let Some(f) = &c.force {
+            let _ = write!(s, " with {}", self.binding_name(f));
+        }
         s
     }
 

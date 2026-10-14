@@ -726,6 +726,16 @@ impl<'a> ModelCx<'a> {
                         }
                     };
                     self.push_constraint(&name, cond, tol, policy, None, c.span);
+                    if let Some(f) = &c.force {
+                        let force = match self.expr(&ast::Expr { kind: ast::ExprKind::Name(f.text.clone()), span: f.span }, &[]) {
+                            Expr::Ref { r#ref } => Some(r#ref),
+                            _ => {
+                                self.err("SX-E03", format!("`{}` is not a binding of the model: `with` names the unknown that holds the constraint", f.text), f.span);
+                                None
+                            }
+                        };
+                        self.model.constraints.last_mut().expect("pushed").force = force;
+                    }
                 }
                 Member::Object(o) => self.object(o),
                 Member::Parts(ps) => self.parts_decl(ps),
@@ -766,7 +776,7 @@ impl<'a> ModelCx<'a> {
             self.err("SX-E09", format!("constraint `{name}` declared twice"), span);
         }
         self.map.insert(id.clone(), span);
-        self.model.constraints.push(Constraint { id, name: name.into(), cond, tol, policy, attached_to });
+        self.model.constraints.push(Constraint { id, name: name.into(), cond, tol, policy, attached_to, force: None });
     }
 
     // ------------------------------------------------------------ declarations

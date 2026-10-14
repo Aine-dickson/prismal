@@ -1071,6 +1071,10 @@ impl<'a> Cx<'a> {
             }
             nc.tol = c.tol.as_ref().map(|t| self.expr(s, t));
             nc.attached_to = c.attached_to.as_ref().map(|a| s.local(a));
+            nc.force = c.force.as_ref().and_then(|f| match self.expr(s, &Expr::Ref { r#ref: f.clone() }) {
+                Expr::Ref { r#ref } => Some(r#ref),
+                _ => None,
+            });
             out.constraints.push(nc);
         }
         for p in &ty.parts {
@@ -1153,6 +1157,7 @@ impl<'a> Cx<'a> {
             tol: None,
             policy: Policy::Stop,
             attached_to: None,
+            force: None,
         });
     }
 }

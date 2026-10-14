@@ -239,6 +239,7 @@ impl ModelBuilder {
             tol,
             policy,
             attached_to: attached_to.map(|s| s.to_string()),
+            force: None,
         });
         id
     }
