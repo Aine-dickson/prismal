@@ -297,6 +297,10 @@ pub struct ConstraintDecl {
     pub policy: Option<Name>,
     /// `with N`: the unknown that holds an enforced inequality (D-098).
     pub force: Option<Name>,
+    /// `where |F| <= B`: the bound of the holding force (D-102).
+    pub bound: Option<Expr>,
+    /// `restitution e` (D-102).
+    pub restitution: Option<Expr>,
     pub span: Span,
 }
 

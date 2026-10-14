@@ -1508,6 +1508,7 @@ impl<'a> Engine<'a> {
                     emits.push(COp::Emit { event: *event, payload: p });
                 }
                 COp::Contribute { .. } => return Err(Status::invalid("`contribute` in an algorithm")),
+                COp::Rebound { .. } => return Err(Status::invalid("a rebound in an algorithm")),
             }
         }
         Ok(())
@@ -1525,6 +1526,8 @@ impl<'a> Engine<'a> {
         // `contribute` operations by binding: combined after all operations are read
         // (MK-14.9, MK-16.4, D-073).
         let mut contributions: Vec<(usize, String, Vec<Value>)> = vec![];
+        // Impacts with restitution (D-102), performed after the other operations.
+        let mut rebounds: Vec<usize> = vec![];
         // Conditional operations are read on the state before the transition (D-057).
         let mut flat: Vec<&COp> = vec![];
         fn performed<'o>(s: &Engine, ops: &'o [COp], out: &mut Vec<&'o COp>) -> Result<(), RunDiag> {
@@ -1545,6 +1548,7 @@ impl<'a> Engine<'a> {
         for op in flat {
             match op {
                 COp::If { .. } => unreachable!(),
+                COp::Rebound { constraint } => rebounds.push(*constraint),
                 // MK-16.5: destroying one member twice is not a conflict.
                 COp::Destroy { binding } => {
                     if targets.iter().any(|(b, _)| b == binding) {
@@ -1620,6 +1624,20 @@ impl<'a> Engine<'a> {
         // RC-5.10: a transition's result is moved onto the enforced constraints (a bob dragged
         // off its circle lands on it).
         let set: Vec<usize> = targets.iter().map(|(b, _)| *b).chain(contributions_set.iter().copied()).collect();
+        // RC-5.14 (D-102): an impact with restitution bounces instead of making contact; a
+        // restitution of 0 makes contact as without one.
+        for k in rebounds {
+            let c = &self.cm.constraints[k];
+            let (Some((on, _)), Some(e)) = (c.contact, &c.restitution) else { continue };
+            let e = e.eval(&self.ctx(&self.vals)).map_err(|s| self.diag(Category::Model, s.cause, Some(&c.id)))?.num();
+            if e < 0.0 {
+                return Err(self.diag(Category::Model, format!("constraint `{}`: a restitution of {e}; it is at least 0", c.name), Some(&c.id)));
+            }
+            if e > 0.0 {
+                proposed[on] = Value::Bool(false);
+                self.cm.rebound(&mut proposed, self.t, self.cfg.t0, k, e).map_err(|s| self.diag(Category::Model, s.cause, Some(&c.id)))?;
+            }
+        }
         self.cm.separate(&mut proposed, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         self.cm.project(&mut proposed, self.t, self.cfg.t0, &set).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         self.cm.update_derived(&mut proposed, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;

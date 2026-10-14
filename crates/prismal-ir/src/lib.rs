@@ -413,6 +413,10 @@ pub enum Op {
         r#if: Expr,
         then: Vec<Op>,
     },
+    /// An impact on the enforced inequality `constraint`, which has a restitution: the state
+    /// is moved onto its boundary with its gap's rate reversed and scaled (D-102). Made by
+    /// elaboration for the hidden touch event.
+    Rebound { constraint: Id },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -634,6 +638,15 @@ pub struct Constraint {
     /// positive while it acts, zero while the constraint is not in contact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force: Option<Id>,
+    /// `where |F| <= B` (D-102): the bound of the holding force of an enforced equality. Within
+    /// it the constraint holds; at it the constraint slips, the force at the bound against
+    /// the slip: Coulomb friction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound: Option<Expr>,
+    /// `restitution e` (D-102): an enforced inequality's impacts reverse the gap's rate, scaled
+    /// by `e`, instead of stopping it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restitution: Option<Expr>,
 }
 
 /// A model: the root object type (MK-7.2).

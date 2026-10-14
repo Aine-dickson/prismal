@@ -147,15 +147,86 @@ pub fn elaborate(mut m: Model) -> Model {
             notes: vec![],
         };
         let not = |e: Expr| Expr::Not { not: Box::new(e) };
-        events.push(event("touch", "touch of", crate::Trigger::Falling { guard: gap }, not(at(&contact)), true));
+        let mut touch = event("touch", "touch of", crate::Trigger::Falling { guard: gap }, not(at(&contact)), true);
+        // D-102: with restitution an impact bounces; bounces that accumulate end in contact.
+        if k.restitution.is_some() {
+            touch.handler.push(crate::Op::Rebound { constraint: k.id.clone() });
+            touch.zeno = Some(crate::Zeno { policy: crate::ZenoPolicy::Settle { ops: vec![set(true)] }, eps: None, n: None, window: None });
+        }
+        events.push(touch);
         events.push(event("release", "release of", crate::Trigger::Falling { guard: at(force) }, at(&contact), false));
         // A contact that pulls as soon as it is made, or from the start, ends at once.
         events.push(event("settle", "settling of", crate::Trigger::On { event: format!("{}@touch", k.id) }, pulls.clone(), false));
         events.push(event("start", "start of", crate::Trigger::Start, bin(BinOp::And, at(&contact), pulls), false));
     }
+    // D-102: an enforced equality whose holding force is bounded, `with F where |F| <= B`,
+    // holds while `|F| <= B` and slips once its force would pass the bound: the force is then
+    // `side * B`, `side` the sign it had when it let go. It holds again when what it equates
+    // crosses equality (the slip stops), and slips again at once if the force needed is still
+    // past the bound.
+    for k in m.constraints.iter().filter(|k| k.policy == Policy::Enforce) {
+        let (Some(force), Some(bound), Expr::Bin { bin: BinOp::Eq, l, r }) = (&k.force, &k.bound, &k.cond) else { continue };
+        let gap = bin(BinOp::Sub, (**l).clone(), (**r).clone());
+        let (hold, side) = (hold_id(&k.id), side_id(&k.id));
+        let at = |x: &str| Expr::Ref { r#ref: x.to_string() };
+        let hidden = |id: &str, name: String, ty: crate::Type, init: Expr| crate::Binding {
+            id: id.to_string(),
+            name,
+            role: Role::Discrete,
+            ty,
+            init: Some(init),
+            def: None,
+            intervenable: None,
+            private: true,
+            display: Default::default(),
+            notes: vec![],
+            when: None,
+            combine: None,
+            boundary: None,
+        };
+        let sign = |e: Expr| Expr::If { r#if: Box::new(bin(BinOp::Gt, e, zero())), then: Box::new(num(1.0)), r#else: Box::new(num(-1.0)) };
+        // Holding from the start when equal; slipping otherwise, against the slip (the runtime
+        // corrects the side for a force written the other way, RC-5.13).
+        m.bindings.push(hidden(&hold, format!("hold of {}", k.name), crate::Type::Boolean, bin(BinOp::Eq, gap.clone(), zero())));
+        m.bindings.push(hidden(&side, format!("side of {}", k.name), crate::Type::real(), neg(sign(gap.clone()))));
+        let set = |b: &str, v: Expr| crate::Op::Set { target: crate::Target { binding: b.to_string(), component: None, member: None }, value: v };
+        let over = bin(BinOp::Sub, Expr::Norm { norm: Box::new(at(force)) }, bound.clone());
+        let past = bin(BinOp::Gt, over.clone(), zero());
+        let let_go = vec![set(&hold, Expr::Bool { bool: false }), set(&side, sign(at(force)))];
+        let event = |id: &str, name: &str, trigger: crate::Trigger, enable: Expr, handler: Vec<crate::Op>| crate::Event {
+            id: format!("{}@{id}", k.id),
+            name: format!("{name} {}", k.name),
+            trigger,
+            enable: Some(enable),
+            handler,
+            zeno: None,
+            process: None,
+            payload: None,
+            each: None,
+            algorithm: None,
+            notes: vec![],
+        };
+        let not = |e: Expr| Expr::Not { not: Box::new(e) };
+        m.events.push(event("slip", "slip of", crate::Trigger::Rising { guard: over }, at(&hold), let_go.clone()));
+        m.events.push(event("grip", "grip of", crate::Trigger::Crossing { guard: gap }, not(at(&hold)), vec![set(&hold, Expr::Bool { bool: true })]));
+        m.events.push(event("reslip", "slip again of", crate::Trigger::On { event: format!("{}@grip", k.id) }, past.clone(), let_go.clone()));
+        m.events.push(event("start", "start of", crate::Trigger::Start, bin(BinOp::And, at(&hold), past), let_go));
+    }
     m.bindings.extend(bindings);
     m.events.extend(events);
     m
+}
+
+/// The identity of the hidden discrete state that says whether bounded equality `id` holds
+/// (D-102).
+pub fn hold_id(id: &str) -> String {
+    format!("{id}@hold")
+}
+
+/// The identity of the hidden discrete state that holds the sign of the force of bounded
+/// equality `id` while it slips (D-102).
+pub fn side_id(id: &str) -> String {
+    format!("{id}@side")
 }
 
 /// An inequality `a >= b` or `a <= b` as the two sides of its gap, `a - b >= 0` or

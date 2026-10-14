@@ -324,10 +324,116 @@ run slides of Dome with DomeLab {
 ```
 
 - `with N` pairs the constraint with the force that holds it. `N` is positive while it acts: a floor's push, a rope's pull. While the constraint is in contact, `N` is solved for, as for an equation; out of contact `N` is 0 and the constraint holds by itself.
-- **Coming into contact.** When the gap closes (the ball reaches the floor), the runtime puts the constraint in contact and removes the velocity into it: the impact is inelastic, the ball stops. A bouncing ball is still written with its own event (chapter 5); the constraint is for contact that lasts.
+- **Coming into contact.** When the gap closes (the ball reaches the floor), the runtime puts the constraint in contact and removes the velocity into it: the impact is inelastic, the ball stops, unless the constraint has a `restitution` (Friction and bounces, below).
 - **Leaving contact.** When `N` reaches 0 and would turn negative, the constraint leaves contact: on the dome this happens where gravity can no longer supply the pull the circular path needs, at `cos θ = 2/3 cos θ0`, about 48 degrees from the top. A ball on the floor that an event throws upward leaves at once.
 - A `<=` inequality works the same way: `constraint rope: |bob - pivot| <= L policy enforce with T` is a rope that can go slack. The flows read the tension pulling the bob toward the pivot, `- T / m * (bob - pivot) / |bob - pivot|`, so a positive `T` is a pull.
 - If `N` is written the wrong way in the flows (a positive `N` pulling the ball into the floor), the run stops at the first contact and says so.
+
+## Friction and bounces
+
+**Goal.** A crate on a floor pushed by a force that grows: it stays put while friction can match the push, then slides; and a ball that bounces on the floor, lower each time, until it rests.
+**How it is built.** Friction is a constraint on the sliding speed, `v == 0 m/s`, held by an unknown `F` that cannot exceed `mu * N`: `with F where |F| <= mu * N`. While the push needs less, the crate holds; when it needs more, the crate slips and `F` stays at its bound, against the slip. A bounce is the floor's inequality with `restitution e`: each impact sends the ball back up with `e` times its speed.
+
+```text
+model Crate {
+  param {
+    m:  Mass              = 2 kg
+    g:  Acceleration      = 9.81 m/s^2
+    mu: Real              = 0.5
+    k:  Quantity<M*L/T^3> = 2 N/s
+  }
+  state {
+    x: Length   = 0 m
+    v: Velocity = 0 m/s
+    y: Length   = 0 m
+    w: Velocity = 0 m/s
+  }
+  unknown {
+    N: Force
+    F: Force
+  }
+  derived { P: Force = k * elapsed }
+  flow {
+    der(x) = v
+    der(v) = (P + F) / m
+    der(y) = w
+    der(w) = -g + N / m
+  }
+  constraint floor: y >= 0 m policy enforce with N
+  constraint grip: v == 0 m/s policy enforce with F where |F| <= mu * N
+}
+
+model Bouncing {
+  param {
+    g: Acceleration = 9.81 m/s^2
+    m: Mass         = 1 kg
+    e: Real         = 0.5 in [0, 1]
+  }
+  state {
+    y: Length   = 1 m
+    v: Velocity = 0 m/s
+  }
+  unknown { N: Force }
+  flow {
+    der(y) = v
+    der(v) = -g + N / m
+  }
+  constraint floor: y >= 0 m policy enforce with N restitution e
+}
+
+presentation CrateLab for Crate {
+  until t0 + 8 s
+  view speeds: plot(x: [0 s, 8 s], y: [-10 N, 10 N]) {
+    series_plot(P every 0.05 s)
+    series_plot(F every 0.05 s)
+  }
+  observe {
+    held_by   = F at t0 + 3 s
+    still     = v at t0 + 3 s
+    speed     = v at t0 + 6.905 s
+    sliding_F = F at t0 + 6.905 s
+  }
+}
+
+presentation BounceLab for Bouncing {
+  until t0 + 3 s
+  view floor: plot(x: [0 s, 3 s], y: [0 m, 1.1 m]) { series_plot(y every 0.01 s) }
+  panel controls { slider(e, range: [0, 1]) }
+  observe {
+    apex    = y at t0 + 0.67734 s
+    resting = y at t0 + 3 s
+    weight  = N at t0 + 3 s
+  }
+}
+```
+
+```cases
+run push of Crate with CrateLab {
+  until t0 + 8 s
+  expect {
+    held_by == -6 N within 1e-9 N        // at 3 s the push is 6 N: friction matches it
+    still == 0 m/s exactly
+    speed == 2 m/s within 1e-6 m/s       // slipping from 4.905 s: v = (t - 4.905 s)² / 2 per s
+    sliding_F == -9.81 N within 1e-9 N   // mu m g, against the slip
+  }
+}
+
+run bounce of Bouncing with BounceLab {
+  until t0 + 3 s
+  expect {
+    apex == 0.25 m within 1e-6 m         // e² h, at 1.5 sqrt(2 h / g)
+    resting == 0 m within 1e-9 m
+    weight == 9.81 N within 1e-9 N
+  }
+}
+```
+
+- `with F where |F| <= mu * N`: `F` holds `v == 0 m/s` as long as the force needed is within the bound. Here that is `-P`, so the crate holds until the push reaches `mu m g = 9.81 N`, at 4.905 s.
+- **Slipping.** From then on `F` is `-mu N`, at its bound and against the slip, and the crate speeds up at `(P - mu m g) / m`. If the slip stops (with no push, a sliding crate slows down and stops), the constraint holds again, and slips again at once if the force needed is still past the bound.
+- `F` is positive in whichever direction the flows say: the runtime finds which way opposes the slip, also for a crate that is sliding from the start.
+- The bound can read the other unknowns: `mu * N` is the normal force of the floor, solved at the same instant. Off the floor `N` is 0, and so is the friction.
+- `restitution e` on an inequality: each impact reverses the speed into the boundary and keeps the share `e` of it. With `e = 0.5` the ball rises to a quarter of its height, and each bounce lasts half as long as the one before; they add up to a finite time, `3 sqrt(2 h / g)`, after which the ball rests (when bounces accumulate, the contact becomes lasting, as `zeno settle` does in chapter 5). `restitution 0` is the inelastic impact of the floor without it.
+- One coefficient of friction serves for holding and for sliding; a static coefficient larger than the sliding one is not yet written this way (D-102).
 
 ## How constraints are enforced
 
