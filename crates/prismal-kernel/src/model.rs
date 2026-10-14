@@ -109,7 +109,32 @@ pub struct CEvent {
     pub enable: Option<CExpr>,
     pub handler: Vec<COp>,
     pub zeno: Option<CZeno>,
+    /// An algorithm's program (D-101); its handler is empty.
+    pub algorithm: Option<CAlgorithm>,
 }
+
+/// An algorithm compiled to a flat program (MK-14.17, D-101). The binding `resume` holds the
+/// instruction where the next occurrence continues; at the program's end it is finished.
+#[derive(Clone, Debug)]
+pub struct CAlgorithm {
+    pub resume: usize,
+    pub code: Vec<CInstr>,
+}
+
+#[derive(Clone, Debug)]
+pub enum CInstr {
+    /// Operations performed together: they read the values before them (MK-15.7).
+    Do(Vec<COp>),
+    Jump(usize),
+    /// Jumps when the condition is false.
+    Unless(CExpr, usize),
+    /// The end of an occurrence's work.
+    Step,
+}
+
+/// The most instructions one occurrence of an algorithm runs before it is a model failure
+/// (RC-5.12): a loop that never reaches `step` or the end.
+pub const ALGORITHM_INSTRUCTIONS: usize = 1_000_000;
 
 #[derive(Clone, Debug)]
 pub struct CEquation {

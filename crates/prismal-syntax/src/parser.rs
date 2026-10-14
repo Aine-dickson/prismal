@@ -26,7 +26,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
-    "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use",
+    "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use", "algorithm", "while", "step",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -432,6 +432,10 @@ impl<'a> Parser<'a> {
         if self.is_word("event") {
             return Ok(vec![Member::Event(self.event_decl()?)]);
         }
+        // `algorithm sort on every 0.5 s { ... }` (D-101); contextual, before a name.
+        if self.is_word("algorithm") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            return Ok(vec![Member::Event(self.algorithm_decl()?)]);
+        }
         // `grid rod(x: [0 m, 1 m], cells: 100)` (D-091); contextual, before a name.
         if self.is_word("grid") && matches!(self.peek_at(1), Tok::Ident(_)) {
             self.bump();
@@ -776,7 +780,7 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        Ok(EventDecl { each: None, name, trigger, enable, handler, zeno, notes, span: self.since(start) })
+        Ok(EventDecl { each: None, name, trigger, enable, handler, zeno, algorithm: None, notes, span: self.since(start) })
     }
 
     fn trigger(&mut self) -> P<TriggerExpr> {
@@ -855,6 +859,72 @@ impl<'a> Parser<'a> {
         }
         self.expect_punct(")")?;
         Ok(out)
+    }
+
+    /// `algorithm name on trigger [if c] { statements }` (D-101): an event whose work is
+    /// statements run in order, paused at each `step`.
+    fn algorithm_decl(&mut self) -> P<EventDecl> {
+        let start = self.span();
+        let notes = self.notes_before(start.line);
+        self.expect_word("algorithm")?;
+        let name = self.name("an algorithm name")?;
+        self.expect_word("on")?;
+        let trigger = self.trigger()?;
+        let enable = if self.eat_word("if") { Some(self.expr()?) } else { None };
+        let body = self.algo_block()?;
+        Ok(EventDecl { each: None, name, trigger, enable, handler: vec![], zeno: None, algorithm: Some(body), notes, span: self.since(start) })
+    }
+
+    fn algo_block(&mut self) -> P<Vec<AlgoStmt>> {
+        self.block(|p| Self::one(p.algo_stmt()))
+    }
+
+    /// A statement of an algorithm: an operation, `if`, `while`, `for`, or `step` (D-101).
+    fn algo_stmt(&mut self) -> P<AlgoStmt> {
+        let start = self.span();
+        if self.eat_word("if") {
+            let cond = self.expr()?;
+            let then = self.algo_block()?;
+            // `else` may follow the closing brace on the next line.
+            if matches!(self.peek(), Tok::Newline) && self.is_word_at(1, "else") {
+                self.bump();
+            }
+            let otherwise = if self.eat_word("else") {
+                if self.is_word("if") {
+                    vec![self.algo_stmt()?]
+                } else {
+                    self.algo_block()?
+                }
+            } else {
+                vec![]
+            };
+            return Ok(AlgoStmt::If { cond, then, otherwise, span: self.since(start) });
+        }
+        if self.is_word("while") && !matches!(self.peek_at(1), Tok::Punct("=") | Tok::Punct(".")) {
+            self.bump();
+            let cond = self.expr()?;
+            let body = self.algo_block()?;
+            return Ok(AlgoStmt::While { cond, body, span: self.since(start) });
+        }
+        if self.eat_word("for") {
+            let var = self.name("a discrete binding that counts")?;
+            self.expect_word("in")?;
+            self.expect_punct("[")?;
+            let from = self.expr()?;
+            self.expect_punct(",")?;
+            let to = self.expr()?;
+            self.expect_punct("]")?;
+            let body = self.algo_block()?;
+            return Ok(AlgoStmt::For { var, from, to, body, span: self.since(start) });
+        }
+        if self.is_word("step") && matches!(self.peek_at(1), Tok::Newline | Tok::Punct("}") | Tok::Punct(";")) {
+            self.bump();
+            return Ok(AlgoStmt::Step(self.since(start)));
+        }
+        match self.op() {
+            Ok(op) => Ok(AlgoStmt::Op(op)),
+            Err(_) => Err(self.unexpected("a statement of an algorithm (`set`, `emit`, `create`, `destroy`, `if`, `while`, `for`, `step`)")),
+        }
     }
 
     /// `(v)` or `(v, w)` right after an event name in `emit` and `request`: the payload it

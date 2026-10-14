@@ -26,6 +26,7 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `flow { der(x) = e; der(y) += e }` | rate of change: one definition, or summed contributions | 4 |
 | `process Name { flow ...; event ... }` | a named group of flows and events | 4 |
 | `event E on trigger [if c] [{ ops }] [zeno settle { ops } \| zeno stop]` | an event | 5 |
+| `algorithm A on trigger [if c] { statements }` | an algorithm: `set`, `emit`, `create`, `destroy`, `if c { } else { }`, `while c { }`, `for i in [a, b] { }`, `step`; each occurrence runs to the next `step` | 21 |
 | `equation N: a == b [checked within tol]` | a stated relation, shown and optionally checked; an equation that reads an unknown is solved for it | 6, 17 |
 | `constraint N: c [within tol] [policy reject \| report \| stop]` | a checked condition (`within` for `==` only) | 6 |
 | `constraint N: a == b policy enforce` | a condition the runtime keeps true: the state is moved onto it, and the unknown force that holds it is solved for | 18 |
@@ -71,6 +72,9 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `sin cos tan sqrt exp log abs min max atan2` | functions | 2 |
 | `dot(a, b)` | the dot product of two vectors of one space (or the product of two quantities) | 18 |
 | `cross(a, b)` | the cross product of two vectors of a space of three dimensions | 20 |
+| `floor(x)`, `ceil(x)`, `round(x)`, `mod(a, b)` | whole numbers of a number; the remainder `a - b floor(a / b)`, of `a`'s dimension | 21 |
+| `(5, 2, 6)[k]` | the `k`-th of a list of values, from 1: `v = (5, 2, 6)[index]` in a collection's overrides | 21 |
+| `row[k]` with `k` computed | the member numbered `k` during the run; a number outside the collection stops the run | 21 |
 | `T(x)`, `laplacian(T)`, `gradient(T)`, `integral(T)`, `mean(T)`, `min(T)`, `max(T)` | a field read at a position; its Laplacian and gradient in the cell being computed; over the whole field | 16 |
 | `uniform normal exponential bernoulli integer poisson binomial choice` | distributions: a random value, only in an event's condition and operations | 15 |
 
@@ -178,6 +182,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `continue` | a learner step that ends an explore beat or a continue point | 8 |
 | `press` | a learner step that presses an explore beat's button: `at 3 s: press drop`, or its runtime control: `press restart`, `press reseed` | 8, 15 |
 | `crossing` | an event when a value crosses zero either way | 5 |
+| `algorithm` | `algorithm name on trigger { statements }`: an event whose work is statements run in order, one `step` per occurrence | 21 |
 | `derived` | values computed from others, always current | 1 |
 | `discrete` | state changed only by events | 5 |
 | `click` | the gesture that requests an event: `on click request E(b)`; in a view, `on click as q request E(q)` | 9 |
@@ -238,6 +243,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `reseed` | in `button(...)`, a lab's runtime control: start again with the next seed, keeping the learner's settings | 15 |
 | `unknown` | in a model, a block of unknowns that the equations reading them determine: `unknown { I: Current }` | 17 |
 | `use` | at the top of a file, imports the shared definitions of a module: `use mechanics`, `use mechanics.{Body}` | 19 |
+| `while`, `step` | in an algorithm: `while c { ... }` repeats while `c` holds; `step` ends one occurrence's work | 21 |
 | `grid` | in a model, a grid of cells for fields: `grid rod(x: [0 m, 1 m], cells: 50)` | 16 |
 | `boundary` | in a model, a field's boundary conditions: `boundary T { left = 100 }` | 16 |
 | `periodic` | `boundary T periodic`: the field's grid wraps around | 16 |
@@ -260,7 +266,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce use`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce use algorithm while step`.
 
 ## Diagnostics
 

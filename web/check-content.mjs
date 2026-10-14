@@ -156,6 +156,14 @@ const floor = await count('#views line.gridline');
 check('a view of three dimensions draws its three axes and its floor', axes >= 3 && floor > 4, `${axes} axes, ${floor} grid lines`);
 await shot('g20-cyclotron');
 
+// An algorithm (D-101): bars as segments in a plot view; after 3 s, four comparisons made,
+// two bars drawn as the pair compared.
+await open('g21-sorting/SortLab@3');
+const bars = await count('#views line.segment');
+const compared = await ev(`(() => { const c = [...document.querySelectorAll('#views line.segment')].map((l) => getComputedStyle(l).stroke); const n = {}; c.forEach((x) => n[x] = (n[x] || 0) + 1); return Math.min(...Object.values(n)); })()`);
+check('a sorting algorithm draws one bar per value', bars === 8 && compared === 2, `${bars} bars, ${compared} in another colour`);
+await shot('g21-sorting');
+
 // The spoon example (D-094): a select chooses the material; the choice survives a restart.
 // Line ends normalized: a checkout on Windows may write \r\n.
 const md = readFileSync(join(web, '..', 'examples', 'heat.md'), 'utf8').replace(/\r\n/g, '\n');

@@ -143,6 +143,7 @@ pub fn elaborate(mut m: Model) -> Model {
             process: None,
             payload: None,
             each: None,
+            algorithm: None,
             notes: vec![],
         };
         let not = |e: Expr| Expr::Not { not: Box::new(e) };
@@ -356,6 +357,13 @@ pub fn ddt(m: &Model, e: &Expr) -> Result<Option<Expr>, String> {
                 Func::Dot => {
                     let b = &args[1];
                     add(d(a)?.map(|da| call(Func::Dot, vec![da, b.clone()])), d(b)?.map(|db| call(Func::Dot, vec![a.clone(), db])))
+                }
+                // Constant between the jumps of whole numbers (D-101).
+                Func::Floor | Func::Ceil | Func::Round => None,
+                // mod(a, b)' = a' - b' floor(a / b)
+                Func::Mod => {
+                    let b = &args[1];
+                    sub(d(a)?, times(call(Func::Floor, vec![bin(BinOp::Div, a.clone(), b.clone())]), d(b)?))
                 }
                 // (a × b)' = a' × b + a × b'
                 Func::Cross => {

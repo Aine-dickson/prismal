@@ -53,7 +53,12 @@ pub fn named_dim(name: &str) -> Option<Dim> {
     })
 }
 
-const FUNCS: [(&str, Func, usize); 16] = [
+const FUNCS: [(&str, Func, usize); 20] = [
+    // Whole numbers (D-101).
+    ("floor", Func::Floor, 1),
+    ("ceil", Func::Ceil, 1),
+    ("round", Func::Round, 1),
+    ("mod", Func::Mod, 2),
     ("sin", Func::Sin, 1),
     ("cos", Func::Cos, 1),
     ("tan", Func::Tan, 1),
@@ -1249,6 +1254,7 @@ impl<'a> ModelCx<'a> {
         };
         let enable = e.enable.as_ref().map(|c| self.expr(c, &[]));
         let handler = e.handler.iter().map(|o| self.op(o)).collect();
+        let algorithm = e.algorithm.as_ref().map(|a| self.stmts(a));
         let zeno = e.zeno.as_ref().map(|z| Zeno {
             policy: match z {
                 ast::ZenoClause::Stop => ZenoPolicy::Stop,
@@ -1274,8 +1280,23 @@ impl<'a> ModelCx<'a> {
             process: process.cloned(),
             payload,
             each,
+            algorithm,
             notes: e.notes.clone(),
         });
+    }
+
+    /// The statements of an algorithm (D-101).
+    fn stmts(&mut self, stmts: &[ast::AlgoStmt]) -> Vec<Stmt> {
+        stmts
+            .iter()
+            .map(|s| match s {
+                ast::AlgoStmt::Op(o) => Stmt::Do { ops: vec![self.op(o)] },
+                ast::AlgoStmt::If { cond, then, otherwise, .. } => Stmt::If { r#if: self.expr(cond, &[]), then: self.stmts(then), r#else: self.stmts(otherwise) },
+                ast::AlgoStmt::While { cond, body, .. } => Stmt::While { r#while: self.expr(cond, &[]), body: self.stmts(body) },
+                ast::AlgoStmt::For { var, from, to, body, .. } => Stmt::For { var: self.binding(var), from: self.expr(from, &[]), to: self.expr(to, &[]), body: self.stmts(body) },
+                ast::AlgoStmt::Step(_) => Stmt::Step,
+            })
+            .collect()
     }
 
     pub(crate) fn op(&mut self, o: &ast::OpStmt) -> Op {
@@ -1678,6 +1699,11 @@ impl<'a> ModelCx<'a> {
             ExprKind::Str(_) => {
                 self.err("SX-E08", "text belongs to presentations, not to a model", e.span);
                 Self::placeholder()
+            }
+            // D-101: an item of a list of values by its number, from 1: `(5, 2, 6)[index]`.
+            ExprKind::Index(x, i) if matches!(x.kind, ExprKind::Tuple(_)) => {
+                let ExprKind::Tuple(items) = &x.kind else { unreachable!() };
+                Expr::Pick { pick: Box::new(self.expr(i, locals)), from: items.iter().map(|v| self.expr(v, locals)).collect() }
             }
             ExprKind::Index(..) => match self.member_expr(e, locals) {
                 Some((m, _)) => m,

@@ -293,6 +293,7 @@ Every binding has exactly one role. The role fixes when the value may change and
 - **MK-8.4** Every member of a collection is an object with its own bindings, flows and events. A flow or event declared on the member type applies to each member.
 - **MK-8.3a** (D-055) In v0 a collection declared without a capacity (MK-8.2a) has fixed membership: a part holds one object or `n` members, numbered from 1 in declaration order. `sum`, `min`, `max`, `any`, `all` and `count` take the members in that order, each named in the aggregate's body and optional filter. Over no member, `sum` is zero, `any` false, `all` true and `count` 0; `min` and `max` have no value. A filter of `min` or `max` may only compare members, which is decided without a value.
 - **MK-8.3b** (D-055) A model is elaborated before it is checked: each member becomes the bindings, flows, events, equations and constraints of its type, with the identity of each declaration followed by `@` and the member's path (`row[2]`, `cart.wheels[1]`) and the name `path.name` (MK-7.6). Checks apply to the elaborated model; a diagnostic about an element of a member refers to it and is located at its declaration.
+- **MK-8.3c** (D-101) A member of a collection may be chosen by a number computed during the run, `bars[j + 1]`: reading its bindings reads those of the member with that number, and `set bars[j].v = e` writes that member's. A number that is not a whole number from 1 to the number of members is a model failure at the instant it is read or written. A list of values is indexed the same way, `(5, 2, 6)[k]`, the `k`-th from 1.
 - **MK-8.2a** (D-057) In v0 a collection whose membership changes declares its **capacity**, the most members it makes in one run (`drops: Drop[max 50]`, or `Drop[2, max 50]` with two starting members), and is elaborated to that many members, each **alive** or not. A member not yet made or already destroyed has no flows, events, equations or constraints in effect, is left out of aggregates (`count` counts the members alive; `min` and `max` over none have no value, MK-5.5) and is not drawn (PK-5.1). Read by its number it has its starting values before it is made and its last values after it is destroyed. Making more members than the capacity stops the run at the `stop` constraint `c.capacity` (MK-12).
 - **MK-8.2b** (D-066) A collection whose membership changes may declare no limit, `drops: Drop[max inf]`. Its capacity is then a working capacity chosen by the runtime: at least 8, twice its starting members, and every number by which the program names a member (`drops[12]`). A run that makes more members than the working capacity is computed again from its start with the working capacity doubled, up to a limit of the implementation (16384 in the prototype), beyond which it stops as in MK-8.2a. The result is the run of the program with the final working capacity declared, so it is deterministic and replayed identically (D-015).
 - **MK-8.8** (D-055) A containing object may write the derivatives of its members' continuous state with flows over a collection (`for b in row { der(b.vel) += e }`, MK-7.10), read in its own scope with the member named. Interactions between members are written this way, with aggregates over the other members.
@@ -342,7 +343,7 @@ The first slice (D-001) exercises neither dynamic collections nor relations. The
 - **MK-10.5** Evaluation that does not terminate within the runtime's evaluation limit yields `invalid` (runtime contract).
 - **MK-10.6** Every expression keeps its symbolic structure in the IR. Its evaluated value is separate from it (R-48: expression is not evaluated value). This lets equations and definitions be displayed, differentiated symbolically by libraries, and consumed by a later acausal solver (D-007).
 - **MK-10.7** A **derived function value** is a derived binding (MK-6.4) of function type whose body MAY read model bindings, for example `f(x) = a * x^2` with `a` a parameter. Like every derived binding it is evaluated at every instant on current values, so an application `f(2)` always uses the current `a`; nothing is captured or stored. Its dependencies (section 13) are the bindings its body reads. A stored binding (constant, parameter, input, state) of function type MUST hold a closed function: one that reads no bindings other than its parameters and constants (D-029).
-- **MK-10.7a** **Built-in functions** (D-093 adds `dot`): `sin`, `cos`, `tan`, `exp`, `log` of dimensionless values; `sqrt` (half the dimension's exponents), `abs`, `min`, `max`, `atan2(y, x)` of quantities; `dot(a, b)` of two vectors of one space, of dimension the product of theirs, or of two quantities, their product; a tuple of quantities of one dimension beside a vector is a vector of its space (D-032, D-097); `cross(a, b)` of two vectors of one space of three dimensions, a vector of dimension the product of theirs (D-100). A name the author declares wins over a built-in function.
+- **MK-10.7a** **Built-in functions** (D-093 adds `dot`): `sin`, `cos`, `tan`, `exp`, `log` of dimensionless values; `sqrt` (half the dimension's exponents), `abs`, `min`, `max`, `atan2(y, x)` of quantities; `dot(a, b)` of two vectors of one space, of dimension the product of theirs, or of two quantities, their product; a tuple of quantities of one dimension beside a vector is a vector of its space (D-032, D-097); `cross(a, b)` of two vectors of one space of three dimensions, a vector of dimension the product of theirs (D-100); `floor`, `ceil`, `round` (halves away from zero) of dimensionless values, and `mod(a, b) = a - b floor(a / b)` of two quantities of one dimension, of that dimension, a model failure when `b` is zero (D-101). A name the author declares wins over a built-in function.
 - **MK-10.8** The **named constant** `π` (also written `pi`) is a dimensionless literal kept by name in the IR, so that formulas show it (D-039, D-034). MK-3.8 applies to it as to a bare literal.
 
 ---
@@ -433,7 +434,7 @@ The first slice (D-001) exercises neither dynamic collections nor relations. The
 ### 14.1 Processes
 
 - **MK-14.1** A **process** is a named group of behaviors (flows, events, operations) with a **process kind** (R-56, called execution mode there): `continuous`, `discrete`, `algorithmic` or `stochastic`. The IR carries the kind. The word "mode" is reserved for the discrete state that selects flows (section 14.4).
-- **MK-14.2** v0 specifies `continuous` processes (flows) and events. `discrete` processes are events on a time schedule (section 15). `algorithmic` and `stochastic` kinds are reserved (section 21).
+- **MK-14.2** v0 specifies `continuous` processes (flows) and events. `discrete` processes are events on a time schedule (section 15). `algorithmic` processes are algorithms (section 14.7, D-101). `stochastic` processes are random events and noise (sections 14.5 and 15.4a).
 
 ### 14.2 Evolution targets
 
@@ -473,6 +474,14 @@ where `x(t_a⁺)` is the value committed at `t_a` and `F_x` is the combined flow
 
 - **MK-14.14** Every model has the built-in binding `t : Instant<T>` (simulation time, R-23) and `t0 : Instant<T>` (the run's start instant). `elapsed = t - t0` is a built-in derived `Quantity<T>`.
 - **MK-14.15** A model that declares no flows, events or time-dependent derived bindings is **static**. It has meaning without a simulation clock (R-32).
+
+### 14.7 Algorithms (D-101)
+
+- **MK-14.17** An **algorithm** is an event (section 15) whose work is a list of **statements** instead of a handler: `algorithm A on trigger [if c] { statements }`. It has an event's trigger, enabling condition, identity and log; `on A` follows it. The statements are the operations of section 16 except `contribute`, `if c { ... } else { ... }`, `while c { ... }`, `for i in [a, b] { ... }`, and `step` (MK-E37 for `contribute`).
+- **MK-14.18** Statements run **in order**: each reads the values the statements before it wrote in the same occurrence, derived values recomputed (RUN-04). The operations of one statement read the values before that statement, as a handler's do (MK-15.7). This is the difference from a handler, whose operations all read the values before the transition.
+- **MK-14.19** Each occurrence of the algorithm resumes where the previous one stopped (the start, for the first) and runs until a `step` or the end. What it changed, as a `set` of each stored binding that differs from before, with the events it emitted, forms its part of the transition (MK-16.3): validated, combined with the other events at the instant, and conflicting with them by MK-16.4. An algorithm that has reached its end does not occur again. Where it resumes is hidden discrete state of the model (`A@resume`), so snapshots and resumed runs keep it.
+- **MK-14.20** `for i in [a, b] { body }` sets `i` to `a`; while `i <= b`, with `b` read again before each turn, it runs the body and sets `i` to `i + 1`. The counter `i` is a discrete binding of type `Real` of the model (MK-E37 otherwise). An algorithm keeps no other variables: its temporary values are discrete bindings too, so every value it works on can be presented.
+- **MK-14.21** An occurrence that runs more instructions than the runtime's limit without reaching `step` or the end is a model failure (RC-5.12).
 
 ---
 
@@ -622,13 +631,14 @@ The kernel defines these static errors. They are detected before execution, on t
 | MK-E23 | Declared function that calls itself, directly or through other functions | MK-10.3a |
 | MK-E24 | Event payload without a source: not requested, and not following an event that carries a payload of the same type (members of the same collection) | MK-15.1a, MK-15.1c |
 | MK-E25 | `index` read outside the overrides of a collection | MK-8.3a |
-| MK-E26 | A member that does not exist or is not constant, a part used as a value, an unknown object type, a derived binding given a value in a part, or an aggregate without a value | MK-7.13, MK-8.3a |
+| MK-E26 | A member that does not exist or, outside an algorithm's and a handler's reads and writes (MK-8.3c), is not constant, a part used as a value, an unknown object type, a derived binding given a value in a part, or an aggregate without a value | MK-7.13, MK-8.3a |
 | MK-E31 | A field of another grid read in a pointwise expression | MK-9.7 |
 | MK-E32 | `laplacian` or `gradient` outside a pointwise expression of the field's grid | MK-9.7 |
 | MK-E33 | A boundary of a binding that is not a field, an edge the grid lacks or held twice, or periodic with held edges | MK-9.6 |
 | MK-E34 | Unknowns not determined by the solved equations: an unknown no solved equation reads, more or fewer equation components than unknowns, or no matching of unknowns to components | MK-11.7 |
 | MK-E35 | A solved equation that reads the rate of a state with a flow, or a field | MK-11.9 |
 | MK-E36 | An enforced constraint that cannot be enforced: a form without a rate, no rate up to the third that reads an unknown, or a level that reads nothing the runtime can move; an enforced inequality without `with N`, or with a name that is not an unknown number or quantity its rates read; `with` on a constraint that is not an enforced inequality | MK-12.7, MK-12.8, MK-12.11 |
+| MK-E37 | An algorithm's statement that is not allowed (`contribute`), or a `for` counter that is not a discrete `Real` binding of the model | MK-14.17, MK-14.20 |
 | MK-E29 | `noise` outside a flow | MK-14.16 |
 | MK-E30 | A flow that is not linear in each `noise` | MK-14.16 |
 
@@ -817,7 +827,7 @@ Positions that elaborate accepted decisions without changing them are specified 
 | Event location, microstep ordering, cascade and Zeno defaults, solver accuracy | `02-runtime-contract.md` |
 | Random streams and stochastic processes (D-013) | Done: MK-10.4, MK-15.15 to MK-15.17, RC-13.5 to RC-13.8 (D-083); rates that vary between events, MK-15.16, RC-13.8a (D-086); white noise in flows, MK-14.16, RC-13.9 (D-090) |
 | Random rates that depend on continuous state or time | Later extension of D-083 |
-| Algorithmic process mode (RUN-04) | Slice that needs it |
+| Algorithmic process mode (RUN-04) | Done: MK-14.17 to MK-14.21, RC-5.12 (D-101); recursion, procedures that take arguments, and variables other than model bindings later |
 | Field state evolution (D-010) | Done on grids of one and two axes: MK-9.4 to MK-9.8 (D-091); meshes, vector fields, fields in objects, noise in fields later |
 | Acausal equations, constraint enforcement (D-007, D-020) | Solved equations done: MK-11.6 to MK-11.9, RC-5.5 to RC-5.9 (D-092). Enforced constraints and constrained mechanics done: MK-12.6 to MK-12.10, RC-5.10 (D-093). Vector and point unknowns done (D-097). Enforced inequalities done: contact, a rope that goes slack (MK-12.11, RC-5.11, D-098); friction is later. Solved equations over fields, constraints in object types across members (they work as written, untested) later |
 | Quantity kinds of equal dimension (torque and energy) | Open; to be raised when a reference program needs it |
@@ -826,3 +836,4 @@ Positions that elaborate accepted decisions without changing them are specified 
 | IR format | IR specification |
 - 2026-10-01 undirected relations: MK-8.5b (D-064); relations across containers: MK-8.5c, MK-8.6a amended (D-065).
 - 2026-10-01 collections without a declared limit: MK-8.2b (D-066).
+- 2026-10-15 algorithms: MK-14.17 to MK-14.21, MK-8.3c, MK-E37, MK-10.7a amended (D-101).

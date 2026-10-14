@@ -32,6 +32,7 @@ A guide to writing Prismal programs in the working syntax (D-028), from a first 
 | [18. Constrained motion](18-constraints.md) | constraints the runtime enforces: a bob on a rod, a bead on a wire, a double pendulum, a point held on a curve, contact with a floor, a slack rope |
 | [19. Shared definitions and modules](19-modules.md) | definitions outside models, for models of any space; `use` and the first-party `mechanics` module |
 | [20. Three dimensions](20-three-dimensions.md) | spaces of three dimensions, `cross`, views turned by azimuth and elevation: a charge spiralling in a magnetic field |
+| [21. Algorithms](21-algorithms.md) | statements run in order and paused at `step`: bubble sort drawn as bars, binary search by hand or on a clock, Euclid's algorithm; members chosen by computed numbers, `floor` and `mod` |
 
 ## Running a program
 

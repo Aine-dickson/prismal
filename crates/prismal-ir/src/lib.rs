@@ -456,8 +456,85 @@ pub struct Event {
     /// collection, named `var` in its trigger, condition and handler (D-057).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub each: Option<Each>,
+    /// An algorithm (MK-14.17, D-101): statements run in order, resumed at each occurrence
+    /// and run to the next `step`; the handler is then empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub algorithm: Option<Vec<Stmt>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+}
+
+/// A statement of an algorithm (MK-14.17, D-101). Each statement reads the values the
+/// statements before it wrote.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "stmt", rename_all = "snake_case")]
+pub enum Stmt {
+    /// Operations performed together, as a handler's: they read the values before them.
+    /// Written as one operation; elaboration may make several (a member chosen by number).
+    Do { ops: Vec<Op> },
+    If {
+        r#if: Expr,
+        then: Vec<Stmt>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        r#else: Vec<Stmt>,
+    },
+    While { r#while: Expr, body: Vec<Stmt> },
+    /// `for i in [from, to] { body }`: the discrete binding `var` takes `from`, and while it
+    /// is at most `to` (read again at each turn) the body runs and `var` grows by 1.
+    For { var: Id, from: Expr, to: Expr, body: Vec<Stmt> },
+    /// The end of one occurrence's work: the next occurrence resumes after it.
+    Step,
+}
+
+impl Stmt {
+    /// Every operation of `stmts`, nested ones included.
+    pub fn ops(stmts: &[Stmt]) -> Vec<&Op> {
+        let mut out = vec![];
+        fn walk<'s>(ss: &'s [Stmt], out: &mut Vec<&'s Op>) {
+            for s in ss {
+                match s {
+                    Stmt::Do { ops } => out.extend(ops.iter()),
+                    Stmt::If { then, r#else, .. } => {
+                        walk(then, out);
+                        walk(r#else, out);
+                    }
+                    Stmt::While { body, .. } | Stmt::For { body, .. } => walk(body, out),
+                    Stmt::Step => {}
+                }
+            }
+        }
+        walk(stmts, &mut out);
+        out
+    }
+}
+
+/// The identity of the hidden discrete state that holds where algorithm `id` resumes (D-101).
+pub fn resume_id(id: &str) -> String {
+    format!("{id}@resume")
+}
+
+/// Gives each algorithm its hidden resume binding, if it has none (D-101): a discrete
+/// number, 0 at the start, that says where its next occurrence continues.
+pub fn with_resume(mut m: Model) -> Model {
+    let missing: Vec<(Id, String)> = m.events.iter().filter(|e| e.algorithm.is_some() && !m.bindings.iter().any(|b| b.id == resume_id(&e.id))).map(|e| (resume_id(&e.id), e.name.clone())).collect();
+    for (id, name) in missing {
+        m.bindings.push(Binding {
+            id,
+            name: format!("resume of {name}"),
+            role: Role::Discrete,
+            ty: Type::real(),
+            init: Some(Expr::Num { num: 0.0, unit: None }),
+            def: None,
+            intervenable: None,
+            private: true,
+            display: Default::default(),
+            notes: vec![],
+            when: None,
+            combine: None,
+            boundary: None,
+        });
+    }
+    m
 }
 
 /// An event's payload: its name as written (for display) and its type.

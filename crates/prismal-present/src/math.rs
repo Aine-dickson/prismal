@@ -239,6 +239,10 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
                 Func::Max => "max",
                 Func::Atan2 => "atan2",
                 Func::Mean => "mean",
+                Func::Floor => "floor",
+                Func::Ceil => "ceil",
+                Func::Round => "round",
+                Func::Mod => "mod",
                 Func::Sqrt | Func::Abs | Func::Dot | Func::Cross | Func::Laplacian | Func::Gradient | Func::Integral => unreachable!(),
             };
             row(vec![upright(name), parens(list(args.iter().map(p).collect()))])
