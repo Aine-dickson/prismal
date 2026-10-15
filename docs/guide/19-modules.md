@@ -127,4 +127,4 @@ run facts of Swing with SwingFacts {
 ## Exercises
 
 1. Move the `Ball` object type of chapter 9's row of balls out of its model, so that a second model can drop balls on the Moon with it. What has to become an input?
-2. Write a module `optics` with a function `refraction_angle(n1: Real, n2: Real, θ: Angle): Angle` from Snell's law, and use it in a model of a light ray. (Hint: `asin` is not built in; `atan2` and `sqrt` are.)
+2. Write a module `snell` with a function `refraction_angle(n1: Real, n2: Real, θ: Angle): Angle` from Snell's law, and use it in a model of a light ray. (Hint: `asin` is not built in; `atan2` and `sqrt` are.) Compare it with the first-party `optics` module of chapter 22.
