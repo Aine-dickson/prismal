@@ -179,7 +179,7 @@ pub fn flat(v: &Value) -> Vec<f64> {
         Value::Vec(a) | Value::Point(a) => a.as_slice().to_vec(),
         Value::Tuple(items) => items.iter().flat_map(flat).collect(),
         Value::Case(c) => vec![*c as f64],
-        Value::Func(_) => vec![],
+        Value::Func(_) | Value::Absent(_) => vec![],
         Value::Field(d) => d.to_vec(),
     }
 }

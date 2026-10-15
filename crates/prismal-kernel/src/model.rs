@@ -314,9 +314,13 @@ impl CModel {
                     Some(g) => per_cell(e, g, &c),
                     None => e.eval(&c),
                 }
-                .map_err(|s| Status { kind: s.kind, cause: format!("initializing `{}`: {}", b.name, s.cause) })?
             };
-            vals[i] = v;
+            vals[i] = match (v, b.role) {
+                (Ok(v), _) => v,
+                // A derived binding may start with no value (D-106); stored values may not.
+                (Err(s), Role::Derived) => Value::Absent(std::rc::Rc::new(s)),
+                (Err(s), _) => return Err(Status { kind: s.kind, cause: format!("initializing `{}`: {}", b.name, s.cause) }),
+            };
         }
         // RC-5.13 (D-102): a bounded equality slipping from the start acts against the slip,
         // whichever way its force is written.
@@ -515,12 +519,18 @@ impl CModel {
                 let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
                 let b = &self.bindings[i];
                 match (&b.when, &b.field) {
-                    (Some((w, none)), _) if !w.eval(&c)?.boolean() => none.clone(),
-                    (_, Some(g)) => per_cell(b.def.as_ref().expect("checked"), g, &c)?,
-                    _ => b.def.as_ref().expect("checked").eval(&c)?,
+                    (Some((w, none)), _) if !w.eval(&c)?.boolean() => Ok(none.clone()),
+                    (_, Some(g)) => per_cell(b.def.as_ref().expect("checked"), g, &c),
+                    _ => b.def.as_ref().expect("checked").eval(&c),
                 }
             };
-            vals[i] = v;
+            // A derived binding may have no value (a ray that meets no surface): it holds the
+            // status, and what reads it gets the status in turn; the run fails only when the
+            // status reaches state, through a flow, an event or an equation (MK-5.6, D-106).
+            vals[i] = match v {
+                Ok(v) => v,
+                Err(s) => Value::Absent(std::rc::Rc::new(s)),
+            };
         }
         Ok(())
     }

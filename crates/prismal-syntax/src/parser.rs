@@ -27,7 +27,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
     "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use", "algorithm", "while", "step", "restitution", "across", "azimuth",
-    "elevation", "frame",
+    "elevation", "frame", "by",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -1401,8 +1401,10 @@ impl<'a> Parser<'a> {
                     self.expect_word("in")?;
                     let over = self.part_path()?;
                     let filter = if self.eat_word("if") { Some(Box::new(self.expr()?)) } else { None };
+                    // `first(e for b in row by k)` (D-106).
+                    let by = if self.eat_word("by") { Some(Box::new(self.expr()?)) } else { None };
                     let agg = Name { text: String::new(), span: s };
-                    value = Expr { kind: ExprKind::Aggregate { agg, body: Box::new(value), var, over, filter }, span: self.since(s) };
+                    value = Expr { kind: ExprKind::Aggregate { agg, body: Box::new(value), var, over, filter, by }, span: self.since(s) };
                 }
                 let every = if self.eat_word("every") { Some(self.expr()?) } else { None };
                 // An ensemble source (D-084): `n at t0 + 7 s over 200 runs`.

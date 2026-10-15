@@ -38,6 +38,15 @@ fn refract(d: Vector<1>, n: Vector<1>, n1: Real, n2: Real): Vector<1> = if total
 /// normal `n`.
 fn hit_plane(p: Point, d: Vector<1>, a: Point, n: Vector<1>): Point = p + dot(a - p, n) / dot(d, n) * d
 
+/// How far along a ray from `p` along `d` it meets the plane (in a plane, the line) through
+/// `a` with normal `n`: negative behind `p`, infinite when the ray runs along the plane. With
+/// `first(... by plane_distance(...))` a ray finds the nearest of several surfaces (D-106).
+fn plane_distance(p: Point, d: Vector<1>, a: Point, n: Vector<1>): Length = dot(a - p, n) / dot(direction(d), n)
+
+/// Whether a ray from `p` along `d` meets, ahead of `p`, the flat mirror (in a plane, a
+/// segment) through `a` with normal `n` reaching `half` from `a` each way.
+fn meets_segment(p: Point, d: Vector<1>, a: Point, n: Vector<1>, half: Length): Boolean = plane_distance(p, d, a, n) > 1e-9 * half and |hit_plane(p, d, a, n) - a| <= half
+
 /// How far along a ray from `p` along `d` its line passes closest to `c`.
 fn closest_along(p: Point, d: Vector<1>, c: Point): Length = dot(c - p, direction(d))
 
@@ -66,6 +75,15 @@ fn sphere_normal(q: Point, c: Point): Vector<1> = (q - c) / |q - c|
 /// centre goes straight on.
 fn thin_lens(d: Vector<1>, q: Point, c: Point, a: Vector<1>, f: Length): Vector<1> = direction(direction(d) / dot(direction(d), direction(a)) - (q - c) / f)
 
+/// A curved mirror in the paraxial approximation (D-106): the direction of a ray along `d`
+/// after it meets, at `q`, the mirror of centre `c`, axis `a` (pointing back toward the
+/// light) and focal length `f` (positive for a concave mirror, negative for a convex one).
+/// Rays parallel to the axis come back through the focus, `f` in front of the mirror.
+fn thin_mirror(d: Vector<1>, q: Point, c: Point, a: Vector<1>, f: Length): Vector<1> = reflect(thin_lens(d, q, c, -1 * a, f), a)
+
+/// The focal length of a spherical mirror of radius `R`: half its radius.
+fn mirror_focus(R: Length): Length = R / 2
+
 /// The distance of the image of an object at distance `u` in front of a thin lens or mirror
 /// of focal length `f`: `1/u + 1/v = 1/f`. Positive for a real image (behind a lens, in front
 /// of a mirror), negative for a virtual one.
@@ -81,6 +99,36 @@ fn lensmaker(n: Real, r1: Length, r2: Length): Length = 1 / ((n - 1) * (1 / r1 -
 /// The refractive index of a glass at wavelength `λ` by Cauchy's formula, `A + B / λ²`: blue
 /// light is bent more than red.
 fn cauchy(A: Real, B: Area, λ: Length): Real = A + B / λ^2
+
+/// Light as a wave (D-107). The wavenumber of a wave of wavelength `λ`: `2 π / λ`, the phase
+/// it gains per length travelled.
+fn wavenumber(λ: Length): Quantity<1/L> = 2 * π / λ
+
+/// The brightness, as a share of the brightest, that two narrow slits `d` apart send at
+/// angle `θ` with light of wavelength `λ`: `cos²(π d sin θ / λ)`. The two waves arrive in step
+/// where their paths differ by a whole number of wavelengths.
+fn two_slit(d: Length, λ: Length, θ: Angle): Real = cos(π * d * sin(θ) / λ)^2
+
+/// The brightness, as a share of the middle's, that one slit of width `a` sends at angle `θ`:
+/// `(sin β / β)²` with `β = π a sin θ / λ`; dark where `a sin θ` is a whole number of
+/// wavelengths.
+fn single_slit(a: Length, λ: Length, θ: Angle): Real = if |π * a * sin(θ) / λ| < 1e-9 then 1 else (sin(π * a * sin(θ) / λ) / (π * a * sin(θ) / λ))^2
+
+/// The brightness, as a share of the brightest, of a grating of `N` narrow slits `d` apart:
+/// `(sin(N φ) / (N sin φ))²` with `φ = π d sin θ / λ`. Its bright lines are where two slits
+/// do, `d sin θ = m λ`, and grow sharper with more slits.
+fn grating(N: Real, d: Length, λ: Length, θ: Angle): Real = if |sin(π * d * sin(θ) / λ)| < 1e-9 then 1 else (sin(N * π * d * sin(θ) / λ) / (N * sin(π * d * sin(θ) / λ)))^2
+
+/// The angle of the bright line of order `m` of slits `d` apart: `d sin θ = m λ`.
+fn bright_angle(m: Real, d: Length, λ: Length): Angle = atan2(m * λ / d, sqrt(1 - (m * λ / d)^2))
+
+/// Malus's law: the share of polarized light a polarizer passes when turned `θ` from the
+/// light's polarization, `cos² θ`.
+fn malus(θ: Angle): Real = cos(θ)^2
+
+/// Brewster's angle from index `n1` into index `n2`, `tan θ = n2 / n1`: light reflected at it
+/// is polarized along the surface.
+fn brewster(n1: Real, n2: Real): Angle = atan2(n2, n1)
 
 /// The angle between two directions, from 0 to 180 degrees: how far a ray has been turned.
 fn angle_between(u: Vector<1>, v: Vector<1>): Angle = atan2(sqrt(max(0, 1 - dot(direction(u), direction(v))^2)), dot(direction(u), direction(v)))

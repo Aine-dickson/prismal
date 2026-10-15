@@ -47,6 +47,8 @@ pub enum Agg {
     Any,
     All,
     Count,
+    /// The value at the member with the smallest key (D-106).
+    First,
 }
 
 impl Agg {
@@ -58,6 +60,7 @@ impl Agg {
             Agg::Any => "any",
             Agg::All => "all",
             Agg::Count => "count",
+            Agg::First => "first",
         }
     }
 }
@@ -289,6 +292,9 @@ pub enum Expr {
         body: Option<Box<Expr>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         filter: Option<Box<Expr>>,
+        /// For `first`: the key the members are ordered by (D-106).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<Box<Expr>>,
     },
     /// The smallest (`min`) or largest (`max`) of the values whose condition holds, and no
     /// value when none holds: `min` and `max` over a collection whose membership changes,
@@ -296,6 +302,9 @@ pub enum Expr {
     Extreme {
         extreme: Func,
         terms: Vec<Guarded>,
+        /// For `first` (D-106): the value of each term, given where its key is the smallest.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        values: Vec<Expr>,
     },
     /// The member at an endpoint of a relation instance: `s.a` (`of` the relation), or `a`
     /// inside the relation type (`of` absent) (D-058).
@@ -393,7 +402,8 @@ impl Expr {
             }
             Expr::Field { of, .. } => of.walk(f),
             Expr::Item { index, .. } => index.walk(f),
-            Expr::Aggregate { body, filter, .. } => {
+            Expr::Aggregate { body, filter, by, .. } => {
+                by.iter().for_each(|b| b.walk(f));
                 body.iter().for_each(|b| b.walk(f));
                 filter.iter().for_each(|c| c.walk(f));
             }
@@ -406,10 +416,13 @@ impl Expr {
                 pick.walk(f);
                 from.iter().for_each(|x| x.walk(f));
             }
-            Expr::Extreme { terms, .. } => terms.iter().for_each(|g| {
-                g.when.walk(f);
-                g.value.walk(f);
-            }),
+            Expr::Extreme { terms, values, .. } => {
+                terms.iter().for_each(|g| {
+                    g.when.walk(f);
+                    g.value.walk(f);
+                });
+                values.iter().for_each(|v| v.walk(f));
+            }
             _ => {}
         }
     }

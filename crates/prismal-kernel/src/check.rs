@@ -217,7 +217,9 @@ impl<'a, 'b> Tc<'a, 'b> {
             },
             Expr::Match { r#match, arms } => self.match_expr(r#match, arms, exp),
             // `min` or `max` over the members alive (D-057): quantities of one type.
-            Expr::Extreme { extreme, terms } => {
+            // `first` (D-106): the value at the smallest key, the values of one type.
+            Expr::Extreme { extreme, terms, values } => {
+                let first = !values.is_empty();
                 let mut t: Option<Type> = None;
                 let mut out = vec![];
                 for g in terms {
@@ -225,17 +227,32 @@ impl<'a, 'b> Tc<'a, 'b> {
                     let v = match &t {
                         Some(want) => self.expect(&g.value, want)?,
                         None => {
-                            let (v, vt) = self.expr(&g.value, exp)?;
+                            let (v, vt) = self.expr(&g.value, if first { None } else { exp })?;
                             t = Some(vt);
                             v
                         }
                     };
                     out.push((w, v));
                 }
-                match t {
-                    Some(t @ Type::Quantity { .. }) => Some((CExpr::Extreme(*extreme, out), t)),
-                    Some(other) => self.err("MK-E01", format!("`min` and `max` compare quantities, not {}", show(&other))),
-                    None => self.err("MK-E26", "`min` or `max` over no member has no value".into()),
+                let mut vt: Option<Type> = None;
+                let mut vs = vec![];
+                for v in values {
+                    vs.push(match &vt {
+                        Some(want) => self.expect(v, want)?,
+                        None => {
+                            let (c, ty) = self.expr(v, exp)?;
+                            vt = Some(ty);
+                            c
+                        }
+                    });
+                }
+                match (t, vt) {
+                    (Some(Type::Quantity { .. }), Some(vt)) => Some((CExpr::Extreme(*extreme, out, vs), vt)),
+                    (Some(t @ Type::Quantity { .. }), None) => Some((CExpr::Extreme(*extreme, out, vs), t)),
+                    (Some(other), _) if first => self.err("MK-E01", format!("`first` orders members by a number or a quantity, not {}", show(&other))),
+                    (Some(other), _) => self.err("MK-E01", format!("`min` and `max` compare quantities, not {}", show(&other))),
+                    (None, _) if first => self.err("MK-E26", "`first` over no member has no value".into()),
+                    (None, _) => self.err("MK-E26", "`min` or `max` over no member has no value".into()),
                 }
             }
             // A binding of the member chosen by number (D-058): the items have one type.

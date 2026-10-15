@@ -125,6 +125,8 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-103 | Geometric optics as a first-party module | Accepted |
 | D-104 | Views of three dimensions: perspective, turns, depth, shapes in planes, drags across planes | Accepted |
 | D-105 | Declared frames, components read in them, and views drawn from them | Accepted |
+| D-106 | Ray optics continued: the nearest surface, rays to the edge, colours of light, curved mirrors | Accepted |
+| D-107 | Wave optics as functions of the optics module, drawn with fields | Accepted |
 
 ---
 
@@ -2158,5 +2160,52 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Version 1 (D-081):** additions. `frame F(...)` in a model was SX-E02, `.in(F)` was an unknown function, `frame:` an unknown view option. `frame` becomes a contextual keyword: a binding named `frame` is still a name, except at the start of a model member followed by a name and `(`.
 - **Not yet:** frames in object types (a frame per member, for rigid bodies); a frame defined from another frame by a rotation and an offset; heatmaps in a view drawn in a turning frame (they stay square to the screen); the angular velocity of a frame read from its axes (`F.spin`), so that `coriolis` need not be given it.
 - **Consequences:** `prismal-ir` (`FrameDecl`, `Expr::In`, `frames.rs`, elaboration), `prismal-kernel` (`frame_parts`, `CExpr::InFrame`, `frame_axes`, frames checked in `check_model`), `prismal-syntax` (parser, lowering, formatter), `prismal-present` (`Moving`, `ViewCtx::local`, `global`, `project`, `at_state`; traces per sample; text and typeset forms), `lib/mechanics.prismal`; MK-4.6a, PK-7.2c, 04-ir, working syntax, the reference; guide chapter 23 (Frames: a ball on a slope, a carousel, a puck on a turntable); `prismal-present/tests/frames.rs`.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-106: Ray optics continued: the nearest surface, rays to the edge, colours of light, curved mirrors
+
+- **Status:** Accepted; implemented on branch `optics-more`.
+- **Original position:** D-103's "Not yet": a ray that follows an unknown number of surfaces; colours from a wavelength; curved mirrors' paraxial form; a dotted back-extension of rays for virtual images, drawn as separate segments by the author. A derived value without a value (a ray that misses a sphere) stopped the run at its start, although D-103's guide said its drawing would only be left out.
+- **Raised by:** the owner on 2026-10-15, with the other "Not yet" items of D-100 and D-103.
+- **Builds on:** D-055 (aggregates), D-057 (`Extreme`), D-061 (styles), D-101 (`(a, b, c)[k]`), D-103; MK-5, MK-8.3a, PK-6.6a.
+- **Question:** How does a ray find the nearest of several surfaces, how does a path end where a ray leaves, how is a ray drawn to the edge and behind its start, how is light drawn in its own colour, and what does a curved mirror need?
+- **Content it serves:** a ray bouncing along mirrors, light in a fibre or between two mirrors, a concave mirror's real and virtual images, spectra drawn in their colours, a slider for a wavelength.
+- **Options considered:**
+  For the nearest surface: **a ray tracer in the core**: rejected by D-103 (R-55). **An algorithm that loops over surfaces** (D-101): it runs on an event, not as a value that follows a dragged mirror. **An aggregate that picks a member's value by a key** (taken): `first(e for b in c if cond by k)`, the value at the smallest key, a derived value like any other; the existing `min` cannot say which member it came from.
+  For a ray that leaves: **a sentinel value**: a fake point an author must test for. **No value** (taken): the next point has no value; MK-5 already said a status propagates and that only a status reaching state concerns the runtime. Derived bindings now hold a status instead of stopping the run, a polyline ends at its last point with a value, and `otherwise` picks the last point that has one.
+  For drawing a ray: **a long segment**: it stretches the view's framing to its far end. **A representation that the medium draws to its edge** (taken): `ray(P, d)`, carried as a start and a screen direction; `back: dotted` adds the extension behind `P`.
+  For colours: **named colours per wavelength by the author**: approximate and repeated. **A length as a colour** (taken): `color: 650 nm` or `color: λ`, turned into the colour of that light by the engine, the same in every medium.
+  For mirrors: **exact spheres only** (`hit_sphere`, `reflect`, already possible): correct but not the thin-mirror figure textbooks draw. **A paraxial `thin_mirror`** (taken) beside them, with `mirror_focus(R)`.
+- **Accepted position:** the options taken above, under the standing delegation of 2026-09-30.
+  - MK-8.3c (new): `first ... by`. MK-5.6a (new): derived bindings may hold a status.
+  - PK-6.3g (new): `ray`; polylines end at their last available point. PK-6.6a: a colour may be a wavelength.
+  - `optics`: `plane_distance`, `meets_segment`, `thin_mirror`, `mirror_focus`.
+  - IR: `Agg::First`, `Expr::Aggregate.by`, `Expr::Extreme.values`; kernel `Value::Absent`; frames carry `#rrggbb` colours and the shape `ray`.
+- **Findings while building it:**
+  1. **A missed ray stopped the run.** A derived value that had no value at the start failed the run's initialization, so D-103's statement that a missed ray is only left out of the drawing held for presentation expressions, not for derived values. MK-5.6a settles it as MK-5 intended.
+  2. **The SVG renderer and the host list the shapes they draw.** A new shape was printed as text by the SVG renderer until it was added to its list; the host's capabilities list it too.
+  3. **Function graphs were sampled at 100 points**, too few for interference fringes; they are sampled at 400.
+- **Reason:** each piece is the smallest addition that lets the guide's figures be written as values that follow the learner's changes; ray tracing stays vocabulary over the core, with one general aggregate added to the core.
+- **Version 1 (D-081):** additions: `first`, `by`, `ray`, `back`, a length as `color`. One change of behaviour: a run whose derived values have no value at some instant no longer fails for that reason alone; what reads them still does.
+- **Not yet:** an unbounded number of bounces (a chain is written out step by step); rays cut by opaque bodies in views of three dimensions; colours of mixed light.
+- **Consequences:** `prismal-ir` (`Agg::First`, `by`, `Extreme.values`), `prismal-kernel` (`Value::Absent`, derived bindings that hold a status, `first` typed and evaluated), `prismal-syntax` (`by`, `first`, `ray`, options), `prismal-present` (`ray`, `spectral`, polylines that end, 400 samples per function graph), `prismal-svg`, `web/player.js`, `prismal-host` kinds, `lib/optics.prismal`; MK-5.6a, MK-8.3c, PK-6.3g, PK-6.6a, 04-ir, the reference; guide chapter 22 (A concave mirror and its image, A ray between mirrors, colours in the prism); `prismal-present/tests/optics_more.rs`.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-107: Wave optics as functions of the optics module, drawn with fields
+
+- **Status:** Accepted; implemented on branch `optics-more`.
+- **Original position:** D-103's "Not yet": wave optics (interference, diffraction, polarization), which belong with fields (D-091).
+- **Raised by:** the owner on 2026-10-15, with the other "Not yet" items.
+- **Builds on:** D-091 (fields, heatmaps), D-099, D-103, D-106 (colours of light).
+- **Question:** What does the language need to show interference, diffraction and polarization?
+- **Content it serves:** two-source interference in a ripple tank, Young's slits, single-slit diffraction, gratings, polarizers and Malus's law, Brewster's angle.
+- **Options considered:** **a wave equation for light on a grid**: the fields of D-091 integrate waves, but at light's wavelengths a grid would need billions of cells. **Superposed waves as derived fields and far-field patterns as functions** (taken): a derived field adds the waves of point sources cell by cell, for a picture on any scale; the patterns on a far screen are closed forms in the module.
+- **Accepted position:** the `optics` module gains `wavenumber`, `two_slit`, `single_slit`, `grating`, `bright_angle`, `malus`, `brewster`; nothing in the core.
+- **Reason:** the core already draws fields and graphs; what wave optics adds is formulas, which belong in the module (R-55).
+- **Version 1 (D-081):** additions to a module; no program changes meaning.
+- **Not yet:** thin films and coatings; complex amplitudes as values; near-field (Fresnel) diffraction.
+- **Consequences:** `lib/optics.prismal`; guide chapter 24 (Light as a wave: two sources, fringes on a screen, polarizers); the guide index and the player's examples.
 - **History:**
   - 2026-10-15 accepted under the owner's standing delegation and implemented.

@@ -500,7 +500,7 @@ impl<'a> Cx<'a> {
                 }
                 Expr::bin(*bin, ia, ic)
             }
-            Expr::Aggregate { aggregate, var, over, body, filter } => self.aggregate(s, *aggregate, var, over, body.as_deref(), filter.as_deref()),
+            Expr::Aggregate { aggregate, var, over, body, filter, by } => self.aggregate(s, *aggregate, var, over, body.as_deref(), filter.as_deref(), by.as_deref()),
             Expr::Neg { neg } => Expr::Neg { neg: b(self, neg) },
             Expr::Not { not } => Expr::Not { not: b(self, not) },
             Expr::Norm { norm } => Expr::Norm { norm: b(self, norm) },
@@ -523,15 +523,16 @@ impl<'a> Cx<'a> {
                 r#match: b(self, r#match),
                 arms: arms.iter().map(|a| crate::Arm { case: a.case.clone(), value: self.expr(s, &a.value) }).collect(),
             },
-            Expr::Extreme { extreme, terms } => Expr::Extreme {
+            Expr::Extreme { extreme, terms, values } => Expr::Extreme {
                 extreme: *extreme,
                 terms: terms.iter().map(|g| Guarded { when: self.expr(s, &g.when), value: self.expr(s, &g.value) }).collect(),
+                values: values.iter().map(|v| self.expr(s, v)).collect(),
             },
             Expr::Num { .. } | Expr::Bool { .. } | Expr::Case { .. } | Expr::Param { .. } | Expr::Builtin { .. } | Expr::Const { .. } | Expr::Origin { .. } => e.clone(),
         }
     }
 
-    fn aggregate(&mut self, s: &Scope<'a>, agg: Agg, var: &str, over: &str, body: Option<&Expr>, filter: Option<&Expr>) -> Expr {
+    fn aggregate(&mut self, s: &Scope<'a>, agg: Agg, var: &str, over: &str, body: Option<&Expr>, filter: Option<&Expr>, by: Option<&Expr>) -> Expr {
         let zero = Expr::Num { num: 0.0, unit: None };
         let Some((members, many)) = self.members(s, over) else { return zero };
         if !many {
@@ -540,6 +541,7 @@ impl<'a> Cx<'a> {
         }
         let mut terms: Vec<Expr> = vec![];
         let mut guarded: Vec<Guarded> = vec![];
+        let mut values: Vec<Expr> = vec![];
         let changing = members.iter().any(|m| m.live.is_some());
         for inst in members {
             let live = inst.live.clone();
@@ -549,6 +551,15 @@ impl<'a> Cx<'a> {
                 continue;
             }
             let written = cond.filter(|c| !matches!(c, Expr::Bool { bool: true }));
+            // D-106: `first` keeps, for each member alive that passes the filter, its key and
+            // its value; the value with the smallest key is the result.
+            if agg == Agg::First {
+                let key = by.map(|k| self.expr(&inner, k)).unwrap_or_else(|| zero.clone());
+                let value = body.map(|e| self.expr(&inner, e)).unwrap_or_else(|| zero.clone());
+                guarded.push(Guarded { when: both(live, written).unwrap_or(Expr::Bool { bool: true }), value: key });
+                values.push(value);
+                continue;
+            }
             // D-057: `min` and `max` over a collection that changes take the members alive.
             if changing && matches!(agg, Agg::Min | Agg::Max) {
                 if written.is_some() {
@@ -570,7 +581,7 @@ impl<'a> Cx<'a> {
                 (Agg::Sum | Agg::Count, Some(c)) => Expr::If { r#if: Box::new(c), then: Box::new(value), r#else: Box::new(zero.clone()) },
                 (Agg::Any, Some(c)) => Expr::bin(BinOp::And, c, value),
                 (Agg::All, Some(c)) => Expr::bin(BinOp::Or, Expr::Not { not: Box::new(c) }, value),
-                (Agg::Min | Agg::Max, Some(_)) => {
+                (Agg::Min | Agg::Max | Agg::First, Some(_)) => {
                     self.err("MK-E26", format!("a filter of `{}` compares members only (`if o != b`)", agg.name()));
                     return zero;
                 }
@@ -592,7 +603,8 @@ impl<'a> Cx<'a> {
             Agg::Sum | Agg::Count => fold(terms, &|a, b| Expr::bin(BinOp::Add, a, b)).unwrap_or(zero),
             Agg::Any => fold(terms, &|a, b| Expr::bin(BinOp::Or, a, b)).unwrap_or(Expr::Bool { bool: false }),
             Agg::All => fold(terms, &|a, b| Expr::bin(BinOp::And, a, b)).unwrap_or(Expr::Bool { bool: true }),
-            Agg::Min | Agg::Max if changing => Expr::Extreme { extreme: if agg == Agg::Min { crate::Func::Min } else { crate::Func::Max }, terms: guarded },
+            Agg::First => Expr::Extreme { extreme: crate::Func::Min, terms: guarded, values },
+            Agg::Min | Agg::Max if changing => Expr::Extreme { extreme: if agg == Agg::Min { crate::Func::Min } else { crate::Func::Max }, terms: guarded, values: vec![] },
             Agg::Min | Agg::Max => {
                 let func = if agg == Agg::Min { crate::Func::Min } else { crate::Func::Max };
                 match fold(terms, &|a, b| Expr::Call { call: func, args: vec![a, b] }) {
