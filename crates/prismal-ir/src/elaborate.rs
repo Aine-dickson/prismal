@@ -511,6 +511,8 @@ impl<'a> Cx<'a> {
             Expr::If { r#if, then, r#else } => Expr::If { r#if: b(self, r#if), then: b(self, then), r#else: b(self, r#else) },
             Expr::Tuple { tuple } => Expr::Tuple { tuple: tuple.iter().map(|a| self.expr(s, a)).collect() },
             Expr::Comp { comp, axis } => Expr::Comp { comp: b(self, comp), axis: *axis },
+            // A frame is the model's (D-105): the value read in it is renamed, the frame not.
+            Expr::In { r#in, frame, axis, .. } => Expr::In { r#in: b(self, r#in), frame: frame.clone(), axis: *axis, reads: vec![] },
             Expr::Lambda { lambda } => {
                 let mut l = lambda.clone();
                 l.body = b(self, &lambda.body);
@@ -1440,7 +1442,8 @@ fn presentation<'a>(cx: &mut Cx<'a>, root: &'a Model, p: &Presentation) -> Prese
     for v in &mut out.views {
         pc.cx.element = v.id.clone();
         v.kind = match &v.kind {
-            ViewKind::Spatial { space, scale, y_up, look, distance } => ViewKind::Spatial {
+            ViewKind::Spatial { space, scale, y_up, look, distance, frame } => ViewKind::Spatial {
+                frame: frame.clone(),
                 space: space.clone(),
                 scale: crate::present::Scale { quantity: pc.e(&s, &scale.quantity), px: scale.px },
                 y_up: *y_up,

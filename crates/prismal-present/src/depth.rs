@@ -161,7 +161,7 @@ fn visible(bodies: &[(&Body, usize)], me: Option<usize>, look: &Look, a: &[f64; 
 }
 
 fn px_len(ctx: &ViewCtx, a: &[f64; 3], b: &[f64; 3]) -> f64 {
-    let (p, q) = (ctx.to_view(a), ctx.to_view(b));
+    let (p, q) = (ctx.project(a), ctx.project(b));
     (p[0] - q[0]).hypot(p[1] - q[1])
 }
 
@@ -185,9 +185,9 @@ fn cut_path(bodies: &[(&Body, usize)], me: Option<usize>, ctx: &ViewCtx, look: &
                 brk.push(out.len());
             }
             if !(joined && s0 == 0.0) {
-                out.push(ctx.to_view(&a));
+                out.push(ctx.project(&a));
             }
-            out.push(ctx.to_view(&b));
+            out.push(ctx.project(&b));
             joined = s1 == 1.0;
         }
         if ps.last().is_none_or(|p| p.1 < 1.0) {
@@ -250,7 +250,7 @@ fn cut(ctx: &ViewCtx, look: &Look, bodies: &[(&Body, usize)], owned: &[(Body, St
                 let mut out = vec![];
                 for [a, b] in lines {
                     for (s0, s1) in visible(bodies, None, look, a, b, px_len(ctx, a, b)) {
-                        out.push([ctx.to_view(&lerp(a, b, s0)), ctx.to_view(&lerp(a, b, s1))]);
+                        out.push([ctx.project(&lerp(a, b, s0)), ctx.project(&lerp(a, b, s1))]);
                     }
                 }
                 *drawn = out;

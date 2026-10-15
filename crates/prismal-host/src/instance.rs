@@ -237,7 +237,7 @@ impl Instance {
                     v["title"] = json!(t);
                 }
                 match ctx {
-                    ViewCtx::Spatial { space, px_per_m, y_up, look } => {
+                    ViewCtx::Spatial { space, px_per_m, y_up, look, .. } => {
                         let axes = cm.spaces.iter().find(|s| &s.id == space).map(|s| s.axes.clone()).unwrap_or_default();
                         v["px_per_m"] = json!(px_per_m);
                         v["y_up"] = json!(y_up);

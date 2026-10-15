@@ -231,6 +231,16 @@ pub enum Expr {
         comp: Box<Expr>,
         axis: usize,
     },
+    /// `e.in(F).x`: component `axis` of a point or vector read in frame `F` (MK-4.6, D-105).
+    /// `reads` holds, while a model is checked, the frame's expressions, so that what the
+    /// frame reads is read here; it is empty in a document.
+    In {
+        r#in: Box<Expr>,
+        frame: Id,
+        axis: usize,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reads: Vec<Expr>,
+    },
     Lambda {
         lambda: Lambda,
     },
@@ -354,6 +364,10 @@ impl Expr {
         match self {
             Expr::Neg { neg: e } | Expr::Not { not: e } | Expr::Norm { norm: e } => e.walk(f),
             Expr::Comp { comp: e, .. } => e.walk(f),
+            Expr::In { r#in, reads, .. } => {
+                r#in.walk(f);
+                reads.iter().for_each(|x| x.walk(f));
+            }
             Expr::Bin { l, r, .. } => {
                 l.walk(f);
                 r.walk(f);

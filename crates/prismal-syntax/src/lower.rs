@@ -336,6 +336,8 @@ pub(crate) struct ModelCx<'a> {
     pub(crate) functions: HashMap<String, Id>,
     /// Grids by name (D-091).
     pub(crate) grids: HashMap<String, Id>,
+    /// Declared frames, by name (D-105).
+    pub(crate) frames: HashMap<String, Id>,
     /// While lowering an event with payloads: each value payload's name, the event, and its
     /// component when the event carries several (D-050, D-059). Member payloads are in `vars`.
     payload: Vec<(String, Id, Option<usize>)>,
@@ -408,6 +410,7 @@ impl<'a> ModelCx<'a> {
             enums: m.enums.iter().map(|e| (e.name.clone(), (e.id.clone(), e.cases.clone()))).collect(),
             functions: m.functions.iter().map(|f| (f.name.clone(), f.id.clone())).collect(),
             grids: m.grids.iter().map(|g| (g.name.clone(), g.id.clone())).collect(),
+            frames: m.frames.iter().map(|f| (f.name.clone(), f.id.clone())).collect(),
             payload: vec![],
             diags,
             map,
@@ -456,6 +459,7 @@ impl<'a> ModelCx<'a> {
             enums: HashMap::new(),
             functions: HashMap::new(),
             grids: HashMap::new(),
+            frames: HashMap::new(),
             payload: vec![],
             diags,
             map,
@@ -825,6 +829,11 @@ impl<'a> ModelCx<'a> {
                         self.err("SX-E09", format!("grid `{}` declared twice", name.text), name.span);
                     }
                 }
+                Member::Frame { name, .. } => {
+                    if self.frames.insert(name.text.clone(), format!("{}.frame.{}", self.name, name.text)).is_some() {
+                        self.err("SX-E09", format!("frame `{}` declared twice", name.text), name.span);
+                    }
+                }
                 _ => {}
             }
         }
@@ -859,6 +868,7 @@ impl<'a> ModelCx<'a> {
                 }
                 Member::Flow(f) => self.flow(f, None),
                 Member::Grid { name, args, span } => self.grid(name, args, *span),
+                Member::Frame { name, args, span } => self.frame(name, args, *span),
                 // After the declarations: below.
                 Member::Boundary { .. } => {}
                 Member::Process(p) => {
@@ -1122,6 +1132,34 @@ impl<'a> ModelCx<'a> {
         }
         let axes = ranges.into_iter().zip(cells).map(|((lo, hi), cells)| GridAxis { lo, hi, cells }).collect();
         self.model.grids.push(Grid { id, name: name.text.clone(), axes });
+    }
+
+    /// `frame turning(at: P, x: u)`, or in three dimensions `frame cabin(at: P, x: u, y: v)`
+    /// (MK-4.2, D-105): a frame of the model's space, an origin and axes.
+    fn frame(&mut self, name: &ast::Name, args: &[ast::Arg], span: Span) {
+        let id = format!("{}.frame.{}", self.name, name.text);
+        self.map.insert(id.clone(), span);
+        if self.in_object {
+            self.err("SX-E08", "a frame belongs to a model, not to an object type: declare it in the model and read members in it", span);
+            return;
+        }
+        let (mut at, mut x, mut y) = (None, None, None);
+        for a in args {
+            match a.name.as_ref().map(|n| n.text.as_str()) {
+                Some("at") => at = Some(self.expr(&a.value, &[])),
+                Some("x") => x = Some(self.expr(&a.value, &[])),
+                Some("y") => y = Some(self.expr(&a.value, &[])),
+                Some(other) => self.err("SX-E08", format!("`frame` takes no option `{other}`; its options are `at`, `x`, `y`"), a.name.as_ref().unwrap().span),
+                None => self.err("SX-E08", "a frame takes named options: `frame turning(at: origin, x: (cos(a), sin(a)))`", a.value.span),
+            }
+        }
+        let three = self.space.is_some_and(|s| s.dimension == 3);
+        match (at, x, &y, three) {
+            (Some(at), Some(x), Some(_), true) | (Some(at), Some(x), None, false) => self.model.frames.push(prismal_ir::FrameDecl { id, name: name.text.clone(), at, x, y }),
+            (Some(_), Some(_), None, true) => self.err("SX-E08", format!("frame `{}` lies in a space of three dimensions: give its second axis too, `y: v`", name.text), span),
+            (Some(_), Some(_), Some(_), false) => self.err("SX-E08", format!("frame `{}` lies in a plane: its second axis is its first turned a quarter turn, so it takes no `y`", name.text), span),
+            _ => self.err("SX-E08", "a frame has an origin and a first axis: `frame turning(at: origin, x: (cos(a), sin(a)))`", span),
+        }
     }
 
     /// `boundary T { left = e }`, `boundary T periodic` (MK-9.6, D-091).
@@ -1465,6 +1503,17 @@ impl<'a> ModelCx<'a> {
         }
     }
 
+    /// `v.in(F)`: the value and the frame's name, for a component read in a frame (D-105).
+    fn in_frame(x: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr)> {
+        match &x.kind {
+            ExprKind::Call(f, args) if args.len() == 1 && args[0].name.is_none() => match &f.kind {
+                ExprKind::Field(v, m) if m.text == "in" => Some((v, &args[0].value)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn axis(&mut self, n: &ast::Name) -> usize {
         let axes: Vec<String> = match self.space {
             Some(s) => s.axes.clone(),
@@ -1679,7 +1728,25 @@ impl<'a> ModelCx<'a> {
                     _ => self.member_expr(e, locals).map(|(m, _)| m).unwrap_or_else(Self::placeholder),
                 }
             }
+            ExprKind::Call(f, _) if matches!(&f.kind, ExprKind::Field(_, m) if m.text == "in") => {
+                self.err("SX-E02", "a value in a frame is read by its components: `v.in(turning).x`", e.span);
+                Self::placeholder()
+            }
             ExprKind::Call(f, args) => self.call(f, args, e.span, locals),
+            // `v.in(F).x`: a component read in a declared frame (MK-4.6, D-105).
+            ExprKind::Field(x, n) if Self::in_frame(x).is_some() => {
+                let (v, f) = Self::in_frame(x).unwrap();
+                let frame = match &f.kind {
+                    ExprKind::Name(name) if self.frames.contains_key(name) => self.frames[name].clone(),
+                    _ => {
+                        self.err("SX-E03", "`in` reads components in a frame the model declares: `v.in(turning).x`", f.span);
+                        return Self::placeholder();
+                    }
+                };
+                let v = self.expr(v, locals);
+                let axis = self.axis(n);
+                Expr::In { r#in: Box::new(v), frame, axis, reads: vec![] }
+            }
             ExprKind::Field(x, n) if matches!(&x.kind, ExprKind::Name(e) if self.enums.contains_key(e) && !self.bindings.contains_key(e) && !locals.contains(e)) => {
                 let ExprKind::Name(e) = &x.kind else { unreachable!() };
                 if !self.enums[e].1.contains(&n.text) {

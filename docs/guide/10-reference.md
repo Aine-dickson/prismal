@@ -40,6 +40,7 @@ Every form of the working syntax on one page, with the chapter that introduces i
 | `grid g(x: [a, b], cells: n)`, `grid g(x: [a, b], y: [c, d], cells: (n, m))` | a grid: a line, or a rectangle of the model's plane, cut into equal cells | 16 |
 | `state { T(x in g): R = e }`, `derived { q(x in g): R = e }` | a field over grid `g`: a value of type `R` in each cell, `x` the cell's position (a point in the plane) | 16 |
 | `flow der(T) = e`, `flow der(T(x)) = e` | a field's flow, computed in each cell; `T` and other fields of the grid read the cell | 16 |
+| `frame F(at: P, x: u)`, `frame F(at: P, x: u, y: v)` | a frame of the model's space: an origin and axes, which may move (a plane takes `x` only) | 23 |
 | `boundary T { left = e; right = e; bottom = e; top = e }`, `boundary T periodic` | a field's edges held at values (the others insulated), or wrapped around | 16 |
 
 Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2`, `flow der(x) = v`.
@@ -65,6 +66,7 @@ Each block keyword also has a one-line form: `param g: Acceleration = 9.81 m/s^2
 | `9.81 m/s^2`, `45 deg`, `2π`, `0` | literals; `0` has any dimension and is the zero vector | 2, 3 |
 | `origin + (1 m, 2 m)` | a point | 3 |
 | `v.x`, `\|v\|` | component, norm | 3 |
+| `v.in(F).x`, `p.in(F).y` | a component, or a coordinate from the frame's origin, along an axis of frame `F` | 23 |
 | `[a, b]`, `(a, b)`, `[a, b)`, `(a, inf)` | intervals | 1 |
 | `if c then a else b` | conditional | 4 |
 | `match p { a => x, b => y }` | a value per case of an enumeration, every case once | 5 |
@@ -89,6 +91,7 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km μm 
 | `view n: spatial(Space, scale: 1 m -> 40 px, y: up) { reps }` | spatial view | 3 |
 | `view n: spatial(Room, scale: 1 m -> 40 px, azimuth: 30 deg, elevation: 20 deg) { reps }` | a view of a space of three dimensions, `z` up; the angles may read parameters and time | 20 |
 | `spatial(Room, ..., distance: 14 m)` | the viewer stands 14 m from the origin: a view in perspective | 20 |
+| `spatial(Plane, ..., frame: F)` | the view is drawn as seen from frame `F`, which may move | 23 |
 | `view n: plot(x: [a, b], y: [c, d]) { reps }` | plot view; ranges give the axes their dimensions | 1, 4 |
 | `plot(..., follow: y)`, `follow: (x, y)` | those axes grow to keep the data in view | 7 |
 | `plot(..., x_unit: ms, y_unit: cm)` | display units for the axes | 7 |
@@ -134,7 +137,7 @@ Two forms add details to a form, one for each place they appear (D-081):
 | `group` | `at`, `rotate`, `axis`, `scale` |
 | `instrument` (not a representation) | `resolution`, `range`, `noise` |
 | `axes`, `grid`, `label`, `title`, `table`, `toggle`, `select` | none |
-| view `spatial(Space, ...)` | `scale`, `y`; in three dimensions `scale`, `azimuth`, `elevation`, `distance` |
+| view `spatial(Space, ...)` | `scale`, `y`, `frame`; in three dimensions `scale`, `azimuth`, `elevation`, `distance`, `frame` |
 | view `plot(...)` | `x`, `y`, `follow`, `x_unit`, `y_unit`, `window` |
 
 | Statement | Clauses |
@@ -216,7 +219,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `from` | the start of `every Δ from τ0` | 5 |
 | `hide`, `reveal`, `highlight` | timeline actions on representations | 8 |
 | `hold`, `run`, `rate`, `until`, `seek`, `reset`, `wait` | timeline control of the simulation: pause, play at a rate until an event, jump, restart, wait | 8 |
-| `in` | the space of a model (`model M in Plane`), a range (`x in [a, b]`), a view (`in scene { ... }`), a collection (`for b in row`), a member payload (`request(b in row)`) | 1, 3, 8, 9 |
+| `in` | the space of a model (`model M in Plane`), a range (`x in [a, b]`), a view (`in scene { ... }`), a collection (`for b in row`), a member payload (`request(b in row)`), a frame (`v.in(F).x`) | 1, 3, 8, 9, 23 |
 | `index` | the number of a member in a collection's overrides | 9 |
 | `intervene` | a timeline action that changes a parameter at the instant shown: `intervene { set p = e }` | 8 |
 | `input` | values supplied from outside, with an optional default; an object's connections | 5, 9 |
@@ -252,6 +255,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | `unknown` | in a model, a block of unknowns that the equations reading them determine: `unknown { I: Current }` | 17 |
 | `use` | at the top of a file, imports the shared definitions of a module: `use mechanics`, `use mechanics.{Body}`, `use optics` | 19, 22 |
 | `while`, `step` | in an algorithm: `while c { ... }` repeats while `c` holds; `step` ends one occurrence's work | 21 |
+| `frame` | in a model, a frame of its space: `frame slope(at: origin, x: along)` | 23 |
 | `grid` | in a model, a grid of cells for fields: `grid rod(x: [0 m, 1 m], cells: 50)` | 16 |
 | `boundary` | in a model, a field's boundary conditions: `boundary T { left = 100 }` | 16 |
 | `periodic` | `boundary T periodic`: the field's grid wraps around | 16 |
@@ -274,7 +278,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce use algorithm while step restitution across azimuth elevation`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce use algorithm while step restitution across azimuth elevation frame`.
 
 ## Diagnostics
 

@@ -204,6 +204,78 @@ pub enum CExpr {
     FieldAt(usize),
     /// An operation on a field (MK-9.7, MK-9.8, D-091).
     Field(Box<CFieldOp>),
+    /// A component read in a declared frame (MK-4.6, D-105).
+    InFrame(Box<CInFrame>),
+}
+
+/// `e.in(F).k` compiled (D-105): the value read (a point, measured from the frame's origin,
+/// or a vector), the frame's origin and axis expressions, the component and the dimension of
+/// the space.
+#[derive(Clone, Debug)]
+pub struct CInFrame {
+    pub value: CExpr,
+    pub point: bool,
+    pub at: CExpr,
+    pub x: CExpr,
+    pub y: Option<CExpr>,
+    pub axis: usize,
+    pub n: usize,
+}
+
+impl CInFrame {
+    /// The frame's origin and unit axes on a state (D-105).
+    pub fn axes(&self, c: &Ctx) -> Result<([f64; 3], [[f64; 3]; 3]), Status> {
+        let y = match &self.y {
+            Some(y) => Some(y.eval(c)?),
+            None => None,
+        };
+        frame_axes(self.at.eval(c)?, self.x.eval(c)?, y, self.n)
+    }
+}
+
+/// A frame's origin and unit axes from the values of its expressions (D-105): the first axis
+/// along `x`; in a plane the second the first turned a quarter turn; in three dimensions the
+/// second `y` made square to the first and the third their cross product.
+pub fn frame_axes(at: Value, x: Value, y: Option<Value>, n: usize) -> Result<([f64; 3], [[f64; 3]; 3]), Status> {
+    {
+        let three = |v: Value| -> Result<[f64; 3], Status> {
+            match v {
+                Value::Vec(a) | Value::Point(a) => Ok(a.v),
+                Value::Tuple(t) => {
+                    let mut out = [0.0; 3];
+                    for (k, x) in t.iter().take(3).enumerate() {
+                        let Value::Num(x) = x else { return Err(Status::invalid("a frame's axis has components that are not numbers")) };
+                        out[k] = *x;
+                    }
+                    Ok(out)
+                }
+                other => Err(Status::invalid(format!("a frame's axis is a vector, not {other}"))),
+            }
+        };
+        let dot = |a: &[f64; 3], b: &[f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let unit = |a: [f64; 3]| -> Result<[f64; 3], Status> {
+            let n = dot(&a, &a).sqrt();
+            if !(n > 0.0) || !n.is_finite() {
+                return Err(Status::invalid("a frame's axis has no direction"));
+            }
+            Ok([a[0] / n, a[1] / n, a[2] / n])
+        };
+        let at = three(at)?;
+        let e1 = unit(three(x)?)?;
+        let axes = if n < 3 {
+            [e1, [-e1[1], e1[0], 0.0], [0.0, 0.0, 1.0]]
+        } else {
+            let y = match y {
+                Some(y) => three(y)?,
+                None => return Err(Status::invalid("a frame of three dimensions needs `y`")),
+            };
+            let d = dot(&y, &e1);
+            let e2 = unit([y[0] - d * e1[0], y[1] - d * e1[1], y[2] - d * e1[2]])?;
+            let e3 = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+            [e1, e2, e3]
+        };
+        Ok((at, axes))
+    }
 }
 
 /// One axis of a grid: `n` equal cells of width `h` from `lo`, cell `i` centred at
@@ -631,6 +703,16 @@ impl CExpr {
             CExpr::MakeTuple(items) => {
                 let vals: Result<std::vec::Vec<Value>, Status> = items.iter().map(|a| a.eval(c)).collect();
                 Ok(Tuple(Rc::new(vals?)))
+            }
+            CExpr::InFrame(f) => {
+                let (at, axes) = f.axes(c)?;
+                let v = match f.value.eval(c)? {
+                    Vec(a) | Point(a) => a.v,
+                    v => return Err(Status::invalid(format!("no component in a frame of {v}"))),
+                };
+                let d: [f64; 3] = if f.point { std::array::from_fn(|i| v[i] - at[i]) } else { v };
+                let e = axes[f.axis];
+                Ok(Num(d[0] * e[0] + d[1] * e[1] + d[2] * e[2]))
             }
             CExpr::Comp(e, axis) => match e.eval(c)? {
                 Vec(a) | Point(a) => Ok(Num(a.v[*axis])),

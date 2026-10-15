@@ -71,6 +71,8 @@ pub enum Member {
     Parts(Vec<PartDecl>),
     /// `grid rod(x: [0 m, 1 m], cells: 100)` (MK-9.5, D-091).
     Grid { name: Name, args: Vec<Arg>, span: Span },
+    /// `frame turning(at: P, x: u)`, `frame cabin(at: P, x: u, y: v)` (MK-4.2, D-105).
+    Frame { name: Name, args: Vec<Arg>, span: Span },
     /// `boundary T { left = e; right = e }` or `boundary T periodic` (MK-9.6, D-091).
     Boundary { field: Name, periodic: bool, fixed: Vec<(Name, Expr)>, span: Span },
 }

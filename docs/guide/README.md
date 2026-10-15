@@ -31,9 +31,10 @@ A guide to writing Prismal programs in the working syntax (D-028), from a first 
 | [17. Solving equations](17-solving-equations.md) | unknowns found from equations: circuits, equilibria, equations that give rates |
 | [18. Constrained motion](18-constraints.md) | constraints the runtime enforces: a bob on a rod, a bead on a wire, a double pendulum, a point held on a curve, contact with a floor, a slack rope |
 | [19. Shared definitions and modules](19-modules.md) | definitions outside models, for models of any space; `use` and the first-party `mechanics` module |
-| [20. Three dimensions](20-three-dimensions.md) | spaces of three dimensions, `cross`, views turned by azimuth and elevation: a charge spiralling in a magnetic field |
+| [20. Three dimensions](20-three-dimensions.md) | spaces of three dimensions, `cross`, views turned by azimuth and elevation, in perspective, with opaque bodies; turned by the learner or a lesson: a charge in a magnetic field, a tilted orbit, a door on a hinge |
 | [21. Algorithms](21-algorithms.md) | statements run in order and paused at `step`: bubble sort drawn as bars, binary search by hand or on a clock, Euclid's algorithm; members chosen by computed numbers, `floor` and `mod` |
 | [22. Light and rays](22-light-and-rays.md) | the first-party `optics` module: Snell's law and total internal reflection with a draggable laser, a thin lens and its image, a prism splitting white light |
+| [23. Frames](23-frames.md) | axes of the model's own: gravity read along a slope, a carousel seen from its seat, Coriolis and centrifugal forces on a turntable |
 
 ## Running a program
 

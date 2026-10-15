@@ -175,6 +175,13 @@ await open('g20-door/Hinge');
 check('a door in a group is drawn as an opaque polygon', (await count('#views polygon.shape.opaque')) === 1);
 await shot('g20-door');
 
+// Frames (D-105): the carousel drawn from the ground and from its seat; the path seen from
+// the seat is not the straight one seen from the ground.
+await open('g23-carousel/Ride@3');
+const traces = await ev(`[...document.querySelectorAll('#views svg')].map((s) => [...s.querySelectorAll('polyline')].map((p) => p.getAttribute('points')).join('|'))`);
+check('a view drawn from a turning frame draws its own path', traces.length >= 2 && traces[0] && traces[1] && traces[0] !== traces[1], `${traces.length} views`);
+await shot('g23-carousel');
+
 // An algorithm (D-101): bars as segments in a plot view; after 3 s, four comparisons made,
 // two bars drawn as the pair compared.
 await open('g21-sorting/SortLab@3');

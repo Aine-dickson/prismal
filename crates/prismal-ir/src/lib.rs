@@ -12,6 +12,7 @@ pub mod units;
 pub use dim::{Dim, Ratio};
 pub mod elaborate;
 pub mod enforce;
+pub mod frames;
 pub mod link;
 
 pub use expr::{Agg, Arm, BinOp, Builtin, Constant, Dist, Expr, Func, Guarded, Lambda};
@@ -233,6 +234,20 @@ pub struct Grid {
     pub id: Id,
     pub name: String,
     pub axes: Vec<GridAxis>,
+}
+
+/// A frame of the model's space (MK-4.2, D-022, D-105): an origin `at` and axes. Its first
+/// axis lies along `x`; in a plane the second is the first turned a quarter turn, and in a
+/// space of three dimensions it is `y` made square to the first, the third their cross
+/// product. The expressions may read the model's values and time: such a frame moves.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrameDecl {
+    pub id: Id,
+    pub name: String,
+    pub at: Expr,
+    pub x: Expr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -674,6 +689,9 @@ pub struct Model {
     /// Grids of field state (MK-9.5, D-091).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grids: Vec<Grid>,
+    /// Declared frames of the model's space (MK-4.2, D-105).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<FrameDecl>,
     /// Declared functions (MK-10.3, D-048).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub functions: Vec<FunctionDecl>,
