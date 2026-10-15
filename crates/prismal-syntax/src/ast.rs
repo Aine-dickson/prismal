@@ -509,6 +509,8 @@ pub struct Interaction {
     pub part: Option<Name>,
     /// `on drag live as p`: drag mode `live` (PK-10.9, D-071).
     pub live: bool,
+    /// `on drag across n as p`: the normal of the plane a drag moves in (D-104).
+    pub across: Option<Expr>,
     pub bind: Name,
     /// `propose x = e`, or a member's binding `propose b.pos = e` (D-059).
     pub proposals: Vec<(Path, Expr)>,
@@ -544,7 +546,8 @@ pub enum Action {
     /// `reveal fade|draw [for d] [in view] { reps }`
     Reveal { style: Name, duration: Option<Expr>, view: Option<Name>, ease: Option<Name>, reps: Vec<Rep> },
     /// `camera view [to P] [zoom z] [for d]`
-    Camera { view: Name, center: Option<Expr>, zoom: Option<Expr>, duration: Option<Expr>, ease: Option<Name> },
+    /// `camera v [to P] [zoom z] [azimuth a] [elevation e] [for d] [ease w]` (D-042, D-104).
+    Camera { view: Name, center: Option<Expr>, zoom: Option<Expr>, azimuth: Option<Expr>, elevation: Option<Expr>, duration: Option<Expr>, ease: Option<Name> },
     Seek(Expr),
     Show(Rep),
     Explore { limit: Option<Expr>, keep: Vec<Name>, reps: Vec<Rep>, fallback: Vec<Action> },

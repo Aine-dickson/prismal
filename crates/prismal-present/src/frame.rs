@@ -69,6 +69,10 @@ pub struct ViewFrame {
     /// A camera set by the timeline (D-042).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub camera: Option<Camera>,
+    /// For a view of three dimensions, the azimuth and elevation it is drawn from, in
+    /// radians (D-104): where a host starts the learner's turn of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub look: Option<[f64; 2]>,
 }
 
 /// A view's camera (D-042): the centre in view coordinates, the zoom, and `blend`, how far
@@ -138,6 +142,13 @@ pub struct RepFrame {
     /// where the value jumped at an instant (a ball thrown again). Media lift the pen there.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub breaks: Vec<usize>,
+    /// A body that hides what lies behind it (D-104): media fill it without seeing through.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub opaque: bool,
+    /// In a view of three dimensions, the representation in model coordinates (D-104), from
+    /// which depth order and hidden lines are found. Not part of the frame description.
+    #[serde(skip)]
+    pub geo: Option<Geo>,
 }
 
 /// Named colors an author may give a representation (D-061). Media map them to values that
@@ -180,7 +191,21 @@ fn style_props(rep: &Rep) -> Result<Rep, PDiag> {
             _ => return Err(d(format!("`{}` is one of {} (PK-6.6a)", p.name, words.join(", ")))),
         }
     }
-    Ok(Rep { props: rep.props.iter().filter(|p| !["color", "line", "width"].contains(&p.name.as_str())).cloned().collect(), ..rep.clone() })
+    // `opaque: true`: a body that hides what lies behind it (D-104).
+    if let Some(p) = rep.props.iter().find(|p| p.name == "opaque") {
+        if !["circle", "ellipse", "polygon"].contains(&rep.kind.as_str()) {
+            return Err(d(format!("a {} takes no `opaque`; circles, ellipses and polygons are bodies that can hide what is behind them (D-104)", rep.kind)));
+        }
+        if !matches!(&p.value, Arg::Expr { expr: Expr::Bool { .. } }) {
+            return Err(d("`opaque` is `true` or `false` (D-104)".into()));
+        }
+    }
+    Ok(Rep { props: rep.props.iter().filter(|p| !["color", "line", "width", "opaque"].contains(&p.name.as_str())).cloned().collect(), ..rep.clone() })
+}
+
+/// Whether the author made a body opaque (D-104), checked by `style_props`.
+fn style_opaque(rep: &Rep) -> bool {
+    matches!(rep.prop("opaque"), Some(Arg::Expr { expr: Expr::Bool { bool: true } }))
 }
 
 /// The author's line width (D-095), checked by `style_props`.
@@ -341,6 +366,20 @@ pub struct Symbol {
 
 // ---------------------------------------------------------------- views and representations
 
+/// A representation in the model coordinates of a view of three dimensions (D-104).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Geo {
+    /// A marker, or the point a text is put at.
+    Point([f64; 3]),
+    /// A segment, an arrow (from its tail to its tip), a polyline or trace (with the breaks
+    /// of its shape), or a polygon or round shape in a plane (`closed`).
+    Path { points: Vec<[f64; 3]>, closed: bool },
+    /// Axes and grids.
+    Lines(Vec<[[f64; 3]; 2]>),
+    /// A circle drawn as a sphere's outline.
+    Sphere { center: [f64; 3], radius: f64 },
+}
+
 /// A label of `Shape::Lines`: its text at a point (D-100).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct LineLabel {
@@ -353,10 +392,11 @@ const AXIS_PX: f64 = 160.0;
 
 /// A view's axes in three dimensions: each axis from `-AXIS_PX` to `AXIS_PX` pixels long
 /// through the origin, labelled at its positive end (D-100).
-fn axes_3d(ctx: &ViewCtx) -> (Shape, String) {
+fn axes_3d(ctx: &ViewCtx) -> (Shape, String, Geo) {
     let ViewCtx::Spatial { px_per_m, .. } = ctx else { unreachable!() };
     let l = AXIS_PX / px_per_m;
     let mut lines = vec![];
+    let mut world = vec![];
     let mut labels = vec![];
     for (i, name) in ["x", "y", "z"].iter().enumerate() {
         let mut a = [0.0; 3];
@@ -364,51 +404,96 @@ fn axes_3d(ctx: &ViewCtx) -> (Shape, String) {
         a[i] = -l;
         b[i] = l;
         lines.push([ctx.to_view(&a), ctx.to_view(&b)]);
+        world.push([a, b]);
         let mut at = [0.0; 3];
         at[i] = l * 1.08;
         labels.push(LineLabel { text: format!("{name} (m)"), at: ctx.to_view(&at) });
     }
-    (Shape::Lines { lines, labels }, "axes x, y and z".into())
+    (Shape::Lines { lines, labels }, "axes x, y and z".into(), Geo::Lines(world))
 }
 
 /// A view's grid in three dimensions: the `x y` plane at `z = 0`, in steps of a round length
 /// near 60 pixels (D-100).
-fn grid_3d(ctx: &ViewCtx) -> (Shape, String) {
+fn grid_3d(ctx: &ViewCtx) -> (Shape, String, Geo) {
     let ViewCtx::Spatial { px_per_m, .. } = ctx else { unreachable!() };
     let raw = 60.0 / px_per_m;
     let p = 10f64.powf(raw.log10().floor());
     let step = [1.0, 2.0, 5.0, 10.0].iter().map(|m| m * p).find(|s| *s >= raw).unwrap_or(10.0 * p);
     let n = (AXIS_PX / px_per_m / step).ceil().max(1.0) as i64;
     let e = n as f64 * step;
-    let mut lines = vec![];
+    let mut world = vec![];
     for k in -n..=n {
         let g = k as f64 * step;
-        lines.push([ctx.to_view(&[g, -e, 0.0]), ctx.to_view(&[g, e, 0.0])]);
-        lines.push([ctx.to_view(&[-e, g, 0.0]), ctx.to_view(&[e, g, 0.0])]);
+        world.push([[g, -e, 0.0], [g, e, 0.0]]);
+        world.push([[-e, g, 0.0], [e, g, 0.0]]);
     }
-    (Shape::Lines { lines, labels: vec![] }, format!("grid in the x y plane, {} m apart", fmt_num(step)))
+    let lines = world.iter().map(|[a, b]| [ctx.to_view(a), ctx.to_view(b)]).collect();
+    (Shape::Lines { lines, labels: vec![] }, format!("grid in the x y plane, {} m apart", fmt_num(step)), Geo::Lines(world))
 }
 
 /// How a view of a space of three dimensions is turned (PK-7.2a, D-100): unit vectors of the
 /// standard frame along the view's right, its up, and toward the viewer. The view looks from
 /// azimuth `a` (from `x` toward `y`) and elevation `e` (from the `x y` plane toward `z`), and
-/// projects along its depth: `z` is up on the screen at any azimuth.
+/// projects along its depth: `z` is up on the screen at any azimuth. With a `distance` the
+/// viewer stands that far from the origin and the view is in perspective (D-104): a point is
+/// enlarged by `d / (d - depth)`, so that the plane through the origin facing the viewer keeps
+/// the view's scale.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Look {
     pub right: [f64; 3],
     pub up: [f64; 3],
     pub toward: [f64; 3],
+    pub azimuth: f64,
+    pub elevation: f64,
+    pub distance: Option<f64>,
 }
 
 impl Look {
     pub fn new(azimuth: f64, elevation: f64) -> Look {
         let (sa, ca) = azimuth.sin_cos();
         let (se, ce) = elevation.sin_cos();
-        Look { right: [-sa, ca, 0.0], up: [-se * ca, -se * sa, ce], toward: [ce * ca, ce * sa, se] }
+        Look { right: [-sa, ca, 0.0], up: [-se * ca, -se * sa, ce], toward: [ce * ca, ce * sa, se], azimuth, elevation, distance: None }
+    }
+    /// The same look from a viewer `distance` metres from the origin (D-104).
+    pub fn at(self, distance: Option<f64>) -> Look {
+        Look { distance, ..self }
     }
     fn dot(a: &[f64; 3], p: &[f64]) -> f64 {
         (0..3).map(|i| a[i] * p.get(i).copied().unwrap_or(0.0)).sum()
     }
+    /// How far a point lies toward the viewer from the plane through the origin facing it.
+    pub fn depth(&self, p: &[f64]) -> f64 {
+        Look::dot(&self.toward, p)
+    }
+    /// The factor a point is enlarged by in perspective (D-104); 1 without a distance. A point
+    /// at or behind the viewer is held just in front of it.
+    pub fn factor(&self, p: &[f64]) -> f64 {
+        match self.distance {
+            Some(d) => d / (d - self.depth(p)).max(d * 1e-3),
+            None => 1.0,
+        }
+    }
+    /// Where the viewer stands, in perspective (D-104).
+    pub fn eye(&self) -> Option<[f64; 3]> {
+        self.distance.map(|d| [d * self.toward[0], d * self.toward[1], d * self.toward[2]])
+    }
+    /// The direction from a point toward the viewer, of length 1, and how far the viewer is
+    /// along it (infinite without a distance).
+    pub fn to_viewer(&self, p: &[f64; 3]) -> ([f64; 3], f64) {
+        match self.eye() {
+            Some(e) => {
+                let w = [e[0] - p[0], e[1] - p[1], e[2] - p[2]];
+                let n = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt().max(1e-300);
+                ([w[0] / n, w[1] / n, w[2] / n], n)
+            }
+            None => (self.toward, f64::INFINITY),
+        }
+    }
+}
+
+/// The components of a point or vector as three, a plane's with `z = 0`.
+pub fn pad3(a: &[f64]) -> [f64; 3] {
+    [a.first().copied().unwrap_or(0.0), a.get(1).copied().unwrap_or(0.0), a.get(2).copied().unwrap_or(0.0)]
 }
 
 /// The coordinate context of a view (PK-7.2, PK-7.3).
@@ -430,14 +515,15 @@ impl ViewCtx {
     pub fn of(cm: &CModel, v: &View) -> Result<ViewCtx, PDiag> {
         let err = |code, message: String| PDiag { code, message, element: v.id.clone() };
         match &v.kind {
-            ViewKind::Spatial { space, scale, y_up, look } => {
+            ViewKind::Spatial { space, scale, y_up, look, .. } => {
                 let Some(sp) = cm.spaces.iter().find(|s| &s.id == space) else {
                     return Err(err("PK-E01", format!("unknown space `{space}` (PK-2.3)")));
                 };
                 // D-100: a view of a space of three dimensions, from 30 deg and 20 deg unless
-                // the author turns it.
+                // the author turns it. Angles that read the model are evaluated at each frame
+                // (D-104); until then the view looks from where its constants say.
                 let look = match (sp.dimension, look) {
-                    (3, Some([a, e])) => Some(Look::new(number(cm, a).map_err(|m| err("PK-E02", m))?, number(cm, e).map_err(|m| err("PK-E02", m))?)),
+                    (3, Some([a, e])) => Some(Look::new(number(cm, a).unwrap_or(30f64.to_radians()), number(cm, e).unwrap_or(20f64.to_radians()))),
                     (3, None) => Some(Look::new(30f64.to_radians(), 20f64.to_radians())),
                     _ => None,
                 };
@@ -493,10 +579,53 @@ impl ViewCtx {
     pub fn to_view(&self, p: &[f64]) -> [f64; 2] {
         let (x, y) = (p.first().copied().unwrap_or(0.0), p.get(1).copied().unwrap_or(0.0));
         match self {
-            ViewCtx::Spatial { px_per_m, look: Some(l), .. } => [Look::dot(&l.right, p) * px_per_m, -Look::dot(&l.up, p) * px_per_m],
+            ViewCtx::Spatial { px_per_m, look: Some(l), .. } => {
+                let k = l.factor(p) * px_per_m;
+                [Look::dot(&l.right, p) * k, -Look::dot(&l.up, p) * k]
+            }
             ViewCtx::Spatial { px_per_m, y_up, .. } => [x * px_per_m, if *y_up { -y * px_per_m } else { y * px_per_m }],
             _ => [x, y],
         }
+    }
+
+    /// The look of a view of three dimensions (D-100, D-104).
+    pub fn look(&self) -> Option<Look> {
+        match self {
+            ViewCtx::Spatial { look, .. } => *look,
+            _ => None,
+        }
+    }
+
+    /// The same view looking from `look` (D-104).
+    pub fn looking(&self, look: Look) -> ViewCtx {
+        match self {
+            ViewCtx::Spatial { space, px_per_m, y_up, look: Some(_) } => ViewCtx::Spatial { space: space.clone(), px_per_m: *px_per_m, y_up: *y_up, look: Some(look) },
+            other => other.clone(),
+        }
+    }
+
+    /// A pointer position in view coordinates as a point of a view of three dimensions
+    /// (D-104): where the line of sight through it meets the plane through `through` with
+    /// normal `across`, or, without a normal, the plane facing the viewer. `None` when the
+    /// line of sight runs along the plane.
+    pub fn pointer3(&self, p: [f64; 2], through: [f64; 3], across: Option<[f64; 3]>) -> Option<[f64; 3]> {
+        let ViewCtx::Spatial { px_per_m, look: Some(l), .. } = self else { return None };
+        let (a, b) = (p[0] / px_per_m, -p[1] / px_per_m);
+        // The point under the pointer in the plane through the origin facing the viewer, where
+        // perspective leaves the scale as it is, and the direction of the line of sight there.
+        let q: [f64; 3] = std::array::from_fn(|i| a * l.right[i] + b * l.up[i]);
+        let dir = match l.eye() {
+            Some(e) => [q[0] - e[0], q[1] - e[1], q[2] - e[2]],
+            None => [-l.toward[0], -l.toward[1], -l.toward[2]],
+        };
+        let n = across.unwrap_or(l.toward);
+        let dot = |u: &[f64; 3], v: &[f64; 3]| u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+        let den = dot(&n, &dir);
+        if den.abs() <= 1e-9 * dot(&n, &n).sqrt() * dot(&dir, &dir).sqrt() {
+            return None;
+        }
+        let s = dot(&n, &[through[0] - q[0], through[1] - q[1], through[2] - q[2]]) / den;
+        Some(std::array::from_fn(|i| q[i] + s * dir[i]))
     }
 
     /// A vector's components as a displacement in view pixels, at `px_per_unit` pixels per
@@ -548,11 +677,19 @@ impl ViewCtx {
         match self {
             ViewCtx::Spatial { space, px_per_m, y_up, look: None } => {
                 let m = [p[0] / px_per_m, if *y_up { -p[1] } else { p[1] } / px_per_m];
-                let l = tf.unapply(m);
+                let l = tf.unapply(&m);
                 origin(space) + tuple(vec![num(l[0], "m"), num(l[1], "m")])
             }
             _ => self.pointer(p),
         }
+    }
+
+    /// A point of a view of three dimensions, in the frame of a group (D-043, D-104), as a
+    /// model expression.
+    pub fn point_in(&self, m: [f64; 3], tf: &Tf) -> Expr {
+        let ViewCtx::Spatial { space, .. } = self else { return self.pointer([0.0, 0.0]) };
+        let l = tf.unapply(&m);
+        origin(space) + tuple(l.iter().map(|x| num(*x, "m")).collect())
     }
 
     /// A pointer position in view coordinates as a model expression: a point of the view's
@@ -593,6 +730,9 @@ pub struct CRep {
     pub kind: CKind,
     /// Drawn only while this holds: a member of a collection that changes, alive (D-057).
     pub when: Option<CExpr>,
+    /// `on drag across n`: the normal of the plane a drag moves in, in a view of three
+    /// dimensions (D-104).
+    pub across: Option<CExpr>,
 }
 
 impl CRep {
@@ -634,7 +774,9 @@ pub enum CKind {
     Poly { points: Vec<CExpr>, closed: bool },
     /// `circle`, `ellipse` and `arc` (PK-6.3c): radii are lengths, angles numbers (radians);
     /// `ry` absent for a circle or an arc, `from` and `to` present for an arc only.
-    Round { center: CExpr, rx: CExpr, ry: Option<CExpr>, rotate: Option<CExpr>, from: Option<CExpr>, to: Option<CExpr> },
+    /// `normal`: in a view of three dimensions, the normal of the plane the shape lies in
+    /// (D-104); a circle without one is a sphere's outline (D-100).
+    Round { center: CExpr, rx: CExpr, ry: Option<CExpr>, rotate: Option<CExpr>, from: Option<CExpr>, to: Option<CExpr>, normal: Option<CExpr> },
     Equation { name: String, lhs: Expr, rhs: Expr, refs: Vec<(Id, usize)>, live: bool },
     /// `payload`: the value a press requests the event with (D-072).
     Button { event: Id, label: String, payload: Option<Expr> },
@@ -647,8 +789,9 @@ pub enum CKind {
     /// of many runs at one instant (D-084), or of one run up to the instant shown (D-089).
     Histogram { source: HistSource, bins: usize, label: String, meter: Option<Meter> },
     /// Members drawn with a shared transform: placed at `at`, turned by `rotate`, scaled by
-    /// `scale` (D-043).
-    Group { at: Option<CExpr>, rotate: Option<CExpr>, scale: Option<CExpr>, members: Vec<CRep> },
+    /// `scale` (D-043); in a view of three dimensions turned about `axis`, `z` by default
+    /// (D-104).
+    Group { at: Option<CExpr>, rotate: Option<CExpr>, axis: Option<CExpr>, scale: Option<CExpr>, members: Vec<CRep> },
 }
 
 /// Where a histogram's values come from (PK-6.3e).
@@ -667,22 +810,58 @@ pub enum HistSource {
 /// histogram recomputes its runs only when the learner changes the run (D-084).
 pub type EnsembleCache = std::rc::Rc<std::cell::RefCell<Option<(prismal_runtime::Config, Vec<f64>)>>>;
 
-/// A group's transform in model coordinates (D-043): `p -> at + k R(angle) p` for points,
-/// `v -> k R(angle) v` for vectors.
+/// A group's transform in model coordinates (D-043): `p -> at + k R p` for points,
+/// `v -> k R v` for vectors, `R` a rotation. In the plane `R` turns about `z`; in a space of
+/// three dimensions about any axis (D-104).
 #[derive(Clone, Copy, Debug)]
 pub struct Tf {
-    at: [f64; 2],
-    angle: f64,
+    at: [f64; 3],
+    /// The rotation, row by row.
+    r: [[f64; 3]; 3],
     k: f64,
 }
 
-impl Tf {
-    pub const ID: Tf = Tf { at: [0.0, 0.0], angle: 0.0, k: 1.0 };
+const I3: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
-    fn turn(&self, a: &[f64]) -> [f64; 2] {
-        let (x, y) = (a.first().copied().unwrap_or(0.0), a.get(1).copied().unwrap_or(0.0));
-        let (s, c) = self.angle.sin_cos();
-        [self.k * (c * x - s * y), self.k * (s * x + c * y)]
+/// The rotation by `angle` about `axis` (Rodrigues' formula); about `z` for an axis of no
+/// length.
+fn rotation(axis: [f64; 3], angle: f64) -> [[f64; 3]; 3] {
+    let n = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+    let [x, y, z] = if n > 0.0 { [axis[0] / n, axis[1] / n, axis[2] / n] } else { [0.0, 0.0, 1.0] };
+    let (s, c) = angle.sin_cos();
+    let t = 1.0 - c;
+    [[t * x * x + c, t * x * y - s * z, t * x * z + s * y], [t * x * y + s * z, t * y * y + c, t * y * z - s * x], [t * x * z - s * y, t * y * z + s * x, t * z * z + c]]
+}
+
+fn mat_mul(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum()))
+}
+
+impl Tf {
+    pub const ID: Tf = Tf { at: [0.0; 3], r: I3, k: 1.0 };
+
+    /// A vector in the group's frame as a vector in the view's space.
+    pub fn turn(&self, a: &[f64]) -> [f64; 3] {
+        let v = pad3(a);
+        std::array::from_fn(|i| self.k * (0..3).map(|j| self.r[i][j] * v[j]).sum::<f64>())
+    }
+
+    /// The angle a transform of the plane turns by.
+    pub fn angle(&self) -> f64 {
+        self.r[1][0].atan2(self.r[0][0])
+    }
+
+    /// The factor lengths are scaled by.
+    pub fn k(&self) -> f64 {
+        self.k
+    }
+
+    /// The transform of a group inside this one: placed at `at` (in the view's space), turned
+    /// by `angle` about `axis` (a direction in the view's space; `z` when absent) and scaled
+    /// by `k` (D-043, D-104).
+    pub fn inner(&self, at: &[f64], axis: Option<[f64; 3]>, angle: f64, k: f64) -> Tf {
+        let r = if angle == 0.0 { self.r } else { mat_mul(&rotation(axis.unwrap_or([0.0, 0.0, 1.0]), angle), &self.r) };
+        Tf { at: pad3(at), r, k: self.k * k }
     }
 
     /// The transform of the groups enclosing a member, outermost first, at a state: as
@@ -690,7 +869,7 @@ impl Tf {
     pub fn of_groups(chain: &[CRep], run: &Run, vals: &[Value], t: f64) -> Option<Tf> {
         let mut tf = Tf::ID;
         for g in chain {
-            let CKind::Group { at, rotate, scale, .. } = &g.kind else { return None };
+            let CKind::Group { at, rotate, axis, scale, .. } = &g.kind else { return None };
             let at = match at {
                 Some(c) => coords(&tf.apply(run.eval_state(c, vals, t).ok()?)),
                 None => tf.at.to_vec(),
@@ -700,36 +879,43 @@ impl Tf {
                 Some(Ok(_)) | None => Some(d),
                 Some(Err(_)) => None,
             };
-            tf = Tf { at: [at[0], at[1]], angle: tf.angle + num(rotate, 0.0)?, k: tf.k * num(scale, 1.0)? };
+            let axis = match axis {
+                Some(c) => Some(pad3(&coords(&tf.apply(run.eval_state(c, vals, t).ok()?)))),
+                None => None,
+            };
+            tf = tf.inner(&at, axis, num(rotate, 0.0)?, num(scale, 1.0)?);
         }
         Some(tf)
     }
 
     /// Model coordinates in the view's space as coordinates in the group's frame: the
-    /// inverse of `apply` on points.
-    pub fn unapply(&self, m: [f64; 2]) -> [f64; 2] {
-        let (x, y) = ((m[0] - self.at[0]) / self.k, (m[1] - self.at[1]) / self.k);
-        let (s, c) = self.angle.sin_cos();
-        [c * x + s * y, -s * x + c * y]
+    /// inverse of `apply` on points, with as many components as `m`.
+    pub fn unapply(&self, m: &[f64]) -> Vec<f64> {
+        let p = pad3(m);
+        let d = [(p[0] - self.at[0]) / self.k, (p[1] - self.at[1]) / self.k, (p[2] - self.at[2]) / self.k];
+        (0..m.len()).map(|i| (0..3).map(|j| self.r[j][i] * d[j]).sum()).collect()
     }
 
     /// A point in the group's frame as model coordinates in the view's space.
-    pub fn point(&self, a: [f64; 2]) -> [f64; 2] {
-        let r = self.turn(&a);
-        [self.at[0] + r[0], self.at[1] + r[1]]
+    pub fn point(&self, a: &[f64]) -> [f64; 3] {
+        let r = self.turn(a);
+        [self.at[0] + r[0], self.at[1] + r[1], self.at[2] + r[2]]
     }
 
-    /// A value in the group's frame as a value in the view's space.
+    /// A value in the group's frame as a value in the view's space, with as many components.
     pub fn apply(&self, v: Value) -> Value {
-        if self.at == [0.0, 0.0] && self.angle == 0.0 && self.k == 1.0 {
+        if self.at == [0.0; 3] && self.r == I3 && self.k == 1.0 {
             return v;
         }
         match v {
             Value::Point(a) => {
-                let r = self.turn(a.as_slice());
-                Value::Point(prismal_kernel::Arr::from_slice(&[self.at[0] + r[0], self.at[1] + r[1]]))
+                let n = a.as_slice().len();
+                Value::Point(prismal_kernel::Arr::from_slice(&self.point(a.as_slice())[..n]))
             }
-            Value::Vec(a) => Value::Vec(prismal_kernel::Arr::from_slice(&self.turn(a.as_slice()))),
+            Value::Vec(a) => {
+                let n = a.as_slice().len();
+                Value::Vec(prismal_kernel::Arr::from_slice(&self.turn(a.as_slice())[..n]))
+            }
             other => other,
         }
     }
@@ -795,6 +981,25 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             return Err(needs(&format!("{what}: points of the view's space, or pairs of plot coordinates in the units of the plot's axes")));
         }
         Ok(c)
+    };
+    // A direction in the view's space (D-104): a vector of any dimension; a tuple of numbers
+    // is read as a vector of the space.
+    let direction = |e: &Expr, what: &str| -> Result<CExpr, Vec<PDiag>> {
+        let ViewCtx::Spatial { space, .. } = ctx else { return Err(needs(what)) };
+        let (c, t) = match ce(e, None)? {
+            (_, Type::Tuple { items }) => {
+                let dim = items.iter().find_map(|i| match i {
+                    Type::Quantity { dim } if !dim.is_none() => Some(*dim),
+                    _ => None,
+                });
+                ce(e, Some(&Type::Vector { space: space.clone(), dim: dim.unwrap_or(Dim::NONE) }))?
+            }
+            other => other,
+        };
+        match t {
+            Type::Vector { space: vs, .. } if &vs == space => Ok(c),
+            _ => Err(needs(what)),
+        }
     };
     let kind = match rep.kind.as_str() {
         "marker" => {
@@ -1128,10 +1333,11 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
         }
         "circle" | "ellipse" | "arc" => {
             let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", format!("a {} belongs in a spatial view", rep.kind))) };
-            // D-100: a circle in three dimensions is a sphere's outline; an ellipse or an arc
-            // would need the plane it lies in.
-            if ctx.is_3d() && rep.kind != "circle" {
-                return Err(d("PK-E05", format!("an {} lies in a plane; a view of three dimensions draws circles (as spheres), markers, arrows, segments, polylines, polygons and traces (PK-7.2a)", rep.kind)));
+            // D-100, D-104: in three dimensions a circle is a sphere's outline unless it is
+            // given the normal of the plane it lies in; an ellipse or an arc lies in the plane
+            // of its `normal`, the floor (`z` up) by default.
+            if !ctx.is_3d() && rep.prop("normal").is_some() {
+                return Err(d("PK-E05", format!("`normal` sets the plane a {} lies in, in a view of three dimensions (D-104)", rep.kind)));
             }
             let what = match rep.kind.as_str() {
                 "circle" => "a centre and a radius: `circle(P, 1 m)`",
@@ -1157,9 +1363,9 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
                 }
             };
             let allowed: &[&str] = match rep.kind.as_str() {
-                "circle" => &[],
-                "ellipse" => &["rotate"],
-                _ => &["from", "to"],
+                "circle" => &["normal"],
+                "ellipse" => &["rotate", "normal"],
+                _ => &["from", "to", "normal"],
             };
             if let Some(p) = rep.props.iter().find(|p| !allowed.contains(&p.name.as_str())) {
                 return Err(d("PK-E05", format!("a {} takes no `{}` (PK-6.3c)", rep.kind, p.name)));
@@ -1170,7 +1376,11 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             if rep.kind == "arc" && (from.is_none() || to.is_none()) {
                 return Err(needs(what));
             }
-            CKind::Round { center, rx, ry, rotate: angle("rotate")?, from, to }
+            let normal = match prop_expr(rep, "normal") {
+                Some(e) => Some(direction(e, "a normal: a vector at right angles to the plane it lies in, `normal: (0, 0, 1)`")?),
+                None => None,
+            };
+            CKind::Round { center, rx, ry, rotate: angle("rotate")?, from, to, normal }
         }
         "equation" => {
             let Some(Arg::Element { element }) = rep.sources.first() else { return Err(needs("the name of a model equation")) };
@@ -1246,12 +1456,15 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
         }
         "group" => {
             let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", "a group belongs in a spatial view (PK-6.3b)".into())) };
-            if ctx.is_3d() {
-                return Err(d("PK-E05", "a group turns its members in a plane; a view of three dimensions does not take groups yet (PK-7.2a)".into()));
+            if !rep.sources.is_empty() || rep.props.iter().any(|p| !["at", "rotate", "scale", "axis"].contains(&p.name.as_str())) {
+                return Err(d("PK-E05", "a group takes `at`, `rotate`, `axis` and `scale`; its members are written in its block (PK-6.3b)".into()));
             }
-            if !rep.sources.is_empty() || rep.props.iter().any(|p| !["at", "rotate", "scale"].contains(&p.name.as_str())) {
-                return Err(d("PK-E05", "a group takes `at`, `rotate` and `scale`; its members are written in its block (PK-6.3b)".into()));
-            }
+            // D-104: in three dimensions a group turns about an axis, `z` by default.
+            let axis = match prop_expr(rep, "axis") {
+                Some(_) if !ctx.is_3d() => return Err(d("PK-E05", "a group in the plane turns about `z`; `axis` belongs in a view of three dimensions (D-104)".into())),
+                Some(e) => Some(direction(e, "an axis: a vector, `axis: (0, 0, 1)`")?),
+                None => None,
+            };
             let at = match prop_expr(rep, "at") {
                 Some(e) => Some(ce(e, Some(&Type::Point { space: space.clone() }))?.0),
                 None => None,
@@ -1289,7 +1502,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             if !diags.is_empty() {
                 return Err(diags);
             }
-            CKind::Group { at, rotate, scale, members }
+            CKind::Group { at, rotate, axis, scale, members }
         }
         "axes" => CKind::Axes,
         "grid" => CKind::Grid,
@@ -1297,7 +1510,15 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
     };
     // The declared inverse (PK-5.6): targets must be intervenable, proposals must check with
     // the gesture's value in place.
+    let mut across = None;
     if let Some(inv) = &rep.inverse {
+        // D-104: a drag in a view of three dimensions moves in a plane.
+        if let Some(n) = &inv.across {
+            if !ctx.is_3d() {
+                return Err(d("PK-E05", "`across` names the plane a drag moves in, in a view of three dimensions (D-104)".into()));
+            }
+            across = Some(direction(n, "the normal of the plane it is dragged in: `on drag across (0, 0, 1) as p`")?);
+        }
         let parts: &[&str] = match rep.kind.as_str() {
             "arrow" => &["head"],
             _ => &[],
@@ -1335,7 +1556,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
         Some(w) => Some(compile_expr(cm, w, Some(&Type::Boolean)).map_err(|ds| d("PK-E02", ds.iter().map(|x| format!("{}: {}", x.code, x.message)).collect::<Vec<_>>().join("; ")))?.0),
         None => None,
     };
-    Ok(CRep { rep: full.clone(), kind, when })
+    Ok(CRep { rep: full.clone(), kind, when, across })
 }
 
 fn coords(v: &Value) -> Vec<f64> {
@@ -1353,10 +1574,17 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
     let status = |s: prismal_kernel::Status| (Shape::Status { status: s.cause.clone() }, format!("{}: not available ({})", r.rep.name.clone().unwrap_or(r.rep.kind.clone()), s.cause));
     // Breaks of a sampled path (trace, series): where the value jumped between two samples.
     let mut breaks = vec![];
+    // In a view of three dimensions, the representation in model coordinates (D-104).
+    let three = ctx.is_3d();
+    let mut geo: Option<Geo> = None;
+    let path = |pts: &[Vec<f64>], closed: bool| Some(Geo::Path { points: pts.iter().map(|p| pad3(p)).collect(), closed });
     let (shape, text) = match &r.kind {
         CKind::Marker { pos, label } => match eval(pos) {
             Ok(v) => {
                 let c = coords(&v);
+                if three {
+                    geo = Some(Geo::Point(pad3(&c)));
+                }
                 (Shape::Point { at: ctx.to_view(&c) }, format!("{label} at {}", ctx.at_text(&c)))
             }
             Err(s) => status(s),
@@ -1366,7 +1594,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 Some(Ok(v)) => coords(&v),
                 Some(Err(s)) => {
                     let (sh, tx) = status(s);
-                    return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, width: None, breaks: vec![] };
+                    return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, width: None, breaks: vec![], opaque: false, geo: None };
                 }
                 None => vec![0.0, 0.0],
             };
@@ -1374,8 +1602,20 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 Ok(v) => {
                     let c = coords(&v);
                     let from_v = ctx.to_view(&base);
-                    let d = ctx.vec_px(&c, *px_per_unit);
-                    let to = [from_v[0] + d[0], from_v[1] + d[1]];
+                    let to = match ctx {
+                        // D-104: the tip is a point of the space, so perspective draws it where
+                        // it lies; a vector of another dimension is drawn at its scale.
+                        ViewCtx::Spatial { px_per_m, .. } if three => {
+                            let k = px_per_unit / px_per_m;
+                            let tip: Vec<f64> = (0..3).map(|i| base.get(i).copied().unwrap_or(0.0) + c.get(i).copied().unwrap_or(0.0) * k).collect();
+                            geo = path(&[base.clone(), tip.clone()], false);
+                            ctx.to_view(&tip)
+                        }
+                        _ => {
+                            let d = ctx.vec_px(&c, *px_per_unit);
+                            [from_v[0] + d[0], from_v[1] + d[1]]
+                        }
+                    };
                     let from_text = fmt_value(&Value::Point(prismal_kernel::Arr::from_slice(&base)), &Type::point(""));
                     (Shape::Arrow { from: from_v, to }, format!("arrow {label} = {} from {from_text}", fmt_value(&v, ty)))
                 }
@@ -1383,7 +1623,12 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             }
         }
         CKind::Segment { a, b } => match (eval(a), eval(b)) {
-            (Ok(x), Ok(y)) => (Shape::Segment { from: ctx.to_view(&coords(&x)), to: ctx.to_view(&coords(&y)) }, "segment".into()),
+            (Ok(x), Ok(y)) => {
+                if three {
+                    geo = path(&[coords(&x), coords(&y)], false);
+                }
+                (Shape::Segment { from: ctx.to_view(&coords(&x)), to: ctx.to_view(&coords(&y)) }, "segment".into())
+            }
             (Err(s), _) | (_, Err(s)) => status(s),
         },
         CKind::Graph { f, lo, hi, label } => match eval(f) {
@@ -1456,6 +1701,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             // A member's trace starts when it is made and ends when it is destroyed (D-057).
             let mut prev: Option<f64> = None;
             let mut pts: Vec<[f64; 2]> = vec![];
+            let mut world: Vec<Vec<f64>> = vec![];
             for s in samples(run, t, *every) {
                 let st = run.state_at(s);
                 if !r.shown(run, &st, s) {
@@ -1468,6 +1714,12 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 }
                 prev = Some(s);
                 pts.push(ctx.to_view(&coords(&v)));
+                if three {
+                    world.push(coords(&v));
+                }
+            }
+            if three {
+                geo = path(&world, false);
             }
             let text = match (pts.first(), pts.last()) {
                 (Some(_), Some(_)) => format!("trace of {label}: {} samples every {} s up to t = {} s", pts.len(), fmt_num(*every), fmt_num(t - run.config.t0)),
@@ -1625,7 +1877,12 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             }
             match at.as_ref().map(eval) {
                 None => (Shape::Text { value: s.clone() }, s),
-                Some(Ok(p)) => (Shape::Note { at: ctx.to_view(&coords(&p)), value: s.clone(), align: align.clone() }, s),
+                Some(Ok(p)) => {
+                    if three {
+                        geo = Some(Geo::Point(pad3(&coords(&p))));
+                    }
+                    (Shape::Note { at: ctx.to_view(&coords(&p)), value: s.clone(), align: align.clone() }, s)
+                }
                 Some(Err(st)) => status(st),
             }
         }
@@ -1682,19 +1939,26 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
         }
         CKind::Poly { points, closed } => {
             let mut pts = vec![];
+            let mut world = vec![];
             for p in points {
                 match eval(p) {
-                    Ok(v) => pts.push(ctx.to_view(&coords(&v))),
+                    Ok(v) => {
+                        pts.push(ctx.to_view(&coords(&v)));
+                        world.push(coords(&v));
+                    }
                     Err(s) => {
                         let (sh, tx) = status(s);
-                        return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, width: None, breaks: vec![] };
+                        return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, width: None, breaks: vec![], opaque: false, geo: None };
                     }
                 }
+            }
+            if three {
+                geo = path(&world, *closed);
             }
             let text = format!("{} through {} points", r.rep.kind, pts.len());
             (if *closed { Shape::Polygon { points: pts } } else { Shape::Polyline { points: pts } }, text)
         }
-        CKind::Round { center, rx, ry, rotate, from, to } => {
+        CKind::Round { center, rx, ry, rotate, from, to, normal } => {
             let num = |c: &CExpr| match run.eval_state(c, vals, t) {
                 Ok(Value::Num(x)) => Ok(x),
                 Ok(_) => Err(None),
@@ -1708,15 +1972,61 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     // In the model's space: centre c, radii scaled by the group, axes turned
                     // by the ellipse's rotation and the group's.
                     let c = coords(&c);
-                    // D-100: in three dimensions a circle is a disc facing the viewer, a
-                    // sphere's outline.
-                    if let ViewCtx::Spatial { px_per_m, look: Some(_), .. } = ctx {
-                        let shape = Shape::Ellipse { center: ctx.to_view(&c), radii: [a * px_per_m, a * px_per_m], rotation: 0.0, start: 0.0, sweep: std::f64::consts::TAU, closed: true };
-                        let name = r.rep.name.as_deref().map(|n| format!(" {n}")).unwrap_or_default();
-                        let text = format!("circle{name} around {}, radius {} m", ctx.at_text(&c), fmt_num(a));
-                        break 'round (shape, text);
+                    let name = r.rep.name.as_deref().map(|n| format!(" {n}")).unwrap_or_default();
+                    if let ViewCtx::Spatial { px_per_m, look: Some(l), .. } = ctx {
+                        let normal = match normal.as_ref().map(eval) {
+                            Some(Ok(v)) => Some(pad3(&coords(&v))),
+                            Some(Err(s)) => break 'round status(s),
+                            None => None,
+                        };
+                        let (a, b) = (a * tf.k(), b * tf.k());
+                        // D-100: in three dimensions a circle is a disc facing the viewer, a
+                        // sphere's outline, enlarged by perspective as its centre is (D-104).
+                        if r.rep.kind == "circle" && normal.is_none() {
+                            let px = a * px_per_m * l.factor(&c);
+                            let shape = Shape::Ellipse { center: ctx.to_view(&c), radii: [px, px], rotation: 0.0, start: 0.0, sweep: std::f64::consts::TAU, closed: true };
+                            geo = Some(Geo::Sphere { center: pad3(&c), radius: a });
+                            break 'round (shape, format!("circle{name} around {}, radius {} m", ctx.at_text(&c), fmt_num(a)));
+                        }
+                        // D-104: a round shape in the plane of its normal, the floor of the
+                        // group by default: its axes are the group's `x` laid into that plane,
+                        // turned by `rotate`, and the normal crossed with it.
+                        let n = unit(normal.unwrap_or_else(|| tf.turn(&[0.0, 0.0, 1.0])));
+                        let in_plane = |x: [f64; 3]| {
+                            let d = x[0] * n[0] + x[1] * n[1] + x[2] * n[2];
+                            [x[0] - d * n[0], x[1] - d * n[1], x[2] - d * n[2]]
+                        };
+                        let x = in_plane(tf.turn(&[1.0, 0.0, 0.0]));
+                        let u0 = if norm3(&x) > 1e-9 * tf.k().max(1e-300) { unit(x) } else { unit(in_plane(tf.turn(&[0.0, 1.0, 0.0]))) };
+                        let v0 = cross3(&n, &u0);
+                        let (s, co) = rot.sin_cos();
+                        let u: [f64; 3] = std::array::from_fn(|i| co * u0[i] + s * v0[i]);
+                        let v: [f64; 3] = std::array::from_fn(|i| -s * u0[i] + co * v0[i]);
+                        let closed = r.rep.kind != "arc";
+                        let sweep = t2 - t1;
+                        let steps = ((sweep.abs() / std::f64::consts::TAU) * 96.0).ceil().max(8.0) as usize;
+                        let mut world: Vec<Vec<f64>> = (0..=steps)
+                            .map(|k| {
+                                let th = t1 + sweep * k as f64 / steps as f64;
+                                (0..3).map(|i| c.get(i).copied().unwrap_or(0.0) + a * th.cos() * u[i] + b * th.sin() * v[i]).collect()
+                            })
+                            .collect();
+                        if closed {
+                            world.pop();
+                        }
+                        let pts: Vec<[f64; 2]> = world.iter().map(|p| ctx.to_view(p)).collect();
+                        geo = path(&world, closed);
+                        let at = ctx.at_text(&c);
+                        let plane = format!("in the plane of normal ({}, {}, {})", fmt_num(n[0]), fmt_num(n[1]), fmt_num(n[2]));
+                        let deg = |x: f64| fmt_num(x.to_degrees());
+                        let text = match r.rep.kind.as_str() {
+                            "circle" => format!("circle{name} around {at}, radius {} m, {plane}", fmt_num(a)),
+                            "ellipse" => format!("ellipse{name} around {at}, radii {} m and {} m, turned {} deg, {plane}", fmt_num(a), fmt_num(b), deg(rot)),
+                            _ => format!("arc{name} around {at}, radius {} m, from {} deg to {} deg, {plane}", fmt_num(a), deg(t1), deg(t2)),
+                        };
+                        break 'round (if closed { Shape::Polygon { points: pts } } else { Shape::Polyline { points: pts } }, text);
                     }
-                    let (a, b, rot) = (a * tf.k, b * tf.k, rot + tf.angle);
+                    let (a, b, rot) = (a * tf.k(), b * tf.k(), rot + tf.angle());
                     let (s, co) = rot.sin_cos();
                     let cv = ctx.to_view(&c);
                     let ue = ctx.to_view(&[c[0] + a * co, c[1] + a * s]);
@@ -1727,14 +2037,13 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     let rotation = u[1].atan2(u[0]);
                     let closed = r.rep.kind != "arc";
                     let shape = Shape::Ellipse { center: cv, radii: [u[0].hypot(u[1]), v[0].hypot(v[1])], rotation, start: sense * t1, sweep: sense * (t2 - t1), closed };
-                    let name = r.rep.name.as_deref().map(|n| format!(" {n}")).unwrap_or_default();
                     let s = ctx.shown(&c);
                     let at = format!("x = {} m, y = {} m", fmt_num(s[0]), fmt_num(s[1]));
                     let deg = |x: f64| fmt_num(x.to_degrees());
                     let text = match r.rep.kind.as_str() {
                         "circle" => format!("circle{name} around {at}, radius {} m", fmt_num(a)),
                         "ellipse" => format!("ellipse{name} around {at}, radii {} m and {} m, turned {} deg", fmt_num(a), fmt_num(b), deg(rot)),
-                        _ => format!("arc{name} around {at}, radius {} m, from {} deg to {} deg", fmt_num(a), deg(t1 + tf.angle), deg(t2 + tf.angle)),
+                        _ => format!("arc{name} around {at}, radius {} m, from {} deg to {} deg", fmt_num(a), deg(t1 + tf.angle()), deg(t2 + tf.angle())),
                     };
                     (shape, text)
                 }
@@ -1783,7 +2092,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             let text = format!("table of {} with {} rows, every {} s", columns.join(", "), rows.len(), fmt_num(*every));
             (Shape::Table { columns: cols, rows }, measured(text, meter))
         }
-        CKind::Group { at, rotate, scale, members } => {
+        CKind::Group { at, rotate, axis, scale, members } => {
             let num = |c: &Option<CExpr>, default: f64| match c.as_ref().map(eval) {
                 Some(Ok(Value::Num(x))) => Ok(x),
                 Some(Ok(_)) | None => Ok(default),
@@ -1795,19 +2104,27 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 Some(Err(s)) => Err(s),
                 None => Ok(tf.at.to_vec()),
             };
-            match (at, num(rotate, 0.0), num(scale, 1.0)) {
-                (Ok(a), Ok(angle), Ok(k)) => {
-                    let inner = Tf { at: [a[0], a[1]], angle: tf.angle + angle, k: tf.k * k };
+            let axis = match axis.as_ref().map(eval) {
+                Some(Ok(v)) => Ok(Some(pad3(&coords(&v)))),
+                Some(Err(s)) => Err(s),
+                None => Ok(None),
+            };
+            match (at, num(rotate, 0.0), num(scale, 1.0), axis) {
+                (Ok(a), Ok(angle), Ok(k), Ok(axis)) => {
+                    let inner = tf.inner(&a, axis, angle, k);
                     let ms: Vec<RepFrame> = members.iter().filter(|m| m.shown(run, vals, t)).map(|m| project_in(cm, ctx, m, run, vals, t, inner)).collect();
                     let name = r.rep.name.clone().unwrap_or("group".into());
                     let text = format!("{name}: {}", ms.iter().map(|m| m.text.as_str()).collect::<Vec<_>>().join("; "));
                     (Shape::Group { members: ms }, text)
                 }
-                (Err(s), _, _) | (_, Err(s), _) | (_, _, Err(s)) => status(s),
+                (Err(s), ..) | (_, Err(s), ..) | (_, _, Err(s), _) | (.., Err(s)) => status(s),
             }
         }
-        CKind::Axes if ctx.is_3d() => axes_3d(ctx),
-        CKind::Grid if ctx.is_3d() => grid_3d(ctx),
+        CKind::Axes | CKind::Grid if three => {
+            let (shape, text, g) = if matches!(r.kind, CKind::Axes) { axes_3d(ctx) } else { grid_3d(ctx) };
+            geo = Some(g);
+            (shape, text)
+        }
         CKind::Axes => (Shape::Axes, "axes".into()),
         CKind::Grid => (Shape::Grid, "grid".into()),
     };
@@ -1829,7 +2146,26 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
     };
     let (color, line) = (style_word(&r.rep, "color"), style_word(&r.rep, "line"));
     let width = style_width(&r.rep);
-    RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape, text, highlighted: false, valid: None, opacity: None, drawn: None, label, drag, click, color, line, color_to: None, color_mix: None, scale: None, width, breaks }
+    let opaque = style_opaque(&r.rep);
+    RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape, text, highlighted: false, valid: None, opacity: None, drawn: None, label, drag, click, color, line, color_to: None, color_mix: None, scale: None, width, breaks, opaque, geo }
+}
+
+fn norm3(a: &[f64; 3]) -> f64 {
+    (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt()
+}
+
+/// A vector of length 1 along `a`; `z` for a vector of no length.
+fn unit(a: [f64; 3]) -> [f64; 3] {
+    let n = norm3(&a);
+    if n > 0.0 {
+        [a[0] / n, a[1] / n, a[2] / n]
+    } else {
+        [0.0, 0.0, 1.0]
+    }
+}
+
+fn cross3(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
 /// The grid the finite values lie on, `start + k d`, when there are at least two distinct
@@ -1963,6 +2299,8 @@ fn dot(id: Id, at: [f64; 2], color: Option<String>) -> RepFrame {
         scale: None,
         width: None,
         breaks: vec![],
+        opaque: false,
+        geo: None,
     }
 }
 
@@ -1991,12 +2329,59 @@ fn samples(run: &Run, t: f64, dt: f64) -> impl Iterator<Item = f64> {
     (0..=n).map(move |k| t0 + k as f64 * dt).filter(move |s| *s < end).chain(std::iter::once(end))
 }
 
+/// Where a view of three dimensions looks from (D-104): its azimuth and elevation, which may
+/// read the model's values and time, and the viewer's distance for a view in perspective.
+#[derive(Clone, Debug)]
+pub struct Aim {
+    pub azimuth: CExpr,
+    pub elevation: CExpr,
+    pub distance: Option<CExpr>,
+}
+
+/// A view turned to an azimuth and an elevation, in radians, by a timeline's camera or by the
+/// learner (D-104).
+pub type Turn = (Id, [f64; 2]);
+
 /// The compiled views of a presentation.
 #[derive(Clone, Debug)]
 pub struct Projector {
     pub views: Vec<(Id, ViewCtx, Vec<CRep>)>,
     /// Clicks on a point of a view, by view (D-060), with the event's name.
     pub clicks: Vec<(Id, prismal_ir::present::Click, String)>,
+    /// The aim of each view of three dimensions (D-104).
+    pub aims: Vec<(Id, Aim)>,
+    /// The views the learner has turned (D-104).
+    pub turns: Vec<Turn>,
+}
+
+/// Compiles where a view of three dimensions looks from (D-104).
+fn compile_aim(cm: &CModel, v: &View) -> Result<Option<Aim>, PDiag> {
+    let ViewKind::Spatial { space, look, distance, .. } = &v.kind else { return Ok(None) };
+    let err = |code, message: String| PDiag { code, message, element: v.id.clone() };
+    if !cm.spaces.iter().any(|s| &s.id == space && s.dimension == 3) {
+        return Ok(None);
+    }
+    let deg = |d: f64| Expr::Num { num: d, unit: prismal_ir::Unit::parse("deg").ok() };
+    let [a, e] = look.clone().unwrap_or([deg(30.0), deg(20.0)]);
+    let angle = |e: &Expr, what: &str| match compile_expr(cm, e, None) {
+        Ok((c, Type::Quantity { dim })) if dim.is_none() => Ok(c),
+        Ok(_) => Err(err("PK-E04", format!("a view's {what} is an angle: `{what}: 30 deg` (PK-7.2a)"))),
+        Err(ds) => Err(err("PK-E02", ds.iter().map(|x| format!("{}: {}", x.code, x.message)).collect::<Vec<_>>().join("; "))),
+    };
+    let distance = match distance {
+        None => None,
+        Some(d) => match compile_expr(cm, d, None) {
+            Ok((c, Type::Quantity { dim })) if dim == Dim::length() => {
+                if number(cm, d).is_ok_and(|x| x <= 0.0) {
+                    return Err(err("PK-E05", "a viewer's distance is positive (D-104)".into()));
+                }
+                Some(c)
+            }
+            Ok(_) => return Err(err("PK-E04", "a view's distance is a length, how far the viewer stands from the origin: `distance: 8 m` (D-104)".into())),
+            Err(ds) => return Err(err("PK-E02", ds.iter().map(|x| format!("{}: {}", x.code, x.message)).collect::<Vec<_>>().join("; "))),
+        },
+    };
+    Ok(Some(Aim { azimuth: angle(&a, "azimuth")?, elevation: angle(&e, "elevation")?, distance }))
 }
 
 impl Projector {
@@ -2039,8 +2424,14 @@ impl Projector {
     pub fn new(cm: &CModel, p: &Presentation) -> Result<Projector, Vec<PDiag>> {
         let mut views = vec![];
         let mut clicks = vec![];
+        let mut aims = vec![];
         let mut diags = vec![];
         for v in &p.views {
+            match compile_aim(cm, v) {
+                Ok(Some(a)) => aims.push((v.id.clone(), a)),
+                Ok(None) => {}
+                Err(d) => diags.push(d),
+            }
             match ViewCtx::of(cm, v) {
                 Ok(ctx) => {
                     if let Some(c) = &v.click {
@@ -2062,7 +2453,7 @@ impl Projector {
             }
         }
         if diags.is_empty() {
-            Ok(Projector { views, clicks })
+            Ok(Projector { views, clicks, aims, turns: vec![] })
         } else {
             Err(diags)
         }
@@ -2072,18 +2463,69 @@ impl Projector {
         view.and_then(|v| self.views.iter().find(|x| x.0 == v)).map(|x| x.1.clone()).unwrap_or(ViewCtx::Panel)
     }
 
+    /// The look of a view of three dimensions on a state (D-104): turned by the learner, else
+    /// by a timeline's camera (`turns`), else from its author's azimuth and elevation, which
+    /// may read the state. A value that is not available leaves the view's last constant look.
+    pub fn look(&self, view: &str, run: &Run, vals: &[Value], t: f64, turns: &[Turn]) -> Option<Look> {
+        let base = self.views.iter().find(|x| x.0 == view)?.1.look()?;
+        let Some((_, aim)) = self.aims.iter().find(|a| a.0 == view) else { return Some(base) };
+        let num = |c: &CExpr| match run.eval_state(c, vals, t) {
+            Ok(Value::Num(x)) if x.is_finite() => Some(x),
+            _ => None,
+        };
+        let distance = aim.distance.as_ref().and_then(num).filter(|d| *d > 0.0);
+        let [a, e] = match self.turns.iter().chain(turns).find(|x| x.0 == view) {
+            Some((_, ae)) => *ae,
+            None => [num(&aim.azimuth).unwrap_or(base.azimuth), num(&aim.elevation).unwrap_or(base.elevation)],
+        };
+        Some(Look::new(a, e).at(distance))
+    }
+
+    /// A view's coordinate context on a state, looking as it was drawn there (D-104).
+    pub fn ctx_at(&self, view: Option<&str>, run: &Run, vals: &[Value], t: f64) -> ViewCtx {
+        let ctx = self.ctx(view);
+        match view.and_then(|v| self.look(v, run, vals, t, &[])) {
+            Some(l) => ctx.looking(l),
+            None => ctx,
+        }
+    }
+
+    /// Turns a view of three dimensions to an azimuth and an elevation in radians, the
+    /// learner's own (D-104), or back to its author's with `None`.
+    pub fn set_turn(&mut self, view: &str, turn: Option<[f64; 2]>) {
+        self.turns.retain(|x| x.0 != view);
+        if let Some(ae) = turn {
+            self.turns.push((view.to_string(), ae));
+        }
+    }
+
     /// Projects every view, plus extra representations shown by a timeline (by view, or
     /// over the presentation when the view is `None`), on one state: every view shows the
     /// same instant (PK-7.5).
     pub fn frame(&self, cm: &CModel, run: &Run, vals: &[Value], t: f64, extra: &[(Option<Id>, CRep)]) -> (Vec<ViewFrame>, Vec<RepFrame>) {
+        self.frame_turned(cm, run, vals, t, extra, &[])
+    }
+
+    /// [`Projector::frame`], with views of three dimensions turned by a timeline (D-104).
+    pub fn frame_turned(&self, cm: &CModel, run: &Run, vals: &[Value], t: f64, extra: &[(Option<Id>, CRep)], turns: &[Turn]) -> (Vec<ViewFrame>, Vec<RepFrame>) {
         let mut out = vec![];
         for (id, ctx, reps) in &self.views {
+            let turned;
+            let ctx = match self.look(id, run, vals, t, turns) {
+                Some(l) => {
+                    turned = ctx.looking(l);
+                    &turned
+                }
+                None => ctx,
+            };
             let mut rs: Vec<RepFrame> = reps.iter().filter(|r| r.shown(run, vals, t)).map(|r| project(cm, ctx, r, run, vals, t)).collect();
             for (_, r) in extra.iter().filter(|(v, r)| v.as_deref() == Some(id.as_str()) && r.shown(run, vals, t)) {
                 rs.push(project(cm, ctx, r, run, vals, t));
             }
+            crate::depth::arrange(ctx, &mut rs);
             let click = self.clicks.iter().find(|c| &c.0 == id).map(|c| c.2.clone());
-            out.push(ViewFrame { id: id.clone(), kind: ctx.kind(), reps: rs, click, camera: None });
+            let look = ctx.look().map(|l| [l.azimuth, l.elevation]);
+            out.push(ViewFrame { id: id.clone(), kind: ctx.kind(), reps: rs, click, camera: None, look });
         }
         let overlay = extra.iter().filter(|(v, r)| v.is_none() && r.shown(run, vals, t)).map(|(_, r)| project(cm, &ViewCtx::Panel, r, run, vals, t)).collect();
         (out, overlay)

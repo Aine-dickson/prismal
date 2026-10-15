@@ -201,10 +201,11 @@ fn views_of_three_dimensions_are_checked() {
     assert!(d.iter().any(|m| m.contains("SX-E08") && m.contains("`z` up")), "{d:?}");
     let d = codes(&format!("{room}presentation L for M {{ view v: spatial(Plane, scale: 1 m -> 10 px, azimuth: 10 deg) {{ axes }} }}"));
     assert!(d.iter().any(|m| m.contains("SX-E08") && m.contains("three dimensions")), "{d:?}");
+    // Ellipses lie in a plane and groups turn about an axis in three dimensions (D-104).
     let d = codes(&format!("{room}presentation L for M {{ view v: spatial(Room, scale: 1 m -> 10 px) {{ ellipse(P, 1 m, 2 m) }} }}"));
-    assert!(d.iter().any(|m| m.contains("PK-E05") && m.contains("lies in a plane")), "{d:?}");
+    assert!(d.is_empty(), "{d:?}");
     let d = codes(&format!("{room}presentation L for M {{ view v: spatial(Room, scale: 1 m -> 10 px) {{ group(at: P) {{ marker(P) }} }} }}"));
-    assert!(d.iter().any(|m| m.contains("PK-E05") && m.contains("group")), "{d:?}");
+    assert!(d.is_empty(), "{d:?}");
     // `cross` takes two vectors of a space of three dimensions.
     let d = codes("space Plane = euclidean(2)\nmodel M in Plane { param { a: Vector<Length> = (1 m, 0 m) }\n derived { c: Vector<L^2> = cross(a, a) } }");
     assert!(d.iter().any(|m| m.contains("MK-E01") && m.contains("three dimensions")), "{d:?}");

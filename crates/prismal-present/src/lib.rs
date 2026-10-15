@@ -15,6 +15,7 @@
 
 pub mod check;
 pub mod data;
+pub mod depth;
 pub mod expect;
 pub mod frame;
 pub mod interact;

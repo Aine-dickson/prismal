@@ -1062,7 +1062,10 @@ impl<'a> Printer<'a> {
             let _ = write!(s, " {{ {c} }}");
         }
         if let Some(inv) = &r.inverse {
-            let part = inv.part.as_ref().map(|p| format!(" {p}")).unwrap_or_default() + if inv.live { " live" } else { "" };
+            let mut part = inv.part.as_ref().map(|p| format!(" {p}")).unwrap_or_default() + if inv.live { " live" } else { "" };
+            if let Some(n) = &inv.across {
+                let _ = write!(part, " across {}", self.expr(n));
+            }
             let bind = if inv.part.as_deref() == Some("head") { "h" } else { "p" };
             let props: Vec<String> =
                 inv.proposals.iter().map(|pr| format!("propose {} = {}", self.target(&Target { binding: pr.target.clone(), component: None, member: pr.member.clone() }), self.expr_p(&pr.value, &[bind.to_string()]))).collect();
@@ -1130,8 +1133,11 @@ impl<'a> Printer<'a> {
         for v in &p.views {
             let head = match &v.kind {
                 // A view of a space of three dimensions has `z` up and its look (D-100).
-                ViewKind::Spatial { space, scale, look, .. } if self.doc.spaces.iter().any(|s| &s.id == space && s.dimension == 3) => {
-                    let turn = look.as_ref().map(|[a, e]| format!(", azimuth: {}, elevation: {}", self.expr(a), self.expr(e))).unwrap_or_default();
+                ViewKind::Spatial { space, scale, look, distance, .. } if self.doc.spaces.iter().any(|s| &s.id == space && s.dimension == 3) => {
+                    let mut turn = look.as_ref().map(|[a, e]| format!(", azimuth: {}, elevation: {}", self.expr(a), self.expr(e))).unwrap_or_default();
+                    if let Some(d) = distance {
+                        let _ = write!(turn, ", distance: {}", self.expr(d));
+                    }
                     format!("view {}: spatial({}, scale: {} -> {} px{turn})", v.name, self.space_name(space), self.expr(&scale.quantity), number(scale.px))
                 }
                 ViewKind::Spatial { space, scale, y_up, .. } => format!(
@@ -1375,7 +1381,7 @@ impl<'a> Printer<'a> {
                 let _ = write!(s, " {}", block(reps.iter().map(|r| self.rep(r, depth + 1)).collect()));
                 s
             }
-            Action::Camera { view, center, zoom, duration, ease } => {
+            Action::Camera { view, center, zoom, azimuth, elevation, duration, ease } => {
                 let name = p.views.iter().find(|x| &x.id == view).map(|x| x.name.clone()).unwrap_or_else(|| view.clone());
                 let mut s = format!("camera {name}");
                 if let Some(c) = center {
@@ -1383,6 +1389,12 @@ impl<'a> Printer<'a> {
                 }
                 if let Some(z) = zoom {
                     let _ = write!(s, " zoom {}", self.expr(z));
+                }
+                if let Some(a) = azimuth {
+                    let _ = write!(s, " azimuth {}", self.expr(a));
+                }
+                if let Some(e) = elevation {
+                    let _ = write!(s, " elevation {}", self.expr(e));
                 }
                 if let Some(d) = duration {
                     let _ = write!(s, " for {}", self.expr(d));

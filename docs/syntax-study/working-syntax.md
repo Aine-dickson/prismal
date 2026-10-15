@@ -55,9 +55,9 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 |---|---|
 | `presentation Name for Model { ... }` | presentation |
 | `observe { name = expr schedule ... }` | observations; schedules `live`, `every Δ`, `at τ`, `on E [microstep n]`, `over I` |
-| `view name: spatial(Space, scale: 1 m -> 40 px, y: up) { reps }`, `view name: plot(x: I, y: I) { reps }` | views containing their representations; a view of a space of three dimensions takes `azimuth: a, elevation: e` instead of `y` (PK-7.2a, D-100) |
+| `view name: spatial(Space, scale: 1 m -> 40 px, y: up) { reps }`, `view name: plot(x: I, y: I) { reps }` | views containing their representations; a view of a space of three dimensions takes `azimuth: a, elevation: e` instead of `y` (PK-7.2a, D-100), and `distance: d` for perspective (PK-7.2b, D-104) |
 | `panel name { reps }` | region without a coordinate system (controls, formulas) |
-| `rep(...) [as name] { on drag [part] as p { propose x = e } }` | representation with its declared inverse; in `for b in c { ... }`, `propose b.x = e` moves that member (D-059) |
+| `rep(...) [as name] { on drag [part] [live] [across n] as p { propose x = e } }` | representation with its declared inverse; in `for b in c { ... }`, `propose b.x = e` moves that member (D-059); `across n`: the plane of a drag in three dimensions (D-104) |
 | `rep(...) [as name] { on click request E(v) }` | representation that requests an event when clicked; `on click request E(b)` for its member (D-059) |
 | `segment(P, Q, color: blue, line: dashed)` | author styles: a named color and a line style (D-061) |
 | `view v: ... { on click as q request E(q) ... }` | a view that requests an event with the point clicked, where no representation takes the click (D-060) |
@@ -73,7 +73,7 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 | `layout row(scene, column(plot, controls))` | page layout: views side by side in a row, one below the other in a column, nested (D-063) |
 | `timeline { scene S { beat B { actions } } }` | timeline; run-directing actions apply in written order at the beat's start, then the others start together (D-033); `sequence { }` orders actions that take time |
 | `run rate r until E` | shorthand for `run rate r` and `wait until E` in the same beat |
-| `reveal fade\|draw [for d] [in view] { reps }`, `hide name [for d]`, `camera view [to P] [zoom z] [for d]` | animations of the presentation (D-042) |
+| `reveal fade\|draw [for d] [in view] { reps }`, `hide name [for d]`, `camera view [to P] [zoom z] [azimuth a] [elevation e] [for d]` | animations of the presentation (D-042; turns of a view of three dimensions, D-104) |
 | `animate name opacity\|offset to v [for d]`, `release name`, `bind name [for d]` | animated properties and the handover of a bound representation (D-068) |
 | `wait learner [limit d] [fallback { actions }]` | a continue point (D-067) |
 
@@ -95,7 +95,7 @@ The formatter prints, from the IR: enumerations, then declarations grouped in bl
 - **Statements** end at a newline or `;`. Several statements on one line are separated by `;`. A line ending in an operator (other than a closing `|`), `,`, an open bracket or one of the operator words continues on the next line; so does every line inside `( )` or `[ ]`.
 - **Reserved words** (D-040), never names: `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 - **Representation kinds** are read where a representation is expected; there `equation`, reserved elsewhere, is the representation kind of PK-6.3.
-- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart layout row column instrument grid boundary periodic unknown enforce use algorithm while step restitution`.
+- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart layout row column instrument grid boundary periodic unknown enforce use algorithm while step restitution across azimuth elevation`.
 - **Built-in names** (not reserved, but predefined): `t`, `t0`, `elapsed`, `origin`, `der`, `π` and `pi` (D-039), `inf` (only as an interval bound), the SI units and named dimensions of MK section 3. Named dimensions: `Length`, `Mass`, `Time`, `Current`, `Amount`, `Area`, `Volume`, `Velocity`, `Acceleration`, `Frequency`, `Momentum`, `Force`, `Energy`, `Power`, `Pressure`, `Temperature`, `Charge`, `Voltage`, `Resistance`, `Capacitance`, `Inductance` (D-092), and `Angle` (dimensionless, D-021); base symbols `L M T I Θ N J` inside `Quantity<...>`.
 
 
@@ -589,3 +589,4 @@ run A_keep of Projectile with ProjectileLesson {
 - 2026-10-14 `ease e` after `reveal`, `hide ... for`, `camera` and `bind` (D-095), as after `animate`; additions under section 1.7.
 - 2026-10-14 `width: k` on drawn kinds that take a line style, and `animate R width to k` (D-095); additions under section 1.7.
 - 2026-10-14 `align: left|center|right` for a text put `at` a point (D-095); an addition under section 1.7.
+- 2026-10-15 views of three dimensions (D-104): the view option `distance`, the `camera` clauses `azimuth` and `elevation`, `on drag across n`, the options `normal` (circle, ellipse, arc), `opaque` (circle, ellipse, polygon) and `axis` (group); `across`, `azimuth` and `elevation` added to the contextual keywords. Additions under section 1.7.

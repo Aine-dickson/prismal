@@ -87,24 +87,25 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km μm 
 | Form | Meaning | Chapter |
 |---|---|---|
 | `view n: spatial(Space, scale: 1 m -> 40 px, y: up) { reps }` | spatial view | 3 |
-| `view n: spatial(Room, scale: 1 m -> 40 px, azimuth: 30 deg, elevation: 20 deg) { reps }` | a view of a space of three dimensions, `z` up | 20 |
+| `view n: spatial(Room, scale: 1 m -> 40 px, azimuth: 30 deg, elevation: 20 deg) { reps }` | a view of a space of three dimensions, `z` up; the angles may read parameters and time | 20 |
+| `spatial(Room, ..., distance: 14 m)` | the viewer stands 14 m from the origin: a view in perspective | 20 |
 | `view n: plot(x: [a, b], y: [c, d]) { reps }` | plot view; ranges give the axes their dimensions | 1, 4 |
 | `plot(..., follow: y)`, `follow: (x, y)` | those axes grow to keep the data in view | 7 |
 | `plot(..., x_unit: ms, y_unit: cm)` | display units for the axes | 7 |
 | `plot(..., window: 10 s)` | the `x` axis shows the latest 10 s once the data passes its range | 7 |
 | `panel n { reps }` | region for controls and text | 1 |
-| `permit learner { zoom; pan; timeline_controls }` | what the learner may do with views and time | 7, 8 |
+| `permit learner { zoom; pan; orbit; timeline_controls }` | what the learner may do with views and time; `orbit` turns a view of three dimensions by dragging | 7, 8, 20 |
 | `observe { n = e schedule }` | observations | 1, 6 |
 | `timeline { scene s { beat b { actions } } }` | a lesson | 8 |
 | `layout row(a, column(b, c))` | where views go on the page | 7 |
 | `title "..."` | the presentation's title, above its views | 7 |
 | `instrument n(resolution: r, range: [a, b], noise: s)` | an instrument; `n(e) every Δ` reads `e` through it in observations, series plots, traces, tables and histograms | 15 |
 
-**Representations:** `text("... {e} ... {e:.N} ..." [, at: P] [, align: left|center|right])` (an author's text with values in braces, `:.N` for N decimals; `at` places it in a spatial or plot view, starting at `P`, centred on it or ending at it), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `histogram(e at τ over n runs, bins: k)` (how many of `n` runs give each value), `histogram(e on E)`, `histogram(e every Δ)` (the values of one run up to the instant shown, chapter 15), `heatmap(T)` (a field in the plane, coloured cells, chapter 16), `function_graph(T)` (also a field on a line), `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider` (with `ends: ("low", "high")`, words at its ends), `number_input`, `toggle`, `select(p)` (one case of an enumeration parameter), `button(E)`, `button(E(v))`, `button(reset|undo|redo|restart|reseed)` (in a lesson, only `restart` and `reseed`, in an explore beat), `group(at: P, rotate: θ, scale: k) { members }` (chapter 7). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink`, `line: solid|dashed|dotted` and `width: k` (a multiple of the usual line width) style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7). Markers, arrows and graphs take `label: "..."` or `label: none` (chapter 7).
+**Representations:** `text("... {e} ... {e:.N} ..." [, at: P] [, align: left|center|right])` (an author's text with values in braces, `:.N` for N decimals; `at` places it in a spatial or plot view, starting at `P`, centred on it or ending at it), `title("...")` (the caption of its view or panel), `marker`, `arrow`, `segment`, `polyline`, `polygon`, `circle(P, r)`, `ellipse(P, a, b, rotate: θ)`, `arc(P, r, from: θ1, to: θ2)`, `trace(P every Δ)`, `function_graph`, `series_plot(e every Δ)`, `histogram(e at τ over n runs, bins: k)` (how many of `n` runs give each value), `histogram(e on E)`, `histogram(e every Δ)` (the values of one run up to the instant shown, chapter 15), `heatmap(T)` (a field in the plane, coloured cells, chapter 16), `function_graph(T)` (also a field on a line), `axes`, `grid`, `label`, `formula`, `equation(name)`, `table(e every Δ)`, `slider` (with `ends: ("low", "high")`, words at its ends), `number_input`, `toggle`, `select(p)` (one case of an enumeration parameter), `button(E)`, `button(E(v))`, `button(reset|undo|redo|restart|reseed)` (in a lesson, only `restart` and `reseed`, in an explore beat), `group(at: P, rotate: θ, scale: k) { members }` (chapter 7; in three dimensions `axis: n`, the axis it turns about, chapter 20). In a view of three dimensions, `circle`, `ellipse` and `arc` take `normal: n`, the plane they lie in, and `circle`, `ellipse` and `polygon` take `opaque: true`, a body that hides what is behind it (chapter 20). `color: red|orange|yellow|green|teal|blue|purple|pink|gray|ink`, `line: solid|dashed|dotted` and `width: k` (a multiple of the usual line width) style drawn kinds (chapter 7); `as name` names one; `{ on drag [head] [live] [across n] as p { propose x = e } }` declares its inverse (`live`: the run keeps going while dragging; `across n`: in three dimensions, the drag moves in the plane of normal `n`, chapter 20), and `{ on click request E(v) }` the event a click requests; in `for b in c { ... }`, `propose b.x = e` and `request E(b)` act on that member (chapter 9). A view's `on click as q request E(q)` requests `E` with an empty point clicked (chapter 9). Any representation takes `when: c`: it is shown only while the condition `c` holds (chapter 7). Markers, arrows and graphs take `label: "..."` or `label: none` (chapter 7).
 
 **Observation schedules:** `live`, `every Δ`, `at τ`, `on E [microstep n]`, `over [a, b]`. **Sources:** any expression, `event_log [of E] [where zeno_applied]`, `diagnostics [of element]`, `intervention_log`.
 
-**Timeline actions:** `narrate "..." [for d]`, `run rate r [until E]`, `hold`, `seek τ`, `reset`, `restart` (a new run from `t0` with the parameters as they are, chapter 15), `branch`, `highlight name`, `hide name [for d] [ease e]`, `reveal fade|draw [for d] [in view] [ease e] { reps }`, `camera view [to P] [zoom z] [for d] [ease e]`, `in view { reps }`, `show rep`, `intervene { set p = e }`, `request E`, `request E(v)`, `request E(c[k], v)`, `wait d`, `wait learner [limit L] [fallback { actions }]`, `animate name opacity|offset|scale to v [for d] [ease e]`, `animate name color|line to word [for d] [ease e]`, `animate name width to k [for d] [ease e]`, `animate name morph to other [for d] [ease e]`, `release name`, `bind name [for d] [ease e]`, `sequence { ... }`, `explore [limit L] [keep p, ...] { controls } [fallback { actions }]` (chapter 8).
+**Timeline actions:** `narrate "..." [for d]`, `run rate r [until E]`, `hold`, `seek τ`, `reset`, `restart` (a new run from `t0` with the parameters as they are, chapter 15), `branch`, `highlight name`, `hide name [for d] [ease e]`, `reveal fade|draw [for d] [in view] [ease e] { reps }`, `camera view [to P] [zoom z] [azimuth a] [elevation e] [for d] [ease e]` (a view of three dimensions turns, chapter 20), `in view { reps }`, `show rep`, `intervene { set p = e }`, `request E`, `request E(v)`, `request E(c[k], v)`, `wait d`, `wait learner [limit L] [fallback { actions }]`, `animate name opacity|offset|scale to v [for d] [ease e]`, `animate name color|line to word [for d] [ease e]`, `animate name width to k [for d] [ease e]`, `animate name morph to other [for d] [ease e]`, `release name`, `bind name [for d] [ease e]`, `sequence { ... }`, `explore [limit L] [keep p, ...] { controls } [fallback { actions }]` (chapter 8).
 
 ## Options and clauses
 
@@ -118,20 +119,22 @@ Two forms add details to a form, one for each place they appear (D-081):
 | `marker` | `at`, `color`, `label` |
 | `arrow` | `from`, `scale`, `color`, `line`, `width`, `label` |
 | `function_graph` | `color`, `line`, `width`, `label` |
-| `segment`, `polyline`, `polygon`, `circle`, `trace`, `series_plot` | `color`, `line`, `width` |
+| `segment`, `polyline`, `trace`, `series_plot` | `color`, `line`, `width` |
+| `polygon` | `color`, `line`, `width`, `opaque` |
+| `circle` | `normal`, `color`, `line`, `width`, `opaque` |
 | `histogram` | `bins`, `color`, `line`, `width` |
 | `heatmap` | `range` |
-| `ellipse` | `rotate`, `color`, `line`, `width` |
-| `arc` | `from`, `to`, `color`, `line`, `width` |
+| `ellipse` | `rotate`, `normal`, `color`, `line`, `width`, `opaque` |
+| `arc` | `from`, `to`, `normal`, `color`, `line`, `width` |
 | `text` | `at`, `align` |
 | `formula`, `equation` | `live` |
 | `slider` | `range`, `step`, `ends` |
 | `number_input` | `range`, `step` |
 | `button` | `label` |
-| `group` | `at`, `rotate`, `scale` |
+| `group` | `at`, `rotate`, `axis`, `scale` |
 | `instrument` (not a representation) | `resolution`, `range`, `noise` |
 | `axes`, `grid`, `label`, `title`, `table`, `toggle`, `select` | none |
-| view `spatial(Space, ...)` | `scale`, `y`; in three dimensions `scale`, `azimuth`, `elevation` |
+| view `spatial(Space, ...)` | `scale`, `y`; in three dimensions `scale`, `azimuth`, `elevation`, `distance` |
 | view `plot(...)` | `x`, `y`, `follow`, `x_unit`, `y_unit`, `window` |
 
 | Statement | Clauses |
@@ -144,7 +147,7 @@ Two forms add details to a form, one for each place they appear (D-081):
 | `hide`, `bind` | `for d`, `ease e` |
 | `run rate r` | `until E` |
 | `reveal fade\|draw` | `for d`, `in view`, `ease e` |
-| `camera view` | `to P`, `zoom z`, `for d`, `ease e` |
+| `camera view` | `to P`, `zoom z`, `azimuth a`, `elevation e`, `for d`, `ease e` |
 | `animate name property to v` | `for d`, `ease e` |
 | `explore` | `limit L`, `keep p, ...` |
 | `wait learner` | `limit L` |
@@ -170,13 +173,15 @@ Every word of the language, what it does, and the chapter that teaches it.
 | Word | What it does | Chapter |
 |---|---|---|
 | `and`, `or`, `not` | Boolean operators | 1 |
+| `across` | `on drag across n as p`: in a view of three dimensions, the drag moves in the plane of normal `n` | 20 |
 | `as` | names a representation: `marker(pos) as ball` | 7 |
 | `at` | an event at an instant (`at τ`); an observation at an instant; a learner step or input change at a time | 5, 6, 8 |
 | `beat` | a step of a scene in a timeline | 8 |
 | `animate` | a timeline animation of a drawing's opacity or offset | 8 |
 | `bind`, `release` | timeline actions: a drawing follows the model again, or stays as it is | 8 |
 | `branch` | a timeline action: the lesson continues on a new run version | 8 |
-| `camera` | a timeline animation of a view's centre and zoom | 8 |
+| `azimuth`, `elevation` | where the viewer of a space of three dimensions stands: options of a view, clauses of `camera` | 20 |
+| `camera` | a timeline animation of a view's centre and zoom, and in three dimensions its turn | 8, 20 |
 | `checked` | `equation N: a == b checked within tol` is checked while running | 6 |
 | `config` | a run's solver settings and its seed (`seed = 7`) | 6, 15 |
 | `const` | constants: never change | 2 |
@@ -269,7 +274,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 
 **Reserved** (never names): `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 
-**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce use algorithm while step restitution`.
+**Contextual** (keywords only where expected, names elsewhere): `for view panel observe live over microstep show as drag click propose permit timeline layout row column scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart instrument grid boundary periodic unknown enforce use algorithm while step restitution across azimuth elevation`.
 
 ## Diagnostics
 

@@ -156,6 +156,25 @@ const floor = await count('#views line.gridline');
 check('a view of three dimensions draws its three axes and its floor', axes >= 3 && floor > 4, `${axes} axes, ${floor} grid lines`);
 await shot('g20-cyclotron');
 
+// Views of three dimensions (D-104): opaque bodies filled solid; dragging an empty point turns
+// the view, so the orbit's path is drawn anew.
+await open('g20-tiltedorbit/Sky@3');
+const solid = await count('#views .shape.opaque');
+check('opaque bodies are filled solid', solid === 2, `${solid} opaque shapes`);
+const pathPoints = () => ev(`[...document.querySelectorAll('[data-rep="Sky.view.room.path"] polyline')].map((p) => p.getAttribute('points')).join('|')`);
+const before = await pathPoints();
+const [ox, oy] = await ev(`(() => { const r = document.querySelector('#views svg').getBoundingClientRect(); return [r.x + 30, r.y + 30]; })()`);
+await mouse('mousePressed', ox, oy);
+await mouse('mouseMoved', ox + 80, oy + 30);
+await mouse('mouseReleased', ox + 80, oy + 30);
+await sleep(300);
+const after = await pathPoints();
+check('dragging an empty point turns a view of three dimensions', before.length > 0 && after !== before, `${before.length} and ${after.length} characters of points`);
+await shot('g20-tiltedorbit');
+await open('g20-door/Hinge');
+check('a door in a group is drawn as an opaque polygon', (await count('#views polygon.shape.opaque')) === 1);
+await shot('g20-door');
+
 // An algorithm (D-101): bars as segments in a plot view; after 3 s, four comparisons made,
 // two bars drawn as the pair compared.
 await open('g21-sorting/SortLab@3');
