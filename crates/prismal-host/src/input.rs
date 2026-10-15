@@ -36,6 +36,9 @@ pub struct ViewState {
     pub user: Option<[f64; 4]>,
     /// The size in pixels the host last said it draws the view at.
     pub size: Option<[f64; 2]>,
+    /// The azimuth and elevation, in radians, the learner turned a view of three dimensions
+    /// to (D-104); `None`: as its author aims it.
+    pub turn: Option<[f64; 2]>,
 }
 
 #[derive(Clone, Debug)]
@@ -54,7 +57,7 @@ impl ViewState {
         let w = (x1 - x0 + 2.0 * PAD).max(MIN_SIZE[0]);
         let h = (y1 - y0 + 2.0 * PAD).max(MIN_SIZE[1]);
         let base = [(x0 + x1) / 2.0 - w / 2.0, (y0 + y1) / 2.0 - h / 2.0, w, h];
-        ViewState { id: id.into(), name: name.into(), kind: ViewKind::Spatial { base }, user: None, size: None }
+        ViewState { id: id.into(), name: name.into(), kind: ViewKind::Spatial { base }, user: None, size: None, turn: None }
     }
 
     /// What the view shows in a frame (`grow`: a session keeps its content in view).

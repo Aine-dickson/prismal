@@ -303,8 +303,8 @@ function buildViews() {
       entry.W = 560; entry.H = 360; entry.m = 44;
       entry.svg = svg('svg', { viewBox: `0 0 ${entry.W} ${entry.H}`, role: 'group', 'aria-label': `${v.name}: plot` });
     }
-    // Plots zoom and pan like spatial views (D-070).
-    if (entry.svg && (st.layout.permits.includes('zoom') || st.layout.permits.includes('pan'))) {
+    // Plots zoom and pan like spatial views (D-070); views of three dimensions turn (D-104).
+    if (entry.svg && ['zoom', 'pan', 'orbit'].some((w) => st.layout.permits.includes(w))) {
       const reset = el('button', { type: 'button', class: 'hint', text: 'Reset view' });
       reset.addEventListener('click', () => { st.player.view_reset(v.id); refresh(); });
       cap.append(reset);
@@ -594,12 +594,15 @@ function drawRep(v, g, r, u, colorIndex) {
     }
     case 'polygon': {
       const pts = r.points.map((p) => m.to(p).join(',')).join(' ');
-      svg('polygon', { class: 'shape', points: pts, 'stroke-width': 2 * u }, grp);
+      // An opaque body (D-104) hides what is behind it: the surface under its tint.
+      if (r.opaque) svg('polygon', { class: 'solid', points: pts }, grp);
+      svg('polygon', { class: r.opaque ? 'shape opaque' : 'shape', points: pts, 'stroke-width': 2 * u }, grp);
       break;
     }
     case 'ellipse': {
       // A circle, ellipse or arc (PK-6.3c), exact in view coordinates.
-      svg('path', { class: r.closed ? 'shape' : 'curve', d: curvePath(r), 'stroke-width': 2 * u }, grp);
+      if (r.opaque && r.closed) svg('path', { class: 'solid', d: curvePath(r) }, grp);
+      svg('path', { class: r.closed ? (r.opaque ? 'shape opaque' : 'shape') : 'curve', d: curvePath(r), 'stroke-width': 2 * u }, grp);
       break;
     }
     case 'group': {

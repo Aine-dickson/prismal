@@ -58,6 +58,10 @@ struct Drag {
     live: bool,
     last_p: Option<[f64; 2]>,
     committed: usize,
+    /// In a view of three dimensions, the plane the drag moves in (D-104): a point of it,
+    /// where the representation was when the drag began, and its normal (`None`: facing the
+    /// viewer).
+    plane: Option<([f64; 3], Option<[f64; 3]>)>,
 }
 
 /// A literal of a value in coherent SI units, typed for `ty` (bare for dimensionless).
@@ -231,13 +235,31 @@ impl Interactive {
             }
             None
         }
-        for (_, ctx, reps) in &self.projector.views {
+        let run = &self.session.current;
+        for (id, _, reps) in &self.projector.views {
             let mut chain = vec![];
             if let Some(r) = find(reps, name, &mut chain) {
-                return Some((ctx.clone(), r, chain));
+                // A view of three dimensions as it is drawn at the instant shown (D-104).
+                return Some((self.projector.ctx_at(Some(id), run, &run.state_at(self.t), self.t), r, chain));
             }
         }
         None
+    }
+
+    /// Where a representation of a view of three dimensions is, in model coordinates, at the
+    /// instant shown: a marker's point, an arrow's tip when dragged by its head and its tail
+    /// otherwise, a shape's first point, a sphere's centre (D-104).
+    fn anchor(&self, id: &str, part: Option<&str>) -> Option<[f64; 3]> {
+        use crate::frame::Geo;
+        let f = self.frame();
+        let geo = f.reps().find(|r| r.id == id)?.geo.clone();
+        match geo {
+            Some(Geo::Point(p)) => Some(p),
+            Some(Geo::Path { points, .. }) if part == Some("head") => points.last().copied(),
+            Some(Geo::Path { points, .. }) => points.first().copied(),
+            Some(Geo::Sphere { center, .. }) => Some(center),
+            _ => Some([0.0; 3]),
+        }
     }
 
     /// The transform of the groups enclosing a representation at the instant shown.
@@ -326,6 +348,11 @@ impl Interactive {
         let Some((id, ctx)) = found else { return self.report(Why::Refused, format!("no view `{view}`")) };
         let Some(c) = self.projector.clicks.iter().find(|c| c.0 == id).map(|c| c.1.clone()) else {
             return self.report(Why::Refused, format!("`{view}` does nothing when a point of it is clicked"));
+        };
+        let run = &self.session.current;
+        let ctx = match self.projector.look(&id, run, &run.state_at(self.t), self.t, &[]) {
+            Some(l) => ctx.looking(l),
+            None => ctx,
         };
         let point = ctx.pointer(p);
         self.commit(match c.payload {
@@ -439,7 +466,22 @@ impl Interactive {
             return self.report(Why::Refused, format!("`{rep}` is not shown now: its member is not alive"));
         }
         let live = inv.live;
-        self.drag = Some(Drag { rep: r.rep.id.clone(), ctx, crep: r, groups, previews: vec![], last_valid: None, live, last_p: None, committed: 0 });
+        // D-104: in a view of three dimensions the drag moves in a plane through where the
+        // representation is now.
+        let plane = if ctx.is_3d() {
+            let vals = run.state_at(self.t);
+            let across = match &r.across {
+                Some(c) => match run.eval_state(c, &vals, self.t) {
+                    Ok(v) => Some(crate::frame::pad3(&crate::flat(&v))),
+                    Err(s) => return self.report(Why::Refused, format!("the plane of the drag is not available ({})", s.cause)),
+                },
+                None => None,
+            };
+            Some((self.anchor(&r.rep.id, part).unwrap_or([0.0; 3]), across))
+        } else {
+            None
+        };
+        self.drag = Some(Drag { rep: r.rep.id.clone(), ctx, crep: r, groups, previews: vec![], last_valid: None, live, last_p: None, committed: 0, plane });
         Ok(())
     }
 
@@ -451,7 +493,15 @@ impl Interactive {
         let drag = self.drag.as_ref().unwrap();
         let inv = drag.crep.rep.inverse.as_ref().unwrap();
         // A member of a group is dragged in the group's frame, where it is written (D-043).
-        let gesture = if drag.groups.is_empty() {
+        let gesture = if let Some((through, across)) = drag.plane {
+            // D-104: where the line of sight meets the drag's plane, in the groups' frame.
+            let Some(m) = drag.ctx.pointer3(p, through, across) else { return false };
+            let tf = if drag.groups.is_empty() { Some(Tf::ID) } else { self.groups_tf(&drag.groups) };
+            match tf {
+                Some(tf) => drag.ctx.point_in(m, &tf),
+                None => return false,
+            }
+        } else if drag.groups.is_empty() {
             drag.ctx.pointer(p)
         } else {
             match self.groups_tf(&drag.groups) {

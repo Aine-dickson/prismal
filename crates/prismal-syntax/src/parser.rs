@@ -26,7 +26,8 @@ pub const CONTEXTUAL: &[&str] = &[
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
-    "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use", "algorithm", "while", "step", "restitution",
+    "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use", "algorithm", "while", "step", "restitution", "across", "azimuth",
+    "elevation",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -1700,7 +1701,7 @@ impl<'a> Parser<'a> {
                 p.expect_word("request")?;
                 let event = p.name("an event name")?;
                 let payload = p.payload_args()?;
-                return Ok(vec![Err(Interaction { gesture, part: None, live: false, bind, proposals: vec![], request: Some((event, payload)), span: p.since(start) })]);
+                return Ok(vec![Err(Interaction { gesture, part: None, live: false, across: None, bind, proposals: vec![], request: Some((event, payload)), span: p.since(start) })]);
             }
             Ok(p.rep_item()?.into_iter().map(Ok).collect())
         })?;
@@ -1762,14 +1763,16 @@ impl<'a> Parser<'a> {
             let event = self.name("an event name")?;
             let payload = self.payload_args()?;
             let bind = gesture.clone();
-            return Ok(Interaction { gesture, part: None, live: false, bind, proposals: vec![], request: Some((event, payload)), span: self.since(start) });
+            return Ok(Interaction { gesture, part: None, live: false, across: None, bind, proposals: vec![], request: Some((event, payload)), span: self.since(start) });
         }
-        let part = if !self.is_word("as") && !self.is_word("live") { Some(self.name("a part")?) } else { None };
+        let part = if !self.is_word("as") && !self.is_word("live") && !self.is_word("across") { Some(self.name("a part")?) } else { None };
         // `on drag [part] live as p`: commits while the run advances (D-071).
         let live = self.is_word("live");
         if live {
             self.bump();
         }
+        // `on drag across n as p`: moves in the plane of normal `n` (D-104).
+        let across = if self.eat_word("across") { Some(self.expr()?) } else { None };
         self.expect_word("as")?;
         let bind = self.name("a name for the gesture value")?;
         let proposals = self.block(|p| {
@@ -1778,7 +1781,7 @@ impl<'a> Parser<'a> {
             p.expect_punct("=")?;
             Ok(vec![(n, p.expr()?)])
         })?;
-        Ok(Interaction { gesture, part, live, bind, proposals, request: None, span: self.since(start) })
+        Ok(Interaction { gesture, part, live, across, bind, proposals, request: None, span: self.since(start) })
     }
 
     fn scene(&mut self) -> P<SceneDecl> {
@@ -1860,8 +1863,8 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("camera") {
             let view = self.name("a view name")?;
-            let (mut center, mut zoom, mut duration, mut ease, mut seen) = (None, None, None, None, vec![]);
-            while let Some(w) = self.clause(&["to", "zoom", "for", "ease"], &mut seen)? {
+            let (mut center, mut zoom, mut azimuth, mut elevation, mut duration, mut ease, mut seen) = (None, None, None, None, None, None, vec![]);
+            while let Some(w) = self.clause(&["to", "zoom", "azimuth", "elevation", "for", "ease"], &mut seen)? {
                 if w == "ease" {
                     ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?);
                     continue;
@@ -1870,10 +1873,12 @@ impl<'a> Parser<'a> {
                 match w {
                     "to" => center = e,
                     "zoom" => zoom = e,
+                    "azimuth" => azimuth = e,
+                    "elevation" => elevation = e,
                     _ => duration = e,
                 }
             }
-            return Ok(Action::Camera { view, center, zoom, duration, ease });
+            return Ok(Action::Camera { view, center, zoom, azimuth, elevation, duration, ease });
         }
         if self.eat_word("seek") {
             return Ok(Action::Seek(self.expr()?));

@@ -745,9 +745,14 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
             out.push_str("</g>");
         }
         "polygon" => {
+            // An opaque body (D-104) hides what is behind it: the surface under its tint.
+            let (op, tint) = if r["opaque"] == true { (true, "0.3") } else { (false, "0.12") };
+            if op {
+                let _ = write!(out, "<polygon points=\"{}\" fill=\"{}\"/>", pts("points"), th.surface);
+            }
             let _ = write!(
                 out,
-                "<polygon class=\"shape\" points=\"{}\" fill=\"{accent}\" fill-opacity=\"0.12\" stroke=\"{accent}\" stroke-width=\"{}\"{dash}/>",
+                "<polygon class=\"shape\" points=\"{}\" fill=\"{accent}\" fill-opacity=\"{tint}\" stroke=\"{accent}\" stroke-width=\"{}\"{dash}/>",
                 pts("points"),
                 n(2.0 * u * thick),
                 accent = custom.as_deref().unwrap_or(th.accent)
@@ -757,7 +762,13 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
             // A circle, ellipse or arc (PK-6.3c): a whole one filled as a polygon is, an
             // arc stroked only.
             let accent = custom.as_deref().unwrap_or(th.accent);
-            let fill = if r["closed"] == true { format!("fill=\"{accent}\" fill-opacity=\"0.12\"") } else { "fill=\"none\"".to_string() };
+            // An opaque body (D-104) hides what is behind it: the surface under its tint.
+            let opaque = r["opaque"] == true && r["closed"] == true;
+            if opaque {
+                let _ = write!(out, "<path d=\"{}\" fill=\"{}\"/>", curve_path(r), th.surface);
+            }
+            let tint = if opaque { "0.3" } else { "0.12" };
+            let fill = if r["closed"] == true { format!("fill=\"{accent}\" fill-opacity=\"{tint}\"") } else { "fill=\"none\"".to_string() };
             let cls = if r["closed"] == true { "shape" } else { "curve" };
             let _ = write!(out, "<path class=\"{cls}\" d=\"{}\" {fill} stroke=\"{}\" stroke-width=\"{}\"{dash}/>", curve_path(r), accent, n(2.0 * u * thick));
         }

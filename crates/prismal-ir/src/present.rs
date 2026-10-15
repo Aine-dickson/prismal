@@ -159,13 +159,18 @@ pub struct View {
 pub enum ViewKind {
     /// A spatial view of one space (PK-7.2): `scale` maps a model length to view pixels. A
     /// view of a space of three dimensions looks from `look`, its azimuth and elevation
-    /// (PK-7.2a, D-100), with `z` up; `y_up` applies to a plane.
+    /// (PK-7.2a, D-100), with `z` up; `y_up` applies to a plane. Both angles may read the
+    /// model's values and time, evaluated at each frame (D-104). `distance`: the viewer's
+    /// distance from the origin, a length, for a view in perspective (D-104); absent, the
+    /// view is orthographic.
     Spatial {
         space: Id,
         scale: Scale,
         y_up: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         look: Option<[Expr; 2]>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        distance: Option<Expr>,
     },
     /// A plot view (PK-7.3): the axis ranges, the axes whose range follows the data (`x`,
     /// `y`; D-070) and each axis's display unit.
@@ -292,6 +297,11 @@ pub struct Inverse {
     /// advances, instead of once on release with the run held.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub live: bool,
+    /// `on drag across n as p`: in a view of three dimensions the pointer moves the point in
+    /// the plane of normal `n` through where the drag began, instead of the plane facing the
+    /// viewer (D-104).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub across: Option<Expr>,
 }
 
 /// The event a click on a representation requests, with its payload: in a representation
@@ -373,13 +383,18 @@ pub enum Action {
         reps: Vec<Rep>,
     },
     /// Moves a view's camera (PK-9.2, D-042): its centre follows `center`, evaluated at every
-    /// frame, and its zoom; the move takes `duration`.
+    /// frame, and its zoom; the move takes `duration`. In a view of three dimensions the
+    /// camera also turns to `azimuth` and `elevation` (D-104).
     Camera {
         view: Id,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         center: Option<Expr>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         zoom: Option<Expr>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        azimuth: Option<Expr>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        elevation: Option<Expr>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Expr>,
         /// The easing function; absent is `smooth` (D-095).

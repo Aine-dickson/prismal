@@ -99,7 +99,15 @@ enum Gesture {
     /// A press on an empty point of a view that requests an event when clicked, and that
     /// does not pan: a release within `tol` pixels of `from` clicks the point (D-060).
     Point { view: usize, from: [f64; 2], tol: f64 },
+    /// The learner turning a view of three dimensions (D-104): from pixel `from`, where the
+    /// view looked from azimuth and elevation `start`; `before` is the learner's own turn to
+    /// restore on cancel.
+    Orbit { view: usize, from: [f64; 2], start: [f64; 2], before: Option<[f64; 2]> },
 }
+
+/// How far a view of three dimensions turns per pixel the pointer moves (D-104): half a
+/// degree.
+const ORBIT_PER_PX: f64 = 0.5 * std::f64::consts::PI / 180.0;
 
 /// A pointer event as the host captured it (HI-4.5): its phase (`down`, `move`, `up`,
 /// `cancel`), the view it happened in (identity or name), its position in pixels from the
@@ -658,10 +666,12 @@ impl Instance {
     }
 
     /// Function graphs follow the learner's zoom and pan of their plot (D-070): each plot's
-    /// projector draws them over the `x` range shown.
+    /// projector draws them over the `x` range shown. Views of three dimensions look from
+    /// where the learner turned them (D-104).
     fn sync_sample(&mut self) {
         let plots: Vec<(String, Option<(f64, f64)>)> =
             self.views.iter().filter(|v| matches!(v.kind, ViewKind::Plot { .. })).map(|v| (v.id.clone(), v.user.map(|b| (b[0], b[0] + b[2])))).collect();
+        let turns: Vec<(String, Option<[f64; 2]>)> = self.views.iter().map(|v| (v.id.clone(), v.turn)).collect();
         let pj = match &mut self.mode {
             Mode::Closed => return,
             Mode::Interactive(i) => &mut i.projector,
@@ -669,6 +679,9 @@ impl Instance {
         };
         for (id, x) in plots {
             pj.set_sample_x(&id, x);
+        }
+        for (id, turn) in turns {
+            pj.set_turn(&id, turn);
         }
     }
 
@@ -719,6 +732,12 @@ impl Instance {
                 // D-060: on an empty point of a view that requests an event when clicked, a
                 // press that does not move past the tolerance clicks the point.
                 let click = if session && vf.click.is_some() { Some(tolerance(e.pointer)) } else { None };
+                // D-104: pressing an empty point of a view of three dimensions turns it, where
+                // the presentation permits `orbit`.
+                if let Some(start) = vf.look.filter(|_| self.permits("orbit") && click.is_none()) {
+                    self.gesture = Some(Gesture::Orbit { view: vi, from: p, start, before: self.views[vi].turn });
+                    return json!({ "handled": true, "action": "orbit", "target": null });
+                }
                 match vp.shown() {
                     Some(shown) if self.permits("pan") => {
                         self.gesture = Some(Gesture::Pan { view: vi, from: p, shown, map, before: self.views[vi].user, click, id: e.id, at: p });
@@ -784,6 +803,16 @@ impl Instance {
                     }
                     json!({ "handled": true, "action": "click", "ok": true })
                 }
+                Some(Gesture::Orbit { view, from, start, .. }) if view == vi => {
+                    // Dragging right turns the scene with the pointer: the viewer moves the
+                    // other way round it. Up and down tilt the view, up to straight above or
+                    // below.
+                    let half = std::f64::consts::FRAC_PI_2;
+                    let a = start[0] - (p[0] - from[0]) * ORBIT_PER_PX;
+                    let e = (start[1] + (p[1] - from[1]) * ORBIT_PER_PX).clamp(-half, half);
+                    self.views[vi].turn = Some([a, e]);
+                    json!({ "handled": true, "action": "orbit", "azimuth": a.to_degrees(), "elevation": e.to_degrees() })
+                }
                 Some(Gesture::Pan { view, from, shown, map, before, id, .. }) if view == vi => {
                     self.gesture = Some(Gesture::Pan { view, from, shown, map, before, click: None, id, at: p });
                     // The view point under the press stays under the pointer.
@@ -810,6 +839,7 @@ impl Instance {
                     merge(self.click_at(&id, q[0], q[1]), json!({ "handled": true, "action": "click", "target": null, "at": q }))
                 }
                 Some(Gesture::Pan { .. }) => json!({ "handled": true, "action": "pan" }),
+                Some(Gesture::Orbit { .. }) => json!({ "handled": true, "action": "orbit" }),
                 // Lifting either touch ends a pinch; the view stays where it was pinched to.
                 Some(Gesture::Pinch { .. }) => json!({ "handled": true, "action": "pinch" }),
                 None => unhandled(),
@@ -825,6 +855,10 @@ impl Instance {
             Some(Gesture::Drag { .. }) => self.cancel(),
             Some(Gesture::Click { .. } | Gesture::Point { .. }) => {}
             Some(Gesture::Pan { view, before, .. } | Gesture::Pinch { view, before, .. }) => self.views[view].user = before,
+            Some(Gesture::Orbit { view, before, .. }) => {
+                self.views[view].turn = before;
+                self.sync_sample();
+            }
             None => return unhandled(),
         }
         json!({ "handled": true, "action": "cancel" })
@@ -856,6 +890,7 @@ impl Instance {
         match self.view_index(view) {
             Some(vi) => {
                 self.views[vi].user = None;
+                self.views[vi].turn = None;
                 self.sync_sample();
                 json!({ "handled": true, "action": "view_reset" })
             }
@@ -1104,7 +1139,7 @@ fn view_state(v: &Json) -> ViewState {
         }
         _ => ViewKind::Panel,
     };
-    ViewState { id: id.into(), name: name.into(), kind, user: None, size: None }
+    ViewState { id: id.into(), name: name.into(), kind, user: None, size: None, turn: None }
 }
 
 /// The extent `[xmin, ymin, xmax, ymax]` of shapes in view coordinates, including the origin

@@ -1309,6 +1309,7 @@ impl<'a> PCx<'a, '_> {
                 gesture: inv.gesture.clone(),
                 part: inv.part.clone(),
                 live: inv.live,
+                across: inv.across.as_ref().map(|n| self.e(s, n)),
                 proposals: inv.proposals.iter().map(|p| crate::present::Proposal { target: self.proposed(s, p), value: self.e(s, &p.value), member: None }).collect(),
             }),
             members: self.reps(s, &r.members),
@@ -1349,7 +1350,15 @@ impl<'a> PCx<'a, '_> {
             let na = match a {
                 Action::Show { view, reps } => Action::Show { view: view.clone(), reps: self.reps(&s, reps) },
                 Action::Reveal { view, style, duration, ease, reps } => Action::Reveal { view: view.clone(), style: *style, duration: ex(self, duration), ease: *ease, reps: self.reps(&s, reps) },
-                Action::Camera { view, center, zoom, duration, ease } => Action::Camera { view: view.clone(), center: ex(self, center), zoom: ex(self, zoom), duration: ex(self, duration), ease: *ease },
+                Action::Camera { view, center, zoom, azimuth, elevation, duration, ease } => Action::Camera {
+                    view: view.clone(),
+                    center: ex(self, center),
+                    zoom: ex(self, zoom),
+                    azimuth: ex(self, azimuth),
+                    elevation: ex(self, elevation),
+                    duration: ex(self, duration),
+                    ease: *ease,
+                },
                 Action::Narrate { text, duration } => Action::Narrate { text: text.clone(), duration: ex(self, duration) },
                 Action::Run { rate } => Action::Run { rate: self.e(&s, rate) },
                 Action::Seek { time } => Action::Seek { time: self.e(&s, time) },
@@ -1431,11 +1440,12 @@ fn presentation<'a>(cx: &mut Cx<'a>, root: &'a Model, p: &Presentation) -> Prese
     for v in &mut out.views {
         pc.cx.element = v.id.clone();
         v.kind = match &v.kind {
-            ViewKind::Spatial { space, scale, y_up, look } => ViewKind::Spatial {
+            ViewKind::Spatial { space, scale, y_up, look, distance } => ViewKind::Spatial {
                 space: space.clone(),
                 scale: crate::present::Scale { quantity: pc.e(&s, &scale.quantity), px: scale.px },
                 y_up: *y_up,
                 look: look.as_ref().map(|[a, b]| [pc.e(&s, a), pc.e(&s, b)]),
+                distance: distance.as_ref().map(|d| pc.e(&s, d)),
             },
             ViewKind::Plot { x, y, follow, units, window } => ViewKind::Plot { x: [pc.e(&s, &x[0]), pc.e(&s, &x[1])], y: [pc.e(&s, &y[0]), pc.e(&s, &y[1])], follow: *follow, units: units.clone(), window: window.as_ref().map(|w| pc.e(&s, w)) },
             ViewKind::Panel => ViewKind::Panel,
