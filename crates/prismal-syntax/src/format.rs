@@ -513,9 +513,12 @@ impl<'a> Printer<'a> {
             Expr::Has { has, rel } => format!("{}.has({})", self.member(rel, params), self.member(has, params)),
             // An item of a list of values by its number (D-101); also made by elaboration (D-058).
             Expr::Pick { pick, from } => format!("({})[{}]", from.iter().map(&p).collect::<Vec<_>>().join(", "), p(pick)),
-            Expr::Aggregate { aggregate, var, over, body, filter } => {
+            Expr::Aggregate { aggregate, var, over, body, filter, by } => {
                 let coll = self.part_name(over);
-                let filter = filter.as_ref().map(|f| format!(" if {}", p(f))).unwrap_or_default();
+                let mut filter = filter.as_ref().map(|f| format!(" if {}", p(f))).unwrap_or_default();
+                if let Some(k) = by {
+                    filter.push_str(&format!(" by {}", p(k)));
+                }
                 match body {
                     None if filter.is_empty() => format!("{}({coll})", aggregate.name()),
                     None => format!("{}({var} for {var} in {coll}{filter})", aggregate.name()),
@@ -523,7 +526,7 @@ impl<'a> Printer<'a> {
                 }
             }
             // Made by elaboration only (D-057).
-            Expr::Extreme { extreme, terms } => {
+            Expr::Extreme { extreme, terms, .. } => {
                 let name = if *extreme == prismal_ir::Func::Min { "min" } else { "max" };
                 format!("{name}({})", terms.iter().map(|g| p(&g.value)).collect::<Vec<_>>().join(", "))
             }

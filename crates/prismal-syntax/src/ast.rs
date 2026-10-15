@@ -416,7 +416,9 @@ pub enum ExprKind {
     /// `(pos on landed)` and `(vel on landed microstep 0)` (expectations, PK-3.4).
     On(Box<Expr>, Name, Option<u32>),
     /// `sum(b.m for b in row if b.on)`: an aggregate over a collection (D-055).
-    Aggregate { agg: Name, body: Box<Expr>, var: Name, over: Name, filter: Option<Box<Expr>> },
+    /// `first(e for b in row if c by k)`: the value at the member with the smallest key
+    /// (D-106).
+    Aggregate { agg: Name, body: Box<Expr>, var: Name, over: Name, filter: Option<Box<Expr>>, by: Option<Box<Expr>> },
     /// `start of b3`, `end of b8` (timeline expectations).
     BeatTime { start: bool, beat: Name },
     /// `match e { case => value, ... }` (MK-10.2, D-049).

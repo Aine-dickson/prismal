@@ -34,6 +34,7 @@ A guide to writing Prismal programs in the working syntax (D-028), from a first 
 | [20. Three dimensions](20-three-dimensions.md) | spaces of three dimensions, `cross`, views turned by azimuth and elevation, in perspective, with opaque bodies; turned by the learner or a lesson: a charge in a magnetic field, a tilted orbit, a door on a hinge |
 | [21. Algorithms](21-algorithms.md) | statements run in order and paused at `step`: bubble sort drawn as bars, binary search by hand or on a clock, Euclid's algorithm; members chosen by computed numbers, `floor` and `mod` |
 | [22. Light and rays](22-light-and-rays.md) | the first-party `optics` module: Snell's law and total internal reflection with a draggable laser, a thin lens and its image, a prism splitting white light |
+| [24. Light as a wave](24-light-as-a-wave.md) | the wave functions of `optics`: two sources interfering as a field, fringes behind slits and gratings in the colour of their light, polarizers |
 | [23. Frames](23-frames.md) | axes of the model's own: gravity read along a slope, a carousel seen from its seat, Coriolis and centrifugal forces on a turntable |
 
 ## Running a program

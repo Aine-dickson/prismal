@@ -161,7 +161,7 @@ pub const LINES: &[&str] = &["solid", "dashed", "dotted"];
 fn styled(kind: &str) -> (bool, bool) {
     match kind {
         "marker" => (true, false),
-        "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" => (true, true),
+        "arrow" | "segment" | "polyline" | "polygon" | "circle" | "ellipse" | "arc" | "trace" | "function_graph" | "series_plot" | "histogram" | "ray" => (true, true),
         _ => (false, false),
     }
 }
@@ -188,6 +188,8 @@ fn style_props(rep: &Rep) -> Result<Rep, PDiag> {
         }
         match &p.value {
             Arg::Word { word } if words.contains(&word.as_str()) => {}
+            // A wavelength of light (D-106), checked where the representation is compiled.
+            Arg::Expr { .. } if p.name == "color" => {}
             _ => return Err(d(format!("`{}` is one of {} (PK-6.6a)", p.name, words.join(", ")))),
         }
     }
@@ -311,6 +313,15 @@ pub enum Shape {
     },
     /// A title: the caption of the view or panel it is in (D-076).
     Title { value: String },
+    /// A half-line from `from` in the unit direction `toward`, both in view coordinates, drawn
+    /// to the edge of the view (D-106); with `back`, its extension behind `from` in that line
+    /// style.
+    Ray {
+        from: [f64; 2],
+        toward: [f64; 2],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        back: Option<String>,
+    },
 }
 
 impl Shape {
@@ -842,6 +853,8 @@ pub struct CRep {
     /// `on drag across n`: the normal of the plane a drag moves in, in a view of three
     /// dimensions (D-104).
     pub across: Option<CExpr>,
+    /// `color: λ`: the wavelength of light whose colour it is drawn in (D-106).
+    pub light: Option<CExpr>,
 }
 
 impl CRep {
@@ -859,6 +872,8 @@ pub enum CKind {
     Marker { pos: CExpr, label: String },
     Arrow { vec: CExpr, ty: Type, from: Option<CExpr>, px_per_unit: f64, label: String },
     Segment { a: CExpr, b: CExpr },
+    /// A half-line from a point along a direction, to the edge of the view (D-106).
+    Ray { from: CExpr, dir: CExpr, back: Option<String> },
     Graph { f: CExpr, lo: f64, hi: f64, label: String },
     /// A field drawn over its grid (D-091): an operation on the field, through which its
     /// edge values and cell values are read.
@@ -1170,6 +1185,19 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
                 None => None,
             };
             CKind::Arrow { vec: c, ty: t, from, px_per_unit, label: label(e) }
+        }
+        // `ray(P, d, back: dotted)` (D-106).
+        "ray" => {
+            let ViewCtx::Spatial { space, .. } = ctx else { return Err(d("PK-E05", "a ray belongs in a spatial view".into())) };
+            let what = "a point and a direction: `ray(P, (1, 0))`";
+            let from = ce(source(rep, 0).ok_or_else(|| needs(what))?, Some(&Type::Point { space: space.clone() }))?.0;
+            let dir = direction(source(rep, 1).ok_or_else(|| needs(what))?, what)?;
+            let back = match rep.prop("back") {
+                None => None,
+                Some(Arg::Word { word }) if LINES.contains(&word.as_str()) => Some(word.clone()),
+                Some(_) => return Err(d("PK-E05", "a ray's `back` is the line style of its extension behind its start: `back: dotted` (D-106)".into())),
+            };
+            CKind::Ray { from, dir, back }
         }
         "segment" => {
             let a = point(source(rep, 0).ok_or_else(|| needs("two points"))?, "two points")?;
@@ -1665,7 +1693,15 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
         Some(w) => Some(compile_expr(cm, w, Some(&Type::Boolean)).map_err(|ds| d("PK-E02", ds.iter().map(|x| format!("{}: {}", x.code, x.message)).collect::<Vec<_>>().join("; ")))?.0),
         None => None,
     };
-    Ok(CRep { rep: full.clone(), kind, when, across })
+    // `color: 650 nm`: drawn in the colour of light of that wavelength (D-106).
+    let light = match full.prop("color") {
+        Some(Arg::Expr { expr }) => match compile_expr(cm, expr, None) {
+            Ok((c, Type::Quantity { dim })) if dim == Dim::length() => Some(c),
+            _ => return Err(d("PK-E04", format!("a colour is a word ({}) or a wavelength of light, a length: `color: 650 nm` (D-106)", COLORS.join(", ")))),
+        },
+        _ => None,
+    };
+    Ok(CRep { rep: full.clone(), kind, when, across, light })
 }
 
 fn coords(v: &Value) -> Vec<f64> {
@@ -1733,6 +1769,23 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 Err(s) => status(s),
             }
         }
+        // D-106: a ray's direction on the screen is the projection of a step along it.
+        CKind::Ray { from, dir, back } => match (eval(from), eval(dir)) {
+            (Ok(p), Ok(v)) => {
+                let (p, v) = (coords(&p), coords(&v));
+                let n = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+                let ViewCtx::Spatial { px_per_m, .. } = ctx else { unreachable!() };
+                let step = if n > 0.0 { 1.0 / px_per_m.max(1e-300) } else { 0.0 };
+                let q: Vec<f64> = (0..p.len()).map(|i| p[i] + v.get(i).copied().unwrap_or(0.0) / n.max(1e-300) * step).collect();
+                let (a, b) = (ctx.to_view(&p), ctx.to_view(&q));
+                let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+                let toward = if len > 0.0 { [(b[0] - a[0]) / len, (b[1] - a[1]) / len] } else { [0.0, 0.0] };
+                let shown = fmt_value(&Value::Vec(prismal_kernel::Arr::from_slice(&v)), &Type::Vector { space: String::new(), dim: Dim::NONE });
+                let text = format!("ray from {} along {shown}{}", ctx.at_text(&p), back.as_ref().map(|b| format!(", extended back {b}")).unwrap_or_default());
+                (Shape::Ray { from: a, toward, back: back.clone() }, text)
+            }
+            (Err(s), _) | (_, Err(s)) => status(s),
+        },
         CKind::Segment { a, b } => match (eval(a), eval(b)) {
             (Ok(x), Ok(y)) => {
                 if three {
@@ -1749,7 +1802,8 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     ViewCtx::Plot { sample_x: Some(s), .. } => (&s.0, &s.1),
                     _ => (lo, hi),
                 };
-                let n = 100;
+                // Enough samples for fringes and sharp peaks across the range (D-107).
+                let n = 400;
                 let mut pts = Vec::with_capacity(n + 1);
                 for i in 0..=n {
                     let x = lo + (hi - lo) * i as f64 / n as f64;
@@ -2060,6 +2114,9 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                         pts.push(ctx.to_view(&coords(&v)));
                         world.push(coords(&v));
                     }
+                    // D-106: a polyline ends at its first point that is not available (a ray
+                    // that leaves the last surface it meets), when two points come before it.
+                    Err(_) if !*closed && pts.len() >= 2 => break,
                     Err(s) => {
                         let (sh, tx) = status(s);
                         return RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape: sh, text: tx, highlighted: false, valid: None, opacity: None, drawn: None, label: None, drag: None, click: None, color: None, line: None, color_to: None, color_mix: None, scale: None, width: None, breaks: vec![], opaque: false, geo: None };
@@ -2069,7 +2126,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
             if three {
                 geo = path(&world, *closed);
             }
-            let text = format!("{} through {} points", r.rep.kind, pts.len());
+            let text = if pts.len() < points.len() { format!("{} through {} of its {} points, up to the first not available", r.rep.kind, pts.len(), points.len()) } else { format!("{} through {} points", r.rep.kind, pts.len()) };
             (if *closed { Shape::Polygon { points: pts } } else { Shape::Polyline { points: pts } }, text)
         }
         CKind::Round { center, rx, ry, rotate, from, to, normal } => {
@@ -2258,10 +2315,42 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
         Some(e) => format!("{text}, activate: {e}"),
         None => text,
     };
-    let (color, line) = (style_word(&r.rep, "color"), style_word(&r.rep, "line"));
+    let (mut color, line) = (style_word(&r.rep, "color"), style_word(&r.rep, "line"));
+    // D-106: the colour of light of a wavelength, evaluated on the state shown.
+    if let Some(c) = &r.light {
+        if let Ok(Value::Num(l)) = run.eval_state(c, vals, t) {
+            color = Some(spectral(l));
+        }
+    }
     let width = style_width(&r.rep);
     let opaque = style_opaque(&r.rep);
     RepFrame { id: r.rep.id.clone(), kind: r.rep.kind.clone(), name: r.rep.name.clone(), shape, text, highlighted: false, valid: None, opacity: None, drawn: None, label, drag, click, color, line, color_to: None, color_mix: None, scale: None, width, breaks, opaque, geo }
+}
+
+/// The colour of light of wavelength `l` metres as `#rrggbb` (D-106): the visible spectrum from
+/// 380 nm (violet) to 750 nm (red), dimming toward its ends; outside it, gray, light no eye
+/// sees. A piecewise linear fit to the colour of each wavelength, as textbook spectra draw it.
+pub fn spectral(l: f64) -> String {
+    let nm = l * 1e9;
+    if !(380.0..=750.0).contains(&nm) {
+        return "#808080".into();
+    }
+    let (r, g, b) = match nm {
+        x if x < 440.0 => (-(x - 440.0) / 60.0, 0.0, 1.0),
+        x if x < 490.0 => (0.0, (x - 440.0) / 50.0, 1.0),
+        x if x < 510.0 => (0.0, 1.0, -(x - 510.0) / 20.0),
+        x if x < 580.0 => ((x - 510.0) / 70.0, 1.0, 0.0),
+        x if x < 645.0 => (1.0, -(x - 645.0) / 65.0, 0.0),
+        _ => (1.0, 0.0, 0.0),
+    };
+    // The eye sees the ends of the spectrum dimly.
+    let k = match nm {
+        x if x < 420.0 => 0.3 + 0.7 * (x - 380.0) / 40.0,
+        x if x > 700.0 => 0.3 + 0.7 * (750.0 - x) / 50.0,
+        _ => 1.0,
+    };
+    let c = |v: f64| ((v * k).clamp(0.0, 1.0).powf(0.8) * 255.0).round() as u8;
+    format!("#{:02x}{:02x}{:02x}", c(r), c(g), c(b))
 }
 
 fn norm3(a: &[f64; 3]) -> f64 {

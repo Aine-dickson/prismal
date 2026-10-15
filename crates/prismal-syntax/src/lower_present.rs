@@ -22,7 +22,7 @@ pub const EXPLORE_CONTROLS: &[&str] = &["restart", "reseed"];
 /// Representation kinds of the first slice (PK-6.3).
 const KINDS: &[&str] = &[
     "marker", "arrow", "segment", "polyline", "polygon", "circle", "ellipse", "arc", "trace", "function_graph", "series_plot", "axes", "grid", "label",
-    "equation", "formula", "table", "slider", "number_input", "toggle", "select", "button", "group", "text", "title", "histogram", "heatmap",
+    "equation", "formula", "table", "slider", "number_input", "toggle", "select", "button", "group", "text", "title", "histogram", "heatmap", "ray",
 ];
 
 /// The named options each representation kind takes, besides `when` (D-081). A name not in
@@ -37,6 +37,7 @@ fn options(kind: &str) -> &'static [&'static str] {
         "circle" => &["normal", "color", "line", "width", "opaque"],
         "ellipse" => &["rotate", "normal", "color", "line", "width", "opaque"],
         "arc" => &["from", "to", "normal", "color", "line", "width"],
+        "ray" => &["back", "color", "line", "width"],
         "text" => &["at", "align"],
         "formula" | "equation" => &["live"],
         "slider" => &["range", "step", "ends"],
@@ -262,8 +263,10 @@ impl PresCx<'_, '_> {
             }
             let value = match (&a.value.kind, a.name.as_ref().map(|n| n.text.as_str())) {
                 (ExprKind::Str(s), _) => Arg::Text { text: s.clone() },
-                // Style words (D-061): `color: blue`, `line: dashed`.
-                (ExprKind::Name(w), Some("color" | "line" | "align")) => Arg::Word { word: w.clone() },
+                // Style words (D-061): `color: blue`, `line: dashed`. A colour that names a
+                // binding is a wavelength of light (D-106), an expression as `color: 650 nm` is.
+                (ExprKind::Name(w), Some("color")) if !self.cx.bindings.contains_key(w) => Arg::Word { word: w.clone() },
+                (ExprKind::Name(w), Some("line" | "align" | "back")) => Arg::Word { word: w.clone() },
                 // `label: none`: no label drawn beside the representation (D-078).
                 (ExprKind::Name(w), Some("label")) if w == "none" => Arg::Word { word: w.clone() },
                 (ExprKind::List(_), _) => match self.range(&a.value) {

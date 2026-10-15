@@ -57,6 +57,8 @@ pub enum Value {
     Func(Rc<CExpr>),
     /// A field's value in each cell of its grid (MK-9.4, D-091).
     Field(Rc<Vec<f64>>),
+    /// A derived binding with no value, and why (MK-5.2, D-106): reading it gives the status.
+    Absent(Rc<Status>),
 }
 
 impl PartialEq for Value {
@@ -73,6 +75,7 @@ impl PartialEq for Value {
             (Case(a), Case(b)) => a == b,
             (Func(a), Func(b)) => Rc::ptr_eq(a, b),
             (Field(a), Field(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.to_bits() == y.to_bits()),
+            (Absent(a), Absent(b)) => a == b,
             _ => false,
         }
     }
@@ -97,6 +100,7 @@ impl fmt::Display for Value {
             Value::Case(c) => write!(f, "case {c}"),
             Value::Func(_) => write!(f, "<function>"),
             Value::Field(d) => write!(f, "<field of {} cells>", d.len()),
+            Value::Absent(s) => write!(f, "<not available: {}>", s.cause),
         }
     }
 }
@@ -195,7 +199,8 @@ pub enum CExpr {
     Payload(usize),
     /// The smallest or largest value among the terms whose condition holds; no value when
     /// none holds (D-057).
-    Extreme(Func, Vec<(CExpr, CExpr)>),
+    /// With values (D-106): the value whose term is the smallest.
+    Extreme(Func, Vec<(CExpr, CExpr)>, Vec<CExpr>),
     /// The item whose number, from 1, the first expression gives; only it is evaluated (D-058).
     Pick(Box<CExpr>, Vec<CExpr>),
     /// A draw (MK-10.4, D-083).
@@ -574,7 +579,11 @@ impl CExpr {
         use Value::*;
         match self {
             CExpr::Const(v) => Ok(v.clone()),
-            CExpr::Load(i) => Ok(c.vals[*i].clone()),
+            // A derived binding with no value gives its status (MK-5.2, D-106).
+            CExpr::Load(i) => match &c.vals[*i] {
+                Value::Absent(s) => Err((**s).clone()),
+                v => Ok(v.clone()),
+            },
             CExpr::Arg(i) => Ok(c.args[*i].clone()),
             CExpr::Time => Ok(Num(c.t)),
             CExpr::Time0 => Ok(Num(c.t0)),
@@ -731,7 +740,23 @@ impl CExpr {
                     _ => Err(Status::invalid(format!("no member number {k}"))),
                 }
             }
-            CExpr::Extreme(f, terms) => {
+            // `first` (D-106): the value at the smallest key; the first member wins a tie.
+            CExpr::Extreme(_, terms, values) if !values.is_empty() => {
+                let mut best: Option<(f64, usize)> = None;
+                for (k, (w, v)) in terms.iter().enumerate() {
+                    if w.eval(c)?.boolean() {
+                        let x = v.eval(c)?.num();
+                        if best.is_none_or(|(b, _)| x < b) {
+                            best = Some((x, k));
+                        }
+                    }
+                }
+                match best {
+                    Some((_, k)) => values[k].eval(c),
+                    None => Err(Status::invalid("`first` over no member has no value")),
+                }
+            }
+            CExpr::Extreme(f, terms, _) => {
                 let mut best: Option<f64> = None;
                 for (w, v) in terms {
                     if w.eval(c)?.boolean() {

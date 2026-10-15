@@ -486,7 +486,8 @@ function drawRep(v, g, r, u, colorIndex) {
   if (colored) cls.push('styled');
   const grp = svg('g', { class: cls.join(' '), 'data-rep': r.id }, g);
   if (colored) {
-    const from = r.color ? `var(--color-${r.color})` : ownColor(r, colorIndex);
+    // A colour of light comes as `#rrggbb` (D-106); other colours are palette names.
+    const from = r.color ? (r.color.startsWith('#') ? r.color : `var(--color-${r.color})`) : ownColor(r, colorIndex);
     const c = r.color_to ? `color-mix(in srgb, ${from} ${Math.round((1 - r.color_mix) * 1000) / 10}%, var(--color-${r.color_to}))` : from;
     grp.style.setProperty('--c', c);
   }
@@ -592,6 +593,18 @@ function drawRep(v, g, r, u, colorIndex) {
       svg('image', { class: 'raster', href: canvas.toDataURL(), x: Math.min(fx, tx), y: Math.min(fy, ty), width: Math.abs(tx - fx), height: Math.abs(ty - fy), preserveAspectRatio: 'none', style: 'image-rendering: pixelated' }, grp);
       break;
     }
+    case 'ray': {
+      // A ray (D-106): to the edge of the view, and back behind its start when asked.
+      const [fx, fy] = m.to(r.from), far = 1e5;
+      const [dx, dy] = r.toward;
+      svg('line', { class: 'segment', x1: fx, y1: fy, x2: fx + dx * far, y2: fy + dy * far, 'stroke-width': 2 * u }, grp);
+      if (r.back && r.back !== 'none') {
+        const back = svg('line', { class: 'segment back', x1: fx, y1: fy, x2: fx - dx * far, y2: fy - dy * far, 'stroke-width': 1.5 * u }, grp);
+        if (r.back !== 'solid') back.style.strokeDasharray = r.back === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
+        if (r.back === 'dotted') back.style.strokeLinecap = 'round';
+      }
+      break;
+    }
     case 'polygon': {
       const pts = r.points.map((p) => m.to(p).join(',')).join(' ');
       // An opaque body (D-104) hides what is behind it: the surface under its tint.
@@ -625,9 +638,9 @@ function drawRep(v, g, r, u, colorIndex) {
     }
   }
   if (r.line && r.drawn == null && r.valid !== false) {
-    // The author's line style (D-061), as prismal-svg draws it.
+    // The author's line style (D-061), as prismal-svg draws it; a ray's extension keeps its own.
     const dash = r.line === 'solid' ? 'none' : r.line === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
-    for (const e of grp.querySelectorAll('line, polyline, polygon, path')) {
+    for (const e of grp.querySelectorAll('line:not(.back), polyline, polygon, path')) {
       if (e.parentNode.classList.contains('arrow') && e.tagName === 'polygon') continue;
       e.style.strokeDasharray = dash;
       if (r.line === 'dotted') e.style.strokeLinecap = 'round';
@@ -921,7 +934,7 @@ function renderFrame(frame) {
       const top = svg('g', {}, v.svg);
       let arrows = 0;
       for (const r of vf.reps) {
-        if (['lines', 'point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note', 'raster'].includes(r.shape)) {
+        if (['lines', 'point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note', 'raster', 'ray'].includes(r.shape)) {
           // Draggable and clickable representations are drawn last and outside the plot's clip.
           drawRep(v, r.drag || r.click ? top : reps, r, u, r.shape === 'arrow' ? arrows++ : 0);
         } else if (!['axes', 'grid', 'title'].includes(r.shape)) {

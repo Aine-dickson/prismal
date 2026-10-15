@@ -307,7 +307,7 @@ impl Map {
     }
 }
 
-const DRAWN: [&str; 10] = ["lines", "point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note", "raster"];
+const DRAWN: [&str; 11] = ["lines", "point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note", "raster", "ray"];
 
 fn view_block(vl: &Json, vf: &Json, clip: usize, opts: &Options) -> Block {
     let th = &opts.theme;
@@ -570,7 +570,8 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
         "polyline" if r["kind"] == "trace" => th.muted,
         _ => th.accent,
     };
-    let author = r["color"].as_str().and_then(|c| th.color(c));
+    // A colour of light is given as `#rrggbb` (D-106); other colours are palette names.
+    let author = r["color"].as_str().and_then(|c| if c.starts_with('#') { Some(c) } else { th.color(c) });
     let custom: Option<String> = match (r["color_to"].as_str().and_then(|c| th.color(c)), r["color_mix"].as_f64()) {
         (Some(to), Some(k)) => Some(mix_hex(author.unwrap_or(own), to, k)),
         _ => author.map(String::from),
@@ -743,6 +744,38 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
                 let _ = write!(out, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>", n(x), n(y), n(cw.abs() + 0.5), n(ch.abs() + 0.5), palette(pal, v.as_f64().unwrap_or(0.0)));
             }
             out.push_str("</g>");
+        }
+        // A ray (D-106): to the edge of the drawing, and back behind its start when asked.
+        "ray" => {
+            let (f, d) = (pt(&r["from"]), pt(&r["toward"]));
+            let far = 1e5;
+            let _ = write!(
+                out,
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{}\"{style}/>",
+                n(f[0]),
+                n(f[1]),
+                n(f[0] + d[0] * far),
+                n(f[1] + d[1] * far),
+                custom.as_deref().unwrap_or(th.reps[0]),
+                n(2.0 * u * thick)
+            );
+            if let Some(b) = r["back"].as_str().filter(|b| *b != "none") {
+                let dash = match b {
+                    "dashed" => format!(" stroke-dasharray=\"{} {}\"", n(6.0 * u), n(4.0 * u)),
+                    "dotted" => format!(" stroke-dasharray=\"{} {}\" stroke-linecap=\"round\"", n(0.01 * u), n(4.0 * u)),
+                    _ => String::new(),
+                };
+                let _ = write!(
+                    out,
+                    "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{}\"{dash}/>",
+                    n(f[0]),
+                    n(f[1]),
+                    n(f[0] - d[0] * far),
+                    n(f[1] - d[1] * far),
+                    custom.as_deref().unwrap_or(th.reps[0]),
+                    n(1.5 * u * thick)
+                );
+            }
         }
         "polygon" => {
             // An opaque body (D-104) hides what is behind it: the surface under its tint.

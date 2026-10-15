@@ -198,6 +198,16 @@ for (const [key, pres, want] of [['g22-refraction', 'RefractionLab', 4], ['g22-l
   await shot(key);
 }
 
+// Ray optics continued (D-106): a ray to the edge with a dotted back-extension; wave optics
+// (D-107): a moving interference field.
+await open('g22-concave/MirrorLab');
+const backs = await count('#views line.back');
+check('a mirror lab draws dotted back-extensions of its rays', backs === 2, `${backs} back-extensions`);
+await shot('g22-concave');
+await open('g24-ripples/RippleLab@2');
+check('two sources interfere in a heatmap', (await count('#views image.raster')) === 1);
+await shot('g24-ripples');
+
 // The spoon example (D-094): a select chooses the material; the choice survives a restart.
 // Line ends normalized: a checkout on Windows may write \r\n.
 const md = readFileSync(join(web, '..', 'examples', 'heat.md'), 'utf8').replace(/\r\n/g, '\n');

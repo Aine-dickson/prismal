@@ -732,11 +732,12 @@ impl<'a> ModelCx<'a> {
             "any" => Agg::Any,
             "all" => Agg::All,
             "count" => Agg::Count,
+            "first" => Agg::First,
             _ => return None,
         };
         let [arg] = args else { return None };
         match &arg.value.kind {
-            ExprKind::Aggregate { body, var, over, filter, .. } => {
+            ExprKind::Aggregate { body, var, over, filter, by, .. } => {
                 let Some(p) = self.part_ref(&over.text).ok() else {
                     self.err("SX-E03", format!("unknown collection `{}`", over.text), over.span);
                     return Some(Self::placeholder());
@@ -747,13 +748,26 @@ impl<'a> ModelCx<'a> {
                 self.vars.push((var.text.clone(), p.object.clone()));
                 let body = if agg == Agg::Count { None } else { Some(Box::new(self.expr(body, locals))) };
                 let filter = filter.as_ref().map(|f| Box::new(self.expr(f, locals)));
+                // D-106: `first` orders the members by a key; the others take none.
+                let by = match (by, agg) {
+                    (Some(k), Agg::First) => Some(Box::new(self.expr(k, locals))),
+                    (None, Agg::First) => {
+                        self.err("SX-E02", "`first` takes the members in order of a key: `first(b.n for b in walls if c by d(b))`", span);
+                        None
+                    }
+                    (Some(k), _) => {
+                        self.err("SX-E02", format!("`by` orders the members for `first`; `{name}` takes them all"), k.span);
+                        None
+                    }
+                    (None, _) => None,
+                };
                 self.vars.pop();
-                Some(Expr::Aggregate { aggregate: agg, var: var.text.clone(), over: p.id, body, filter })
+                Some(Expr::Aggregate { aggregate: agg, var: var.text.clone(), over: p.id, body, filter, by })
             }
             // `count(drops)`, `count(left.atoms)` (D-065).
             _ if agg == Agg::Count && Self::dotted(&args[0].value).is_some_and(|n| self.part_ref(&n).is_ok_and(|p| p.many)) => {
                 let p = self.part_ref(&Self::dotted(&args[0].value).unwrap()).ok()?;
-                Some(Expr::Aggregate { aggregate: agg, var: "_".into(), over: p.id, body: None, filter: None })
+                Some(Expr::Aggregate { aggregate: agg, var: "_".into(), over: p.id, body: None, filter: None, by: None })
             }
             _ if agg == Agg::Count => {
                 self.err("SX-E08", "`count` takes a collection: `count(row)`, or `count(b for b in row if c)`", span);
