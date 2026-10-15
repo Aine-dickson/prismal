@@ -44,8 +44,9 @@ fn hit_plane(p: Point, d: Vector<1>, a: Point, n: Vector<1>): Point = p + dot(a 
 fn plane_distance(p: Point, d: Vector<1>, a: Point, n: Vector<1>): Length = dot(a - p, n) / dot(direction(d), n)
 
 /// Whether a ray from `p` along `d` meets, ahead of `p`, the flat mirror (in a plane, a
-/// segment) through `a` with normal `n` reaching `half` from `a` each way.
-fn meets_segment(p: Point, d: Vector<1>, a: Point, n: Vector<1>, half: Length): Boolean = plane_distance(p, d, a, n) > 1e-9 * half and |hit_plane(p, d, a, n) - a| <= half
+/// segment) through `a` with normal `n` reaching `half` from `a` each way. A ray along the
+/// mirror never meets it.
+fn meets_segment(p: Point, d: Vector<1>, a: Point, n: Vector<1>, half: Length): Boolean = if |dot(direction(d), n)| < 1e-12 * |n| then false else plane_distance(p, d, a, n) > 1e-9 * half and |hit_plane(p, d, a, n) - a| <= half
 
 /// How far along a ray from `p` along `d` its line passes closest to `c`.
 fn closest_along(p: Point, d: Vector<1>, c: Point): Length = dot(c - p, direction(d))
