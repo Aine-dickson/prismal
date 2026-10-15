@@ -155,6 +155,7 @@ impl ModelBuilder {
                 constraints: vec![],
                 enums: vec![],
                 grids: vec![],
+                frames: vec![],
                 functions: vec![],
                 notes: vec![],
             },

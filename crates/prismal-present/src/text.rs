@@ -306,6 +306,12 @@ pub fn print(e: &Expr, cm: &CModel, params: &[String]) -> String {
         Expr::Apply { apply, args } => format!("{}({})", wrap(apply, 8), args.iter().map(p).collect::<Vec<_>>().join(", ")),
         Expr::If { r#if, then, r#else } => format!("if {} then {} else {}", p(r#if), p(then), p(r#else)),
         Expr::Tuple { tuple } => format!("({})", tuple.iter().map(p).collect::<Vec<_>>().join(", ")),
+        // `v.in(F).x` (D-105).
+        Expr::In { r#in, frame, axis, .. } => {
+            let names = axes(cm.ir.default_space.as_deref());
+            let f = cm.ir.frames.iter().find(|f| &f.id == frame).map(|f| f.name.clone()).unwrap_or_else(|| frame.clone());
+            format!("{}.in({f}).{}", wrap(r#in, 8), names.get(*axis).cloned().unwrap_or_else(|| axis.to_string()))
+        }
         Expr::Comp { comp, axis } => {
             let space = match &**comp {
                 Expr::Ref { r#ref } => cm.ir.binding(r#ref).and_then(|b| match &b.ty {

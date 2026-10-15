@@ -30,3 +30,13 @@ fn spring_force(k: Quantity<M/T^2>, x: Length): Force = -k * x
 
 /// The period of small swings of a pendulum of length `L` where gravity is `g`.
 fn pendulum_period(L: Length, g: Acceleration): Time = 2 * π * sqrt(L / g)
+
+/// The Coriolis force on a mass `m` moving at velocity `v`, measured in a frame that turns at
+/// angular velocity `w` (along the axis it turns about, as long as its rate): `-2 m w × v`.
+/// It turns what moves in the frame without changing its speed. Spaces of three dimensions.
+fn coriolis(m: Mass, w: Vector<1/T>, v: Vector<Velocity>): Vector<Force> = -2 * m * cross(w, v)
+
+/// The centrifugal force on a mass `m` at displacement `r` from a point on the axis of a
+/// frame turning at angular velocity `w`: `-m w × (w × r)`, away from the axis, `m |w|² d` at
+/// a distance `d` from it. Spaces of three dimensions.
+fn centrifugal(m: Mass, w: Vector<1/T>, r: Vector<Length>): Vector<Force> = -1 * m * cross(w, cross(w, r))

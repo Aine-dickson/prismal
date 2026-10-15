@@ -111,6 +111,41 @@ impl<'a, 'b> Tc<'a, 'b> {
         self.scope.spaces.iter().find(|s| s.id == space).map(|s| s.dimension as usize)
     }
 
+    /// A declared frame's origin and axes, compiled (MK-4.2, D-105): the origin a point of the
+    /// model's space, the axes vectors of it of any dimension (a tuple of numbers is read as
+    /// one); `y` in a space of three dimensions and only there.
+    pub fn frame_parts(&mut self, f: &prismal_ir::FrameDecl) -> Option<(CExpr, CExpr, Option<CExpr>)> {
+        let Some(space) = self.scope.model.default_space.clone() else {
+            return self.err("MK-E01", format!("frame `{}` needs the model's space: `model M in Space`", f.name)).map(|_| unreachable!());
+        };
+        let n = self.space_dim(&space).unwrap_or(0);
+        let at = self.expect(&f.at, &Type::Point { space: space.clone() });
+        let axis = |tc: &mut Self, e: &Expr, what: &str| -> Option<CExpr> {
+            let (c, t) = match tc.expr(e, None)? {
+                (_, Type::Tuple { items }) => {
+                    let dim = items.iter().find_map(|i| match i {
+                        Type::Quantity { dim } if !dim.is_none() => Some(*dim),
+                        _ => None,
+                    });
+                    tc.expr(e, Some(&Type::Vector { space: space.clone(), dim: dim.unwrap_or(Dim::NONE) }))?
+                }
+                other => other,
+            };
+            match t {
+                Type::Vector { space: s, .. } if s == space => Some(c),
+                other => tc.err("MK-E01", format!("a frame's `{what}` is a vector of its space, not {}", show(&other))).map(|_| unreachable!()),
+            }
+        };
+        let x = axis(self, &f.x, "x");
+        let y = match (&f.y, n) {
+            (Some(y), 3) => Some(axis(self, y, "y")?),
+            (None, 3) => return self.err("MK-E01", format!("frame `{}` lies in a space of three dimensions: give its second axis, `y: v`", f.name)).map(|_| unreachable!()),
+            (Some(_), _) => return self.err("MK-E01", format!("frame `{}` lies in a plane: its second axis is its first turned a quarter turn, and takes no `y`", f.name)).map(|_| unreachable!()),
+            (None, _) => None,
+        };
+        Some((at?, x?, y))
+    }
+
     fn binding(&self, id: &str) -> Option<(usize, &'a Binding)> {
         self.scope.index.get(id).map(|&i| (i, &self.scope.model.bindings[i]))
     }
@@ -361,6 +396,32 @@ impl<'a, 'b> Tc<'a, 'b> {
                     types.push(t);
                 }
                 Some((CExpr::MakeTuple(items), Type::Tuple { items: types }))
+            }
+            // `e.in(F).x` (MK-4.6, D-105).
+            Expr::In { r#in, frame, axis, .. } => {
+                let Some(fr) = self.scope.model.frames.iter().find(|f| &f.id == frame) else {
+                    return self.err("MK-E01", format!("unknown frame `{frame}`"));
+                };
+                let (c, t) = self.expr(r#in, None)?;
+                let (point, dim) = match &t {
+                    Type::Point { .. } => (true, Dim::length()),
+                    Type::Vector { dim, .. } => (false, *dim),
+                    other => return self.err("MK-E01", format!("components in a frame are read of a point or a vector, not {}", show(other))),
+                };
+                let n = match &t {
+                    Type::Point { space } | Type::Vector { space, .. } => self.space_dim(space).unwrap_or(0),
+                    _ => 0,
+                };
+                if *axis >= n {
+                    return self.err("MK-E01", format!("a frame of a space of {n} dimensions has no component {axis}"));
+                }
+                // The frame is checked where it is declared; here its parts are compiled
+                // quietly.
+                let before = self.diags.len();
+                let parts = self.frame_parts(fr);
+                self.diags.truncate(before);
+                let (at, x, y) = parts?;
+                Some((CExpr::InFrame(Box::new(crate::eval::CInFrame { value: c, point, at, x, y, axis: *axis, n })), Type::Quantity { dim }))
             }
             Expr::Comp { comp, axis } => {
                 let (c, t) = self.expr(comp, None)?;
@@ -990,6 +1051,14 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     } else {
         model
     };
+    // D-105: each component read in a frame reads what the frame reads.
+    let framed;
+    let model = if !model.frames.is_empty() {
+        framed = prismal_ir::frames::with_reads(model);
+        &framed
+    } else {
+        model
+    };
     // D-101: each algorithm resumes from a hidden discrete binding.
     let resumed;
     let model = if model.events.iter().any(|e| e.algorithm.is_some() && !model.bindings.iter().any(|b| b.id == resume_id(&e.id))) {
@@ -1009,6 +1078,10 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     let grids = check_grids(spaces, model, &index, &funcs, &mut diags);
     let scope = Scope { spaces, model, index: &index, funcs: &funcs, grids: &grids };
     check_boundaries(model, &grids, &mut diags);
+    // D-105: each declared frame's origin and axes, checked once where it is declared.
+    for f in &model.frames {
+        Tc::new(&scope, &mut diags, &f.id).frame_parts(f);
+    }
 
     // Bindings: initial definitions and definitions.
     let mut cbindings = vec![];

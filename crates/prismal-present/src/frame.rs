@@ -403,11 +403,11 @@ fn axes_3d(ctx: &ViewCtx) -> (Shape, String, Geo) {
         let mut b = [0.0; 3];
         a[i] = -l;
         b[i] = l;
-        lines.push([ctx.to_view(&a), ctx.to_view(&b)]);
+        lines.push([ctx.project(&a), ctx.project(&b)]);
         world.push([a, b]);
         let mut at = [0.0; 3];
         at[i] = l * 1.08;
-        labels.push(LineLabel { text: format!("{name} (m)"), at: ctx.to_view(&at) });
+        labels.push(LineLabel { text: format!("{name} (m)"), at: ctx.project(&at) });
     }
     (Shape::Lines { lines, labels }, "axes x, y and z".into(), Geo::Lines(world))
 }
@@ -427,7 +427,7 @@ fn grid_3d(ctx: &ViewCtx) -> (Shape, String, Geo) {
         world.push([[g, -e, 0.0], [g, e, 0.0]]);
         world.push([[-e, g, 0.0], [e, g, 0.0]]);
     }
-    let lines = world.iter().map(|[a, b]| [ctx.to_view(a), ctx.to_view(b)]).collect();
+    let lines = world.iter().map(|[a, b]| [ctx.project(a), ctx.project(b)]).collect();
     (Shape::Lines { lines, labels: vec![] }, format!("grid in the x y plane, {} m apart", fmt_num(step)), Geo::Lines(world))
 }
 
@@ -496,12 +496,45 @@ pub fn pad3(a: &[f64]) -> [f64; 3] {
     [a.first().copied().unwrap_or(0.0), a.get(1).copied().unwrap_or(0.0), a.get(2).copied().unwrap_or(0.0)]
 }
 
+/// A view drawn as seen from a declared frame (D-105): the frame's compiled origin and axes,
+/// the dimension of its space, and where it is on the state the view is drawn at.
+#[derive(Clone, Debug)]
+pub struct Moving {
+    parts: std::rc::Rc<(CExpr, CExpr, Option<CExpr>)>,
+    n: usize,
+    at: [f64; 3],
+    axes: [[f64; 3]; 3],
+}
+
+impl Moving {
+    /// The frame where it is on a state; where it was when it is not available there.
+    fn on(&self, run: &Run, vals: &[Value], t: f64) -> Moving {
+        let (at, x, y) = &*self.parts;
+        let ev = |c: &CExpr| run.eval_state(c, vals, t).ok();
+        let y = match y {
+            Some(c) => match ev(c) {
+                Some(v) => Some(v),
+                None => return self.clone(),
+            },
+            None => None,
+        };
+        match (ev(at), ev(x)) {
+            (Some(a), Some(xv)) => match prismal_kernel::frame_axes(a, xv, y, self.n) {
+                Ok((at, axes)) => Moving { at, axes, ..self.clone() },
+                Err(_) => self.clone(),
+            },
+            _ => self.clone(),
+        }
+    }
+}
+
 /// The coordinate context of a view (PK-7.2, PK-7.3).
 #[derive(Clone, Debug)]
 pub enum ViewCtx {
     /// `look`: for a space of three dimensions, the directions of the view's right and up
-    /// and toward the viewer (PK-7.2a, D-100).
-    Spatial { space: Id, px_per_m: f64, y_up: bool, look: Option<Look> },
+    /// and toward the viewer (PK-7.2a, D-100). `moving`: the frame the view is drawn in,
+    /// when it is not the standard one (D-105).
+    Spatial { space: Id, px_per_m: f64, y_up: bool, look: Option<Look>, moving: Option<Moving> },
     /// Ranges in coherent SI units, and the dimension of each axis (PK-7.3); the axes that
     /// follow the data and each axis's display unit (D-070).
     /// `sample_x`: the `x` range a host shows when the learner has zoomed or panned, over
@@ -515,7 +548,7 @@ impl ViewCtx {
     pub fn of(cm: &CModel, v: &View) -> Result<ViewCtx, PDiag> {
         let err = |code, message: String| PDiag { code, message, element: v.id.clone() };
         match &v.kind {
-            ViewKind::Spatial { space, scale, y_up, look, .. } => {
+            ViewKind::Spatial { space, scale, y_up, look, frame, .. } => {
                 let Some(sp) = cm.spaces.iter().find(|s| &s.id == space) else {
                     return Err(err("PK-E01", format!("unknown space `{space}` (PK-2.3)")));
                 };
@@ -531,7 +564,29 @@ impl ViewCtx {
                     Ok((_, Type::Quantity { dim })) if dim == Dim::length() => number(cm, &scale.quantity).map_err(|m| err("PK-E02", m))?,
                     _ => return Err(err("PK-E04", "a spatial view's scale maps a length to pixels: `1 m -> 40 px` (PK-5.5)".into())),
                 };
-                Ok(ViewCtx::Spatial { space: space.clone(), px_per_m: scale.px / q, y_up: *y_up, look })
+                // D-105: a view drawn in a declared frame, which may move.
+                let moving = match frame {
+                    None => None,
+                    Some(f) => {
+                        let Some(fr) = cm.ir.frames.iter().find(|x| &x.id == f) else { return Err(err("PK-E01", format!("unknown frame `{f}`"))) };
+                        let ce = |e: &Expr, exp: Option<&Type>| compile_expr(cm, e, exp).map_err(|ds| err("PK-E02", ds.iter().map(|x| format!("{}: {}", x.code, x.message)).collect::<Vec<_>>().join("; ")));
+                        let at = ce(&fr.at, Some(&Type::Point { space: space.clone() }))?.0;
+                        let axis = |e: &Expr| -> Result<CExpr, PDiag> {
+                            match ce(e, None)? {
+                                (_, Type::Tuple { .. }) => Ok(ce(e, Some(&Type::Vector { space: space.clone(), dim: Dim::NONE }))?.0),
+                                (c, _) => Ok(c),
+                            }
+                        };
+                        let x = axis(&fr.x)?;
+                        let y = match &fr.y {
+                            Some(y) => Some(axis(y)?),
+                            None => None,
+                        };
+                        let first = Moving { parts: std::rc::Rc::new((at, x, y)), n: sp.dimension as usize, at: [0.0; 3], axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] };
+                        Some(first)
+                    }
+                };
+                Ok(ViewCtx::Spatial { space: space.clone(), px_per_m: scale.px / q, y_up: *y_up, look, moving })
             }
             ViewKind::Plot { x, y, follow, units, window } => {
                 let n = |e: &Expr| number(cm, e).map_err(|m| err("PK-E02", m));
@@ -575,8 +630,57 @@ impl ViewCtx {
     }
 
     /// Model coordinates to view coordinates. In a view of a space of three dimensions, the
-    /// point is projected along the view's depth (D-100).
+    /// point is projected along the view's depth (D-100); in a view drawn in a frame, it is
+    /// read in the frame first (D-105).
     pub fn to_view(&self, p: &[f64]) -> [f64; 2] {
+        self.project(&self.local(p))
+    }
+
+    /// The frame a view is drawn in, on a state (D-105); the view itself when it is drawn in
+    /// the standard frame.
+    pub fn at_state(&self, run: &Run, vals: &[Value], t: f64) -> ViewCtx {
+        match self {
+            ViewCtx::Spatial { space, px_per_m, y_up, look, moving: Some(m) } => ViewCtx::Spatial { space: space.clone(), px_per_m: *px_per_m, y_up: *y_up, look: *look, moving: Some(m.on(run, vals, t)) },
+            other => other.clone(),
+        }
+    }
+
+    /// A point's coordinates in the frame the view is drawn in (D-105).
+    pub fn local(&self, p: &[f64]) -> Vec<f64> {
+        match self {
+            ViewCtx::Spatial { moving: Some(m), .. } => {
+                let q = pad3(p);
+                let d = [q[0] - m.at[0], q[1] - m.at[1], q[2] - m.at[2]];
+                (0..p.len()).map(|k| d[0] * m.axes[k][0] + d[1] * m.axes[k][1] + d[2] * m.axes[k][2]).collect()
+            }
+            _ => p.to_vec(),
+        }
+    }
+
+    /// A vector's components in the frame the view is drawn in (D-105).
+    pub fn local_vec(&self, v: &[f64]) -> Vec<f64> {
+        match self {
+            ViewCtx::Spatial { moving: Some(m), .. } => {
+                let q = pad3(v);
+                (0..v.len()).map(|k| q[0] * m.axes[k][0] + q[1] * m.axes[k][1] + q[2] * m.axes[k][2]).collect()
+            }
+            _ => v.to_vec(),
+        }
+    }
+
+    /// A point given in the frame the view is drawn in, in model coordinates (D-105).
+    pub fn global(&self, l: &[f64]) -> Vec<f64> {
+        match self {
+            ViewCtx::Spatial { moving: Some(m), .. } => {
+                let q = pad3(l);
+                (0..l.len()).map(|i| m.at[i] + (0..3).map(|k| q[k] * m.axes[k][i]).sum::<f64>()).collect()
+            }
+            _ => l.to_vec(),
+        }
+    }
+
+    /// Coordinates in the frame the view is drawn in, to view coordinates.
+    pub fn project(&self, p: &[f64]) -> [f64; 2] {
         let (x, y) = (p.first().copied().unwrap_or(0.0), p.get(1).copied().unwrap_or(0.0));
         match self {
             ViewCtx::Spatial { px_per_m, look: Some(l), .. } => {
@@ -599,17 +703,19 @@ impl ViewCtx {
     /// The same view looking from `look` (D-104).
     pub fn looking(&self, look: Look) -> ViewCtx {
         match self {
-            ViewCtx::Spatial { space, px_per_m, y_up, look: Some(_) } => ViewCtx::Spatial { space: space.clone(), px_per_m: *px_per_m, y_up: *y_up, look: Some(look) },
+            ViewCtx::Spatial { space, px_per_m, y_up, look: Some(_), moving } => ViewCtx::Spatial { space: space.clone(), px_per_m: *px_per_m, y_up: *y_up, look: Some(look), moving: moving.clone() },
             other => other.clone(),
         }
     }
 
     /// A pointer position in view coordinates as a point of a view of three dimensions
-    /// (D-104): where the line of sight through it meets the plane through `through` with
-    /// normal `across`, or, without a normal, the plane facing the viewer. `None` when the
-    /// line of sight runs along the plane.
+    /// (D-104), in model coordinates: where the line of sight through it meets the plane
+    /// through `through` (given in the view's frame, D-105) with normal `across` (a vector of
+    /// the model), or, without a normal, the plane facing the viewer. `None` when the line of
+    /// sight runs along the plane.
     pub fn pointer3(&self, p: [f64; 2], through: [f64; 3], across: Option<[f64; 3]>) -> Option<[f64; 3]> {
         let ViewCtx::Spatial { px_per_m, look: Some(l), .. } = self else { return None };
+        let across = across.map(|n| pad3(&self.local_vec(&n)));
         let (a, b) = (p[0] / px_per_m, -p[1] / px_per_m);
         // The point under the pointer in the plane through the origin facing the viewer, where
         // perspective leaves the scale as it is, and the direction of the line of sight there.
@@ -625,12 +731,14 @@ impl ViewCtx {
             return None;
         }
         let s = dot(&n, &[through[0] - q[0], through[1] - q[1], through[2] - q[2]]) / den;
-        Some(std::array::from_fn(|i| q[i] + s * dir[i]))
+        let hit: [f64; 3] = std::array::from_fn(|i| q[i] + s * dir[i]);
+        Some(pad3(&self.global(&hit)))
     }
 
     /// A vector's components as a displacement in view pixels, at `px_per_unit` pixels per
     /// unit of its dimension (arrows).
     pub fn vec_px(&self, c: &[f64], px_per_unit: f64) -> [f64; 2] {
+        let c = &self.local_vec(c)[..];
         match self {
             ViewCtx::Spatial { look: Some(l), .. } => [Look::dot(&l.right, c) * px_per_unit, -Look::dot(&l.up, c) * px_per_unit],
             ViewCtx::Spatial { y_up, .. } => {
@@ -675,8 +783,8 @@ impl ViewCtx {
     /// the value of a drag on a member of the group.
     pub fn pointer_in(&self, p: [f64; 2], tf: &Tf) -> Expr {
         match self {
-            ViewCtx::Spatial { space, px_per_m, y_up, look: None } => {
-                let m = [p[0] / px_per_m, if *y_up { -p[1] } else { p[1] } / px_per_m];
+            ViewCtx::Spatial { space, px_per_m, y_up, look: None, .. } => {
+                let m = self.global(&[p[0] / px_per_m, if *y_up { -p[1] } else { p[1] } / px_per_m]);
                 let l = tf.unapply(&m);
                 origin(space) + tuple(vec![num(l[0], "m"), num(l[1], "m")])
             }
@@ -700,13 +808,14 @@ impl ViewCtx {
             // viewer (D-100).
             ViewCtx::Spatial { space, px_per_m, look: Some(l), .. } => {
                 let (a, b) = (p[0] / px_per_m, -p[1] / px_per_m);
-                let c: Vec<Expr> = (0..3).map(|i| num(a * l.right[i] + b * l.up[i], "m")).collect();
-                origin(space) + tuple(c)
+                let g = self.global(&(0..3).map(|i| a * l.right[i] + b * l.up[i]).collect::<Vec<f64>>());
+                origin(space) + tuple(g.iter().map(|x| num(*x, "m")).collect())
             }
             ViewCtx::Spatial { space, px_per_m, y_up, .. } => {
                 let x = p[0] / px_per_m;
                 let y = if *y_up { -p[1] } else { p[1] } / px_per_m;
-                origin(space) + tuple(vec![num(x, "m"), num(y, "m")])
+                let g = self.global(&[x, y]);
+                origin(space) + tuple(vec![num(g[0], "m"), num(g[1], "m")])
             }
             ViewCtx::Plot { dims, .. } => tuple(vec![si_num(p[0], &dims.0), si_num(p[1], &dims.1)]),
             ViewCtx::Panel => tuple(vec![prismal_ir::build::lit(p[0]), prismal_ir::build::lit(p[1])]),
@@ -1577,13 +1686,15 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
     // In a view of three dimensions, the representation in model coordinates (D-104).
     let three = ctx.is_3d();
     let mut geo: Option<Geo> = None;
-    let path = |pts: &[Vec<f64>], closed: bool| Some(Geo::Path { points: pts.iter().map(|p| pad3(p)).collect(), closed });
+    // In the view's own frame (D-105), where depth is measured.
+    let path = |pts: &[Vec<f64>], closed: bool| Some(Geo::Path { points: pts.iter().map(|p| pad3(&ctx.local(p))).collect(), closed });
+    let spot = |p: &[f64]| Geo::Point(pad3(&ctx.local(p)));
     let (shape, text) = match &r.kind {
         CKind::Marker { pos, label } => match eval(pos) {
             Ok(v) => {
                 let c = coords(&v);
                 if three {
-                    geo = Some(Geo::Point(pad3(&c)));
+                    geo = Some(spot(&c));
                 }
                 (Shape::Point { at: ctx.to_view(&c) }, format!("{label} at {}", ctx.at_text(&c)))
             }
@@ -1713,9 +1824,12 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                     breaks.push(pts.len());
                 }
                 prev = Some(s);
-                pts.push(ctx.to_view(&coords(&v)));
+                // D-105: each sample is read in the view's frame as it was at that instant.
+                let cs = ctx.at_state(run, &st, s);
+                let l = cs.local(&coords(&v));
+                pts.push(ctx.project(&l));
                 if three {
-                    world.push(coords(&v));
+                    world.push(ctx.global(&l));
                 }
             }
             if three {
@@ -1879,7 +1993,7 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                 None => (Shape::Text { value: s.clone() }, s),
                 Some(Ok(p)) => {
                     if three {
-                        geo = Some(Geo::Point(pad3(&coords(&p))));
+                        geo = Some(spot(&coords(&p)));
                     }
                     (Shape::Note { at: ctx.to_view(&coords(&p)), value: s.clone(), align: align.clone() }, s)
                 }
@@ -1983,9 +2097,9 @@ fn project_in(cm: &CModel, ctx: &ViewCtx, r: &CRep, run: &Run, vals: &[Value], t
                         // D-100: in three dimensions a circle is a disc facing the viewer, a
                         // sphere's outline, enlarged by perspective as its centre is (D-104).
                         if r.rep.kind == "circle" && normal.is_none() {
-                            let px = a * px_per_m * l.factor(&c);
+                            let px = a * px_per_m * l.factor(&ctx.local(&c));
                             let shape = Shape::Ellipse { center: ctx.to_view(&c), radii: [px, px], rotation: 0.0, start: 0.0, sweep: std::f64::consts::TAU, closed: true };
-                            geo = Some(Geo::Sphere { center: pad3(&c), radius: a });
+                            geo = Some(Geo::Sphere { center: pad3(&ctx.local(&c)), radius: a });
                             break 'round (shape, format!("circle{name} around {}, radius {} m", ctx.at_text(&c), fmt_num(a)));
                         }
                         // D-104: a round shape in the plane of its normal, the floor of the
@@ -2484,10 +2598,11 @@ impl Projector {
     /// A view's coordinate context on a state, looking as it was drawn there (D-104).
     pub fn ctx_at(&self, view: Option<&str>, run: &Run, vals: &[Value], t: f64) -> ViewCtx {
         let ctx = self.ctx(view);
-        match view.and_then(|v| self.look(v, run, vals, t, &[])) {
+        let ctx = match view.and_then(|v| self.look(v, run, vals, t, &[])) {
             Some(l) => ctx.looking(l),
             None => ctx,
-        }
+        };
+        ctx.at_state(run, vals, t)
     }
 
     /// Turns a view of three dimensions to an azimuth and an elevation in radians, the
@@ -2510,14 +2625,11 @@ impl Projector {
     pub fn frame_turned(&self, cm: &CModel, run: &Run, vals: &[Value], t: f64, extra: &[(Option<Id>, CRep)], turns: &[Turn]) -> (Vec<ViewFrame>, Vec<RepFrame>) {
         let mut out = vec![];
         for (id, ctx, reps) in &self.views {
-            let turned;
             let ctx = match self.look(id, run, vals, t, turns) {
-                Some(l) => {
-                    turned = ctx.looking(l);
-                    &turned
-                }
-                None => ctx,
+                Some(l) => ctx.looking(l),
+                None => ctx.clone(),
             };
+            let ctx = &ctx.at_state(run, vals, t);
             let mut rs: Vec<RepFrame> = reps.iter().filter(|r| r.shown(run, vals, t)).map(|r| project(cm, ctx, r, run, vals, t)).collect();
             for (_, r) in extra.iter().filter(|(v, r)| v.as_deref() == Some(id.as_str()) && r.shown(run, vals, t)) {
                 rs.push(project(cm, ctx, r, run, vals, t));
@@ -2571,11 +2683,11 @@ mod tests {
 
     #[test]
     fn rounding_near_zero_is_shown_as_zero() {
-        let ground = ViewCtx::Spatial { space: "S".into(), px_per_m: 50.0, y_up: true, look: None };
+        let ground = ViewCtx::Spatial { space: "S".into(), px_per_m: 50.0, y_up: true, look: None, moving: None };
         assert_eq!(ground.shown(&[0.0, -3.74851e-10]), vec![0.0, 0.0]);
         assert_eq!(ground.shown(&[2.0, 0.5]), vec![2.0, 0.5]);
         // Atoms drawn at 1e11 px/m keep a length of 1e-10 m.
-        let atoms = ViewCtx::Spatial { space: "S".into(), px_per_m: 1e11, y_up: true, look: None };
+        let atoms = ViewCtx::Spatial { space: "S".into(), px_per_m: 1e11, y_up: true, look: None, moving: None };
         assert_eq!(atoms.shown(&[1e-10, 0.0]), vec![1e-10, 0.0]);
         let plot = ViewCtx::Plot { x: (0.0, 10.0), y: (-1.0, 1.0), dims: (Dim::default(), Dim::default()), follow: [false; 2], units: [None, None], window: None, sample_x: None };
         assert_eq!(plot.shown(&[1e-12, 0.25]), vec![0.0, 0.25]);

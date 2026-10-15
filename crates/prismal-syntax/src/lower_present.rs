@@ -64,7 +64,7 @@ fn ease_of(word: &str) -> Option<prismal_ir::present::Ease> {
 /// The named options of each view kind (D-081).
 fn view_options(kind: &str) -> &'static [&'static str] {
     match kind {
-        "spatial" => &["scale", "y", "azimuth", "elevation", "distance"],
+        "spatial" => &["scale", "y", "azimuth", "elevation", "distance", "frame"],
         "plot" => &["x", "y", "follow", "x_unit", "y_unit", "window"],
         _ => &[],
     }
@@ -456,6 +456,15 @@ impl PresCx<'_, '_> {
                     }
                 }
                 let distance = if three { dist.map(|e| self.cx.expr(e, &[])) } else { None };
+                // `frame: F`: the view is drawn as seen from a declared frame (D-105).
+                let frame = match named("frame").map(|e| (&e.kind, e.span)) {
+                    None => None,
+                    Some((ExprKind::Name(n), _)) if self.cx.frames.contains_key(n) => Some(self.cx.frames[n].clone()),
+                    Some((_, span)) => {
+                        self.err("SX-E03", "a view's `frame` names a frame the model declares: `frame: turning`", span);
+                        None
+                    }
+                };
                 let look = (three && (az.is_some() || el.is_some())).then(|| {
                     let deg = |cx: &mut Self, e: Option<&ast::Expr>, d: f64| match e {
                         Some(e) => cx.cx.expr(e, &[]),
@@ -463,7 +472,7 @@ impl PresCx<'_, '_> {
                     };
                     [deg(self, az, 30.0), deg(self, el, 20.0)]
                 });
-                ViewKind::Spatial { space, scale, y_up, look, distance }
+                ViewKind::Spatial { space, scale, y_up, look, distance, frame }
             }
             "plot" => {
                 let (x, y) = match (named("x"), named("y")) {

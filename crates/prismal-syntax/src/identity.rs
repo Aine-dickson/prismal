@@ -157,6 +157,7 @@ fn match_body(mt: &mut Matcher, nm: &Model, pm: &Model) {
     mt.pair(&nm.objects, &pm.objects, |o| o.name.clone(), |o| &o.id);
     mt.pair(&nm.ends, &pm.ends, |e| e.name.clone(), |e| &e.id);
     mt.pair(&nm.grids, &pm.grids, |g| g.name.clone(), |g| &g.id);
+    mt.pair(&nm.frames, &pm.frames, |f| f.name.clone(), |f| &f.id);
     for no in &nm.objects {
         if let Some(po) = pm.objects.iter().find(|p| p.name == no.name) {
             match_body(mt, no, po);
@@ -287,6 +288,7 @@ fn reorder(doc: &mut Document, prev: &Document) {
         order(&mut m.parts, &ids(&p.parts, |b| &b.id), |b| &b.id);
         order(&mut m.objects, &ids(&p.objects, |b| &b.id), |b| &b.id);
         order(&mut m.grids, &ids(&p.grids, |b| &b.id), |b| &b.id);
+        order(&mut m.frames, &ids(&p.frames, |b| &b.id), |b| &b.id);
         for o in &mut m.objects {
             if let Some(po) = p.objects.iter().find(|x| x.id == o.id) {
                 body(o, po);
@@ -430,6 +432,10 @@ pub fn rename(doc: &Document, id: &str, new_name: &str) -> Result<Document, Stri
         }
         if let Some(g) = m.grids.iter_mut().find(|g| g.id == id) {
             g.name = new_name.into();
+            return Ok(d);
+        }
+        if let Some(f) = m.frames.iter_mut().find(|f| f.id == id) {
+            f.name = new_name.into();
             return Ok(d);
         }
         if let Some(c) = m.constraints.iter_mut().find(|c| c.id == id) {

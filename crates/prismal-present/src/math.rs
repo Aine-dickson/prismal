@@ -255,6 +255,13 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
             ],
         },
         Expr::Tuple { tuple } => parens(list(tuple.iter().map(p).collect())),
+        // `v.in(F).x` (D-105): the component, subscripted with its axis and frame.
+        Expr::In { r#in, frame, axis, .. } => {
+            let names = cm.ir.default_space.as_deref().and_then(|s| cm.spaces.iter().find(|x| x.id == s)).map(|s| s.axes.clone()).unwrap_or_else(|| vec!["x".into(), "y".into(), "z".into()]);
+            let axis = names.get(*axis).cloned().unwrap_or_else(|| axis.to_string());
+            let f = cm.ir.frames.iter().find(|f| &f.id == frame).map(|f| f.name.clone()).unwrap_or_else(|| frame.clone());
+            MathBox::Sub { base: Box::new(wrap(r#in, 8)), sub: Box::new(ident(&format!("{axis},{f}"))) }
+        }
         Expr::Comp { comp, axis } => {
             let space = match &**comp {
                 Expr::Ref { r#ref } => cm.ir.binding(r#ref).and_then(|b| match &b.ty {

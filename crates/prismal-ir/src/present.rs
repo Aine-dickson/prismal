@@ -171,6 +171,10 @@ pub enum ViewKind {
         look: Option<[Expr; 2]>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         distance: Option<Expr>,
+        /// `frame: F`: the view shows the space as seen from a declared frame of the model,
+        /// which may move (D-105).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        frame: Option<Id>,
     },
     /// A plot view (PK-7.3): the axis ranges, the axes whose range follows the data (`x`,
     /// `y`; D-070) and each axis's display unit.

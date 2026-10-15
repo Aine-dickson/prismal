@@ -27,7 +27,7 @@ pub const CONTEXTUAL: &[&str] = &[
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
     "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use", "algorithm", "while", "step", "restitution", "across", "azimuth",
-    "elevation",
+    "elevation", "frame",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -443,6 +443,13 @@ impl<'a> Parser<'a> {
             let name = self.name("a grid name")?;
             let args = self.args()?;
             return Ok(vec![Member::Grid { name, args, span: self.since(start) }]);
+        }
+        // `frame turning(at: origin, x: u)` (D-105); contextual, before a name and options.
+        if self.is_word("frame") && matches!(self.peek_at(1), Tok::Ident(_)) && self.is_punct_at(2, "(") {
+            self.bump();
+            let name = self.name("a frame name")?;
+            let args = self.args()?;
+            return Ok(vec![Member::Frame { name, args, span: self.since(start) }]);
         }
         // `boundary T { left = e; right = e }`, `boundary T periodic` (D-091).
         if self.is_word("boundary") && matches!(self.peek_at(1), Tok::Ident(_)) {

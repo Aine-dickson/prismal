@@ -124,6 +124,7 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-102 | Friction and restitution: bounded holding forces and impacts that bounce | Accepted |
 | D-103 | Geometric optics as a first-party module | Accepted |
 | D-104 | Views of three dimensions: perspective, turns, depth, shapes in planes, drags across planes | Accepted |
+| D-105 | Declared frames, components read in them, and views drawn from them | Accepted |
 
 ---
 
@@ -2128,5 +2129,34 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **Version 1 (D-081):** additions. `distance`, `normal`, `opaque`, `axis`, the `camera` clauses `azimuth` and `elevation`, and `across` were errors before (SX-E08, SX-E02). Two behaviours change for programs that were valid: in a view of three dimensions, bodies are now drawn before lines and markers rather than in written order, and a drag lands in the plane through the dragged point rather than through the origin. Angles that read bindings were PK-E02 and are now evaluated at each frame.
 - **Not yet:** a view's centre other than the origin for perspective and turns (a `target`); surfaces (meshes, height maps) and fields on grids of three axes; shading by light direction; hidden pieces drawn dashed rather than cut; bodies that cut through each other drawn exactly (painter's order is by centre).
 - **Consequences:** `prismal-present` (`frame.rs`: `Look` with distance and angles, `Aim`, `Turn`, `Projector::look`, `ctx_at`, `set_turn`, `frame_turned`, `Tf` as a rotation of three dimensions, `Geo`; `depth.rs`: bodies, hidden lines and order; `interact.rs`: drags across planes; `timeline.rs`: camera turns); `prismal-host` (orbit gesture, `ViewState::turn`); `prismal-syntax` (parser, lowering, options, formatter); `prismal-svg` and `web/player.js` (opaque fills; "Reset view" with `orbit`); PK-7.2a, PK-7.2b, 04-ir section 7, working syntax, the reference; guide chapter 20 (A tilted orbit, seen from every side; A door on a hinge); `prismal-present/tests/views3d.rs` (perspective, angles read from a parameter, a timeline turn, an opaque ball hiding a marker and cutting a segment, shapes in a plane, a group about an axis, a drag across a plane, canonical text, diagnostics), `prismal-host/tests/orbit.rs`; rendered images of the guide's examples.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-105: Declared frames, components read in them, and views drawn from them
+
+- **Status:** Accepted; implemented on branch `frames`.
+- **Original position:** D-022 gave every space a standard frame and let a space declare further frames, with components read as `v.in(F).x` (MK-4.2, MK-4.6); nothing implemented them. D-100's "Not yet" listed rotating frames (a frame turning with time, its fictitious forces) and components read in a declared frame of three dimensions.
+- **Raised by:** the owner on 2026-10-15, with the other "Not yet" items of D-100 and D-103.
+- **Builds on:** D-022, D-091 (declarations with named options, `grid`), D-093 (`dot`), D-099 (`mechanics`), D-100 (`cross`), D-104; MK-4.2, MK-4.6, PK-7.2.
+- **Question:** How is a frame declared, how do expressions read values in it, how does a frame turn, and how is the motion seen from a moving frame shown?
+- **Content it serves:** gravity along and across a slope; a carousel, a turntable, the Earth turning under a pendulum or a wind; the Coriolis and centrifugal forces; motion described by a rider; later, rigid bodies with frames of their own.
+- **Options considered:**
+  For the declaration: **a frame value type** (`derived { F: Frame = frame(P, u) }`): frames would be values like any other, but a new type touches every type and value of the kernel, and a frame is never added, compared or drawn. **A transform from another frame** (D-022's wording): a chain of frames to resolve, for the one case in teaching that needs it (a frame on a frame). **A declaration with an origin and axes** (taken): `frame F(at: P, x: u)`, `frame F(at: P, x: u, y: v)`, written as `grid` is. A frame on a frame is an origin and axes computed from the other's.
+  For the axes: **all axes given**: in a plane the second axis is fixed by the first, and a set of given axes may not be square. **The first given and the rest made square** (taken): in a plane the second axis is the first turned a quarter turn; in three dimensions `y` is made square to `x` and the third axis is their cross product, so every frame is right-handed and orthonormal whatever its author writes.
+  For moving frames: **an angular velocity declared with the frame**: a second way to say what the axes already say. **Axes that read time and state** (taken): a frame turns because its axes do; nothing else is needed, and a frame can follow a body as well as a clock.
+  For fictitious forces: **added by the runtime when a model is written in a frame**: hidden terms in an author's equations. **Functions in `mechanics`** (taken): `coriolis(m, w, v)` and `centrifugal(m, w, r)`, written in Prismal; an author describing motion in a turning frame writes them into the flow and sees them.
+  For showing a frame: **the author transforms every drawn point**: possible with `.in(F)`, but every representation would need rewriting, and a trace would be read in the frame of the instant shown rather than of each sample. **A view option** (taken): `frame: F`, so the engine reads everything in the frame, traces sample by sample.
+- **Accepted position:** the options taken above, under the standing delegation of 2026-09-30.
+  - MK-4.6a (new): declared frames, their axes, `v.in(F).k`; PK-7.2c (new): views drawn in a frame.
+  - Syntax: `frame F(at: P, x: u[, y: v])` in a model; `e.in(F).x`; the view option `frame`. `frame` is a contextual keyword.
+  - IR: `Model.frames` (`FrameDecl`); `Expr::In { in, frame, axis, reads }`; `ViewKind::Spatial.frame`. While a model is checked, `reads` holds the frame's expressions (`prismal_ir::frames::with_reads`), so that the order of derived values and every other analysis of what an expression reads sees them.
+  - Kernel: `CExpr::InFrame` evaluates the frame's origin and axes on the state and the component; `frame_axes` is shared with the presentation engine.
+  - `mechanics`: `coriolis` and `centrifugal`.
+- **Findings while building it:**
+  1. **A frame's mistakes were reported nowhere.** Component reads compile the frame's parts quietly, to report a mistake once; a frame with an origin that was not a point then passed. Each frame is now checked once where it is declared.
+- **Reason:** a frame is an origin and axes, which is what an author knows; making the rest square keeps every frame right-handed; frames that move because their axes read time need no second mechanism; drawing from a frame in the engine keeps traces right.
+- **Version 1 (D-081):** additions. `frame F(...)` in a model was SX-E02, `.in(F)` was an unknown function, `frame:` an unknown view option. `frame` becomes a contextual keyword: a binding named `frame` is still a name, except at the start of a model member followed by a name and `(`.
+- **Not yet:** frames in object types (a frame per member, for rigid bodies); a frame defined from another frame by a rotation and an offset; heatmaps in a view drawn in a turning frame (they stay square to the screen); the angular velocity of a frame read from its axes (`F.spin`), so that `coriolis` need not be given it.
+- **Consequences:** `prismal-ir` (`FrameDecl`, `Expr::In`, `frames.rs`, elaboration), `prismal-kernel` (`frame_parts`, `CExpr::InFrame`, `frame_axes`, frames checked in `check_model`), `prismal-syntax` (parser, lowering, formatter), `prismal-present` (`Moving`, `ViewCtx::local`, `global`, `project`, `at_state`; traces per sample; text and typeset forms), `lib/mechanics.prismal`; MK-4.6a, PK-7.2c, 04-ir, working syntax, the reference; guide chapter 23 (Frames: a ball on a slope, a carousel, a puck on a turntable); `prismal-present/tests/frames.rs`.
 - **History:**
   - 2026-10-15 accepted under the owner's standing delegation and implemented.

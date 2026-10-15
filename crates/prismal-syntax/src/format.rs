@@ -315,6 +315,11 @@ impl<'a> Printer<'a> {
         self.model.events.iter().find(|e| e.id == id).map(|e| e.name.clone()).unwrap_or_else(|| id.rsplit('.').next().unwrap_or(id).to_string())
     }
 
+    /// A frame's name from its identity, `M.frame.turning` (D-105).
+    fn frame_name(&self, id: &str) -> String {
+        id.rsplit('.').next().unwrap_or(id).to_string()
+    }
+
     fn space_name(&self, id: &str) -> String {
         self.doc.spaces.iter().find(|s| s.id == id).map(|s| s.name.clone()).unwrap_or_else(|| id.to_string())
     }
@@ -490,6 +495,12 @@ impl<'a> Printer<'a> {
                 let name = self.axes.get(*axis).cloned().unwrap_or_else(|| axis.to_string());
                 format!("{}.{name}", w(comp, P_ATOM))
             }
+            // `v.in(F).x` (D-105).
+            Expr::In { r#in, frame, axis, .. } => {
+                let name = self.axes.get(*axis).cloned().unwrap_or_else(|| axis.to_string());
+                let f = self.model.frames.iter().find(|f| &f.id == frame).map(|f| f.name.clone()).unwrap_or_else(|| frame.rsplit('.').next().unwrap_or(frame).to_string());
+                format!("{}.in({f}).{name}", w(r#in, P_ATOM))
+            }
             Expr::Lambda { lambda } => self.expr_p(&lambda.body, &lambda.names),
             Expr::Otherwise { otherwise, default } => format!("{} otherwise {}", w(otherwise, P_OR), w(default, P_OR)),
             Expr::Payload { payload } => self.model.events.iter().find(|e| &e.id == payload).and_then(|e| e.payload.as_ref()).map(|p| p.name.clone()).unwrap_or_else(|| "payload".into()),
@@ -555,6 +566,18 @@ impl<'a> Printer<'a> {
             .collect();
         if !grids.is_empty() {
             sections.push(grids.join("\n"));
+        }
+        // Frames (D-105).
+        let frames: Vec<String> = m
+            .frames
+            .iter()
+            .map(|f| {
+                let y = f.y.as_ref().map(|y| format!(", y: {}", self.expr(y))).unwrap_or_default();
+                format!("{INDENT}frame {}(at: {}, x: {}{y})", f.name, self.expr(&f.at), self.expr(&f.x))
+            })
+            .collect();
+        if !frames.is_empty() {
+            sections.push(frames.join("\n"));
         }
         for o in &m.objects {
             sections.push(self.object(o));
@@ -1133,20 +1156,24 @@ impl<'a> Printer<'a> {
         for v in &p.views {
             let head = match &v.kind {
                 // A view of a space of three dimensions has `z` up and its look (D-100).
-                ViewKind::Spatial { space, scale, look, distance, .. } if self.doc.spaces.iter().any(|s| &s.id == space && s.dimension == 3) => {
+                ViewKind::Spatial { space, scale, look, distance, frame, .. } if self.doc.spaces.iter().any(|s| &s.id == space && s.dimension == 3) => {
                     let mut turn = look.as_ref().map(|[a, e]| format!(", azimuth: {}, elevation: {}", self.expr(a), self.expr(e))).unwrap_or_default();
                     if let Some(d) = distance {
                         let _ = write!(turn, ", distance: {}", self.expr(d));
                     }
+                    if let Some(f) = frame {
+                        let _ = write!(turn, ", frame: {}", self.frame_name(f));
+                    }
                     format!("view {}: spatial({}, scale: {} -> {} px{turn})", v.name, self.space_name(space), self.expr(&scale.quantity), number(scale.px))
                 }
-                ViewKind::Spatial { space, scale, y_up, .. } => format!(
-                    "view {}: spatial({}, scale: {} -> {} px, y: {})",
+                ViewKind::Spatial { space, scale, y_up, frame, .. } => format!(
+                    "view {}: spatial({}, scale: {} -> {} px, y: {}{})",
                     v.name,
                     self.space_name(space),
                     self.expr(&scale.quantity),
                     number(scale.px),
-                    if *y_up { "up" } else { "down" }
+                    if *y_up { "up" } else { "down" },
+                    frame.as_ref().map(|f| format!(", frame: {}", self.frame_name(f))).unwrap_or_default()
                 ),
                 ViewKind::Plot { x, y, follow, units, window } => {
                     // `follow: y` or `follow: (x, y)`, and display units, after the ranges (D-070).
