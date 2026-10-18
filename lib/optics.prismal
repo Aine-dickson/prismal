@@ -1,0 +1,135 @@
+/// Geometric optics: rays, reflection, refraction, lenses and images, a first-party library
+/// (D-103) written in Prismal as any author's library is. A ray is a point and a direction;
+/// directions are vectors without a dimension, `Vector<1>`, of any length. Surfaces are
+/// planes (lines, in a plane) given by a point and a normal, and spheres (circles) given by a
+/// centre and a radius. The functions work in a plane and in a room.
+
+/// The direction `d` scaled to length 1.
+fn direction(d: Vector<1>): Vector<1> = d / |d|
+
+/// The normal `n` of a surface turned against a ray along `d`, scaled to length 1: it points
+/// back to the side the ray comes from.
+fn facing(n: Vector<1>, d: Vector<1>): Vector<1> = if dot(n, d) > 0 then -1 * direction(n) else direction(n)
+
+/// A ray along `d` reflected by a surface of normal `n`: the angle of reflection equals the
+/// angle of incidence.
+fn reflect(d: Vector<1>, n: Vector<1>): Vector<1> = direction(d) - 2 * dot(direction(d), direction(n)) * direction(n)
+
+/// The cosine of the angle of incidence of a ray along `d` on a surface of normal `n`,
+/// between the ray and the normal: 1 head on, 0 grazing.
+fn incidence_cos(d: Vector<1>, n: Vector<1>): Real = -1 * dot(direction(d), facing(n, d))
+
+/// The angle of incidence of a ray along `d` on a surface of normal `n`.
+fn incidence(d: Vector<1>, n: Vector<1>): Angle = atan2(sqrt(max(0, 1 - incidence_cos(d, n)^2)), incidence_cos(d, n))
+
+/// Whether a ray along `d` going from a medium of index `n1` into one of index `n2` through a
+/// surface of normal `n` is totally reflected: `n1 sin θ1 > n2`.
+fn totally_reflected(d: Vector<1>, n: Vector<1>, n1: Real, n2: Real): Boolean = (n1 / n2)^2 * (1 - incidence_cos(d, n)^2) > 1
+
+/// The critical angle from index `n1` into a smaller index `n2`: `sin θc = n2 / n1`.
+fn critical_angle(n1: Real, n2: Real): Angle = atan2(n2 / n1, sqrt(1 - (n2 / n1)^2))
+
+/// Snell's law, `n1 sin θ1 = n2 sin θ2`: the direction of a ray along `d` after it passes
+/// from index `n1` into index `n2` through a surface of normal `n` (pointing either way).
+/// Beyond the critical angle the ray is reflected instead.
+fn refract(d: Vector<1>, n: Vector<1>, n1: Real, n2: Real): Vector<1> = if totally_reflected(d, n, n1, n2) then reflect(d, n) else (n1 / n2) * direction(d) + ((n1 / n2) * incidence_cos(d, n) - sqrt(1 - (n1 / n2)^2 * (1 - incidence_cos(d, n)^2))) * facing(n, d)
+
+/// Where a ray from `p` along `d` meets the plane (in a plane, the line) through `a` with
+/// normal `n`.
+fn hit_plane(p: Point, d: Vector<1>, a: Point, n: Vector<1>): Point = p + dot(a - p, n) / dot(d, n) * d
+
+/// How far along a ray from `p` along `d` it meets the plane (in a plane, the line) through
+/// `a` with normal `n`: negative behind `p`, infinite when the ray runs along the plane. With
+/// `first(... by plane_distance(...))` a ray finds the nearest of several surfaces (D-106).
+fn plane_distance(p: Point, d: Vector<1>, a: Point, n: Vector<1>): Length = dot(a - p, n) / dot(direction(d), n)
+
+/// Whether a ray from `p` along `d` meets, ahead of `p`, the flat mirror (in a plane, a
+/// segment) through `a` with normal `n` reaching `half` from `a` each way. A ray along the
+/// mirror never meets it.
+fn meets_segment(p: Point, d: Vector<1>, a: Point, n: Vector<1>, half: Length): Boolean = if |dot(direction(d), n)| < 1e-12 * |n| then false else plane_distance(p, d, a, n) > 1e-9 * half and |hit_plane(p, d, a, n) - a| <= half
+
+/// How far along a ray from `p` along `d` its line passes closest to `c`.
+fn closest_along(p: Point, d: Vector<1>, c: Point): Length = dot(c - p, direction(d))
+
+/// The square of half the chord a ray's line cuts from the sphere of centre `c` and radius
+/// `r`; negative when it misses.
+fn half_chord_sq(p: Point, d: Vector<1>, c: Point, r: Length): Area = r^2 - |c - p|^2 + closest_along(p, d, c)^2
+
+/// How far along a ray from `p` along `d` it first meets the sphere (in a plane, the circle)
+/// of centre `c` and radius `r`, ahead of `p`: the near side from outside, the far side from
+/// inside or from a point on the sphere.
+fn sphere_distance(p: Point, d: Vector<1>, c: Point, r: Length): Length = if closest_along(p, d, c) - sqrt(half_chord_sq(p, d, c, r)) > 1e-9 * r then closest_along(p, d, c) - sqrt(half_chord_sq(p, d, c, r)) else closest_along(p, d, c) + sqrt(half_chord_sq(p, d, c, r))
+
+/// Where a ray from `p` along `d` first meets the sphere of centre `c` and radius `r`. A ray
+/// that misses it has no such point.
+fn hit_sphere(p: Point, d: Vector<1>, c: Point, r: Length): Point = p + sphere_distance(p, d, c, r) * direction(d)
+
+/// Whether a ray from `p` along `d` meets the sphere of centre `c` and radius `r` ahead of `p`.
+fn meets_sphere(p: Point, d: Vector<1>, c: Point, r: Length): Boolean = half_chord_sq(p, d, c, r) >= 0 m^2 and closest_along(p, d, c) + sqrt(max(0 m^2, half_chord_sq(p, d, c, r))) > 1e-9 * r
+
+/// The outward normal of the sphere of centre `c` at a point `q` on it.
+fn sphere_normal(q: Point, c: Point): Vector<1> = (q - c) / |q - c|
+
+/// An ideal thin lens of focal length `f` (negative for a diverging lens), centre `c` and
+/// axis `a`: the direction of a ray along `d` after it crosses the lens at `q`, a point of
+/// the lens's plane. Rays parallel to the axis then pass through the focus; a ray through the
+/// centre goes straight on.
+fn thin_lens(d: Vector<1>, q: Point, c: Point, a: Vector<1>, f: Length): Vector<1> = direction(direction(d) / dot(direction(d), direction(a)) - (q - c) / f)
+
+/// A curved mirror in the paraxial approximation (D-106): the direction of a ray along `d`
+/// after it meets, at `q`, the mirror of centre `c`, axis `a` (pointing back toward the
+/// light) and focal length `f` (positive for a concave mirror, negative for a convex one).
+/// Rays parallel to the axis come back through the focus, `f` in front of the mirror.
+fn thin_mirror(d: Vector<1>, q: Point, c: Point, a: Vector<1>, f: Length): Vector<1> = reflect(thin_lens(d, q, c, -1 * a, f), a)
+
+/// The focal length of a spherical mirror of radius `R`: half its radius.
+fn mirror_focus(R: Length): Length = R / 2
+
+/// The distance of the image of an object at distance `u` in front of a thin lens or mirror
+/// of focal length `f`: `1/u + 1/v = 1/f`. Positive for a real image (behind a lens, in front
+/// of a mirror), negative for a virtual one.
+fn image_distance(u: Length, f: Length): Length = u * f / (u - f)
+
+/// The magnification of that image: `-v / u`, negative when it is upside down.
+fn magnification(u: Length, f: Length): Real = -1 * image_distance(u, f) / u
+
+/// The focal length of a thin lens of index `n` in air whose faces have radii `r1` and `r2`
+/// (positive when the centre of the face is behind the lens): the lensmaker's equation.
+fn lensmaker(n: Real, r1: Length, r2: Length): Length = 1 / ((n - 1) * (1 / r1 - 1 / r2))
+
+/// The refractive index of a glass at wavelength `λ` by Cauchy's formula, `A + B / λ²`: blue
+/// light is bent more than red.
+fn cauchy(A: Real, B: Area, λ: Length): Real = A + B / λ^2
+
+/// Light as a wave (D-107). The wavenumber of a wave of wavelength `λ`: `2 π / λ`, the phase
+/// it gains per length travelled.
+fn wavenumber(λ: Length): Quantity<1/L> = 2 * π / λ
+
+/// The brightness, as a share of the brightest, that two narrow slits `d` apart send at
+/// angle `θ` with light of wavelength `λ`: `cos²(π d sin θ / λ)`. The two waves arrive in step
+/// where their paths differ by a whole number of wavelengths.
+fn two_slit(d: Length, λ: Length, θ: Angle): Real = cos(π * d * sin(θ) / λ)^2
+
+/// The brightness, as a share of the middle's, that one slit of width `a` sends at angle `θ`:
+/// `(sin β / β)²` with `β = π a sin θ / λ`; dark where `a sin θ` is a whole number of
+/// wavelengths.
+fn single_slit(a: Length, λ: Length, θ: Angle): Real = if |π * a * sin(θ) / λ| < 1e-9 then 1 else (sin(π * a * sin(θ) / λ) / (π * a * sin(θ) / λ))^2
+
+/// The brightness, as a share of the brightest, of a grating of `N` narrow slits `d` apart:
+/// `(sin(N φ) / (N sin φ))²` with `φ = π d sin θ / λ`. Its bright lines are where two slits
+/// do, `d sin θ = m λ`, and grow sharper with more slits.
+fn grating(N: Real, d: Length, λ: Length, θ: Angle): Real = if |sin(π * d * sin(θ) / λ)| < 1e-9 then 1 else (sin(N * π * d * sin(θ) / λ) / (N * sin(π * d * sin(θ) / λ)))^2
+
+/// The angle of the bright line of order `m` of slits `d` apart: `d sin θ = m λ`.
+fn bright_angle(m: Real, d: Length, λ: Length): Angle = atan2(m * λ / d, sqrt(1 - (m * λ / d)^2))
+
+/// Malus's law: the share of polarized light a polarizer passes when turned `θ` from the
+/// light's polarization, `cos² θ`.
+fn malus(θ: Angle): Real = cos(θ)^2
+
+/// Brewster's angle from index `n1` into index `n2`, `tan θ = n2 / n1`: light reflected at it
+/// is polarized along the surface.
+fn brewster(n1: Real, n2: Real): Angle = atan2(n2, n1)
+
+/// The angle between two directions, from 0 to 180 degrees: how far a ray has been turned.
+fn angle_between(u: Vector<1>, v: Vector<1>): Angle = atan2(sqrt(max(0, 1 - dot(direction(u), direction(v))^2)), dot(direction(u), direction(v)))

@@ -105,6 +105,28 @@ The exploration documents are frozen. They are not edited to reflect later decis
 | D-083 | The stochastic slice: random events, draws and seeds | Accepted |
 | D-084 | Many runs: another seed in labs, ensembles, histograms, statistics, staircases | Accepted |
 | D-085 | Findings from the reaction example: `restart`, histogram bars on the values' grid | Accepted |
+| D-086 | Rates that vary between events | Accepted |
+| D-087 | Instruments: readings with resolution, range and noise | Accepted |
+| D-088 | `restart` and `reseed` in explore beats | Accepted |
+| D-089 | Histograms of one run: values at events and sampled values | Accepted |
+| D-090 | Noise in flows: stochastic differential equations | Accepted |
+| D-091 | Fields on grids | Accepted |
+| D-092 | Solved equations: unknowns and equations that give rates | Accepted |
+| D-093 | Enforced constraints and constrained mechanics | Accepted |
+| D-094 | Findings from the spoon example: a control for a choice, and what the browser check found | Accepted |
+| D-095 | Leftovers closed: easing, line width, text alignment, narration speed, flows' derived values, goal notes | Accepted |
+| D-096 | Release 0.2.0 and the scope of 0.3 | Accepted |
+| D-097 | Vector and point unknowns | Accepted |
+| D-098 | Enforced inequalities: contact, release and slack ropes | Accepted |
+| D-099 | Shared definitions, modules and the first-party library | Accepted |
+| D-100 | Spaces of three dimensions and views that look at them | Accepted |
+| D-101 | Algorithms: statements run in order, one step per occurrence | Accepted |
+| D-102 | Friction and restitution: bounded holding forces and impacts that bounce | Accepted |
+| D-103 | Geometric optics as a first-party module | Accepted |
+| D-104 | Views of three dimensions: perspective, turns, depth, shapes in planes, drags across planes | Accepted |
+| D-105 | Declared frames, components read in them, and views drawn from them | Accepted |
+| D-106 | Ray optics continued: the nearest surface, rays to the edge, colours of light, curved mirrors | Accepted |
+| D-107 | Wave optics as functions of the optics module, drawn with fields | Accepted |
 
 ---
 
@@ -1871,3 +1893,319 @@ The exploration documents are frozen. They are not edited to reflect later decis
 - **History:**
   - 2026-10-14 accepted under the owner's standing delegation of 2026-09-30 and implemented.
 
+## D-096: Release 0.2.0 and the scope of 0.3
+
+- **Status:** Accepted
+- **Original position:** D-082 opened 0.2 on the branch `v0.2` with the stochastic slice (D-083) and left its end open. D-001 named the first slice only; the case catalogue (01) stands as the scope horizon (D-017), and the order of later slices is chosen as work proceeds. The handover of 2026-10-14 put to the owner whether to close 0.2 or take another capability first, and listed the candidates: 3D spaces and frames (D-014, D-022), modules and libraries (R-55), inequality constraints (D-093, "Not yet"), vector unknowns (D-092).
+- **Raised by:** the owner, 2026-10-14: "close 0.2 then add those stated capabilities as 0.3 headline".
+- **Builds on:** D-001, D-014, D-017, D-022, D-082, D-092, D-093; R-55.
+- **Accepted position,** chosen by the owner, with the order of the work under the standing delegation of 2026-09-30:
+  1. **0.2 is closed.** `v0.2` is merged into `main` without fast-forward and `main` is tagged `v0.2.0`. Version 0.2 holds the stochastic slice (D-083 to D-090), fields on grids (D-091), solved equations (D-092), enforced constraints and constrained mechanics (D-093), the fifth complete example and `select` (D-094), and the leftovers of D-095. Working syntax is still version 1 (D-081): every 0.1 program compiles with the same meaning.
+  2. **0.3 opens on the branch `v0.3`**, workspace version `0.3.0`, with feature branches merged into it as before. `main` receives only fixes to 0.2 until 0.3 is merged.
+  3. **The headline of 0.3 is five capabilities**, each a decision of its own when built, taken in this order:
+     1. **Vector unknowns.** Unknowns of vector type in solved equations (D-092) and enforced constraints (D-093): a contact force or a rod's pull as one vector, not two components. Smallest step; it extends machinery that exists.
+     2. **Inequality constraints.** Constraints that hold one side only: contact with a floor or wall, a rope that goes slack, a block that stops on friction (complementarity). Builds on D-093 and serves content of the first slice that is now written with events.
+     3. **Modules and libraries** (R-55). Programs split across files, definitions imported by name, first-party libraries written in Prismal through the same mechanism as user libraries. Needed before the larger vocabularies of 3D and later slices are written as libraries rather than built into the core.
+     4. **3D spaces and frames** (D-014, D-022). Spaces of dimension 3, frames with rotations, projections of a 3D scene onto a 2D view with a camera, and drawing in both renderers. Opens rigid bodies, electromagnetism in space and molecular structure in the catalogue.
+     5. **Algorithmic and discrete processes.** Step-by-step processes over collections (sorting, searching, graph traversal), with each step a state a lesson can show (catalogue section 11). The core already has discrete events (D-004); this is the authoring form for algorithms.
+- **Reason for the order:** each step uses what the one before builds. Vector unknowns make inequality constraints shorter to write; modules let 3D geometry and algorithm vocabularies live in libraries (R-55: extensions add vocabulary, never redefine core semantics) instead of the core. 3D is the largest step and comes after the library mechanism that keeps it from growing the core.
+- **Consequences:** merge and tag `v0.2.0`; branch `v0.3`; workspace version `0.3.0`; PROJECT-STATE next steps and conventions name `v0.3`.
+- **History:**
+  - 2026-10-14 closing of 0.2 and the 0.3 headline chosen by the owner; order recorded under the standing delegation.
+
+## D-097: Vector and point unknowns
+
+- **Status:** Accepted; implemented on branch `vector-unknowns`.
+- **Original position:** D-092: an unknown is a number or a quantity (MK-11.6); vector unknowns "not yet". MK-11.9 gave rates from equations to states of numbers and quantities only; an equation that read `der(v)` of a vector state without a flow was MK-E35 ("write its flow"). D-093 wrote a holding force as an unknown size times a direction stated in the flow.
+- **Raised by:** D-096, first item of the 0.3 headline.
+- **Builds on:** D-014, D-032, D-092, D-093; MK-11.6 to MK-11.9, MK-10.7a; RC-5.6.
+- **Question:** How does a model state an unknown that is a vector or a place (a contact force whose direction is not known in advance, the point where a body comes to rest), and Newton's second law as the vector equation `m a = F`?
+- **Content it serves:** equilibria of points (a weight between springs, a node of a truss, a charge between other charges), holding and contact forces as vectors, `m * der(vel) == F` as physics texts write it, and later inequality constraints, whose contact forces are vectors (D-096 item 2).
+- **Options considered:**
+  1. **Components as separate unknowns** (`Fx: Force; Fy: Force`, then `(Fx, Fy)` in the equations): what authors had to write until now. It works in 2D only by repeating every formula per axis, and the vector is not one value that a label, a plot or a later 3D model can take.
+  2. **Vector and point unknowns in the existing `unknown` block** (taken): the declaration takes the types every other block takes; a vector or point counts once per axis of its space, as a vector equation already did (MK-11.7).
+- **Accepted position:** option 2, under the standing delegation of 2026-09-30.
+  - MK-11.6: an unknown is of type `Real`, `Quantity<D>`, `Vector<D>` or `Point`, a vector or point having one component per axis of its space. The guess is of the unknown's type; without one it is the zero vector or the origin.
+  - MK-11.7: the count and the matching are by component: as many equation components as unknown components; each unknown component is matched to an equation component that reads its unknown. MK-E34 names the count of unknown components when a vector or point is among them.
+  - MK-11.9: `der(x)` of a vector or point state without a flow, read by a solved equation, is a hidden unknown of the rate's type (a vector of dimension `D / T`; for a point a velocity), so `m * der(vel) == (0 N, -m * g)` gives a body its acceleration. The MK-E35 case for rates of vectors is removed.
+  - RC-5.6 is unchanged: Newton's method works on all unknown components laid out one after another, with the same scales, tolerances and line search.
+  - `dot(a, b)` with a vector and a tuple of quantities of one dimension reads the tuple as a vector of the vector's space (D-032): `dot(N, (cos(α), -sin(α))) == 0 N`, the statement that a wire is smooth.
+- **Reason:** the vector is the quantity the content names (a force, a place), so it is one value of the model, shown and read as a whole; the counting rule is the one vector equations already followed, so nothing new is learned beyond "a vector is as many unknowns as its space has axes".
+- **No new syntax.** `unknown` blocks already declared names with types; only the types allowed change.
+- **Version 1 (D-081):** additions. A vector or point unknown was MK-E01; a rate of a vector given by an equation was MK-E35; `dot` of a vector and a tuple was MK-E01. No valid program changes meaning.
+- **Consequences:** kernel `CSolve.widths`, `SolvePlan.widths`, matching of components (`plan_solve`), `solve_unknowns` reads and writes vectors and points; `elaborate::rates` uses `enforce::rate_type` for every state type; the obsolete MK-E35 loop in `plan_solve` removed; `dot` typing; MK-10.7a, MK-11.6, MK-11.7, MK-11.9, MK-E35 in 01-model-kernel; working syntax; guide chapter 17 (Vectors and points as unknowns: a weight between two springs, a throw as `m a = F`), chapter 18 (the bead's push as a vector), the reference; `prismal-present/tests/vector_unknowns.rs` (a point at an equilibrium against `m g / 2k`, a nonlinear balance with rest lengths, a holding force, a throw against its closed form, a bead's vector push against `m g cos α` at right angles to the wire, the canonical text, component counts and the type diagnostic).
+- **History:**
+  - 2026-10-14 accepted under the owner's standing delegation and implemented.
+
+## D-098: Enforced inequalities: contact, release and slack ropes
+
+- **Status:** Accepted; implemented on branch `inequality-constraints`.
+- **Original position:** D-093 enforced equalities only and listed "inequality constraints (contact, a rope that goes slack: complementarity)" as not yet. A floor was written as an event that reverses or zeroes a velocity (RP-03), which cannot keep a body resting on it under a varying force, nor say when a body leaves a curved surface.
+- **Raised by:** D-096, second item of the 0.3 headline.
+- **Builds on:** D-004, D-020, D-092, D-093, D-097; MK-12.6 to MK-12.10; RC-5.10, RC-7.
+- **Question:** How does a model state a constraint that holds on one side only (a floor, a dome a particle slides off, a rope that can go slack), and how does the runtime decide when it is in contact?
+- **Content it serves:** a ball landing and resting, a block on a table, a particle leaving a hemisphere at `cos θ = 2/3 cos θ0`, a pendulum on a rope that goes slack when swung over the top, a bob that falls until its rope is taut.
+- **Options considered:**
+  1. **Events written by the author** (as RP-03): a crossing event zeroes the velocity, another lets go. Possible for a floor, but the author computes the release condition (the force turning negative) by hand for each shape, and resting contact under changing forces drifts.
+  2. **A complementarity solve at every instant** (a linear complementarity problem, or Fischer-Burmeister residuals in the Newton solve): general for many simultaneous contacts, but it hides the switch inside the solver, so a lesson cannot point at "the moment it leaves", and a smooth reformulation slows Newton near the switch.
+  3. **An active set with hidden contact state and hidden events** (taken): the inequality is in contact or not; in contact it is the D-093 equality and its force is solved; the switches are crossing events located like any other (RC-7), so the instant of contact or release is exact and appears in the run like an author's event. This is the event-driven method of nonsmooth mechanics for few contacts (Pfeiffer and Glocker 1996).
+  For naming the force: **inference** (the unknown the constraint's rate reads) fails as soon as one flow carries two forces, a ball in a corner: both rates read both. **Naming it** (taken) states the complementarity pair as texts do, "`y >= 0`, `N >= 0`, `N y = 0`": `with N`, a word already contextual (D-040).
+- **Accepted position:** option 3, under the standing delegation of 2026-09-30.
+  - Syntax: `constraint floor: y >= 0 m policy enforce with N`. `with` is a constraint clause, in any order with `within` and `policy` (D-081); `N` is an unknown number or quantity that a rate of the constraint reads (MK-E36 otherwise).
+  - MK-12.11: the gap (`a - b` for `>=`, `b - a` for `<=`); rates and levels of the boundary; in contact: enforced as an equality; out of contact: `N == 0` replaces the solved rate and the state is not projected. Contact is made when the gap falls through zero, and the transition's projection removes the velocity into the boundary (an inelastic impact); contact ends when `N` falls through zero, or at once when made or held at the start with `N` negative; a contact whose gap opens (a ball thrown up from the floor) ends in that transition. `N` is positive while it acts.
+  - RC-5.11: contact is a hidden discrete binding `c@contact`, changed at the start and in transitions only; hidden events `c@touch`, `c@release`, `c@settle`, `c@start`; the separation rule before projection; two checks that fail the run instead of letting a body through its boundary: a force written the wrong way (measured as the change of the gap's solved rate for a change of `N`), and an inequality out of contact found past its boundary (a crossing not found).
+- **Findings while building it:**
+  1. **A loop at a wrong-signed contact.** With `N` pulling, contact was made, settled at once, and the body sat exactly on the boundary, where the guard's sign is zero and the event's reference keeps its earlier sign: the next step's crossing fired the touch again an instant later, without end. The sign check at contact (RC-5.11) stops the run with a message naming `N` instead.
+  2. **Separation only in transitions.** A first version let projection end a contact at the end of any step whose gap rate was positive, which would change a discrete value outside a transition; separation is now done at the start and in transitions only, as discrete state requires (MK section 15).
+- **Reason:** the switch is the physics a lesson shows (the floor stops the ball; the dome lets go where the needed pull exceeds gravity's), so it is an event in the run, at an exact instant; in contact, nothing new is computed: it is the enforced constraint of D-093.
+- **New syntax kept to one clause:** `with F`, a contextual word already in the language; inequalities and `policy enforce` existed.
+- **Version 1 (D-081):** additions. `with` after a constraint was SX-E02; `policy enforce` on an inequality was MK-E36. No valid program changes meaning.
+- **Not yet:** friction (a cone of forces, a second complementarity at the contact); many simultaneous contacts that switch at one instant in ways that depend on each other (a stack of blocks); impacts other than inelastic, except through an author's event.
+- **Consequences:** IR `Constraint.force`; parser clause `with`, lowering, formatter; `enforce::inequality`, `contact_id`, rates of inequalities, hidden contact bindings and events; kernel `CConstraint.contact`, `CEquation.contact`, the solve's `N == 0` out of contact, `project` skips constraints out of contact, `CModel::separate`, `CModel::holds_as_declared`; runtime separation in transitions and the two checks; MK-12.6, MK-12.11, MK-E36, RC-5.11, 04-ir, working syntax; guide chapter 18 (Contact: a ball on a floor, a particle leaving a dome, a slack rope), the reference; `prismal-present/tests/inequality.rs` (landing time against `sqrt(2 h / g)` and the resting push `m g`, a throw from the floor and its landing at `2 v / g`, the release from a hemisphere at `cos θ = 2/3 cos θ0`, a rope taut after a free fall of 0.8 m with the velocity along it removed, never stretched, never pushing, a wrong-signed force, the canonical text, diagnostics).
+- **History:**
+  - 2026-10-14 accepted under the owner's standing delegation and implemented.
+
+## D-099: Shared definitions, modules and the first-party library
+
+- **Status:** Accepted; implemented on branch `modules`.
+- **Original position:** R-55 (adopted): extensions add vocabulary, never redefine core semantics; user extensions are first-class; first-party libraries use the same mechanism. The exploration record sketched `use physics.mechanics` and namespaces (09.9 sections 25 to 27, 09.6 section 40) but no module was specified. Object types, enumerations and functions could be declared only inside a model (D-048, D-049, D-055), so a description of a body or a formula was copied into every model and every file that needed it.
+- **Raised by:** D-096, third item of the 0.3 headline.
+- **Builds on:** D-036, D-044, D-048, D-049, D-055, D-081; R-55; MK sections 7 and 10; 04-ir.
+- **Question:** How is a definition written once and used by several models, several files and several authors, and what does a document that uses a library carry with it?
+- **Content it serves:** a point mass, a spring or a charge described once and used in a plane and in a room; formulas (kinetic energy, a pendulum's period) used across lessons; domain libraries (mechanics now; optics, circuits, chemistry later) written in the language by the project and by authors.
+- **Options considered:**
+  1. **Textual inclusion** (`include "file"`): the included text is pasted. Simple, but names collide silently, a file cannot select what it takes, and the formatter cannot print the program back as written.
+  2. **Modules of shared definitions, imported by name** (taken): object types, enumerations and functions written outside models are a document's **shared definitions**; `use M` imports a module's, `use M.{A, B}` the ones named. Collisions are errors at the `use`; a model's own definition hides a shared one.
+  3. **Qualified names** (`mechanics.Body` everywhere, aliases): the namespace isolation of 09.9 section 27. Not needed while names are few; `use M.{A}` already resolves a collision. Kept for when libraries grow (Not yet).
+  For space: **definitions per space** (a library for planes, another for rooms) doubles every library and blocks 3D (D-096 item 4). **Definitions for any space** (taken): a shared definition's points and vectors are of the space `@space`, replaced by the using model's space when it is linked, so one `Body` works in a plane and in a room.
+  For what a document holds: **references to module files** would make a compiled lesson depend on the library's files at run time, against the host interface's self-contained IR (D-044) and the provenance of a run (09.9 section 28). **The used definitions inside the document** (taken): the IR carries a library per module used, so it runs anywhere without the files, and the run is a function of the document.
+- **Accepted position:** option 2, under the standing delegation of 2026-09-30.
+  - Syntax: `object`, `enum` and `fn` at the top level of a file; `use name` or `use a.b.{X, Y}` at the top level, `use` contextual (D-040). A module's name is its path: `a/b.prismal` or `a/b.md` is `a.b`.
+  - MK-7.1a: shared definitions, visibility, hiding by a model's own definition, SX-E09 for a name two sources give, SX-E03 for a name a module does not define or a module that does not exist, SX-E08 for modules that use each other in a cycle; shared object types are not relation types.
+  - IR: `Document.uses`, `Document.libraries` (the document's own as `shared`, every module used directly or through another); identities `shared.Body`, `mechanics.fn.kinetic_energy`; space `@space`. `prismal_ir::link` copies into each model the definitions it reads, transitively, before elaboration and checking; the kernel is unchanged.
+  - Compiling: `prismal_syntax::compile_with(src, modules)` with a `Modules` source (`DirModules` for folders, `MapModules` in memory, `NoModules`); `compile` uses the **first-party library**, so every host finds it. The `prismal` command and the formatter look beside the file, then in the first-party library.
+  - First-party library: `lib/mechanics.prismal` (`Body`, `kinetic_energy`, `spring_force`, `pendulum_period`), written in Prismal, built into the compiler.
+- **Findings while building it:**
+  1. **Object bodies saw no shared names.** An object type's body was lowered in a fresh scope that did not receive the imported functions and enumerations; a shared `Body` calling a shared `kinetic` failed. Object bodies now receive the shared definitions, and in a library its own functions and enumerations.
+  2. **Calls renamed per member.** Elaboration renamed every function a member's body calls as if the member's type declared it (`shared.fn.kinetic@ball`). It now renames only the functions of the member's own type.
+- **Reason:** the vocabulary a domain needs is written in the language and imported, not built into the core (R-55); a document stays complete and reproducible; collisions are reported where they arise; nothing of the kernel or runtime changes, so every model behaves as it did.
+- **Version 1 (D-081):** additions. `object`, `enum`, `fn` and `use` at the top level were SX-E02. `use` becomes a contextual word; a model named `use` is unaffected. No valid program changes meaning.
+- **Not yet:** qualified names and aliases (`mechanics.Body`, `use m as n`); spaces and relation types in modules; module versions recorded with a document (09.9 section 28); modules supplied through the host protocol (a host now passes text that uses only the first-party library, or the self-contained IR); more first-party modules, written when content calls for them.
+- **Consequences:** IR `Use`, `Library`, `SHARED`, `ANY_SPACE`, `link`; elaboration keeps shared function identities; syntax `Item::Use`, `Item::Shared`, `modules` (`Modules`, `FirstParty`, `DirModules`, `MapModules`, `NoModules`, `Visible`), `compile_with`, `lower_with`, the formatter prints `use` lines and shared definitions; `prismal-present` links before elaborating; guide splitting starts a program at `use`; the `prismal` command and `fmt`; MK-7.1a, 04-ir section 2, working syntax, the reference and its glossary; guide chapter 19 (Shared definitions and modules); `lib/mechanics.prismal`; `prismal-present/tests/modules.rs` (one object type in a plane and a room, a shared function and enumeration, the canonical text, a module by name, a document without its modules' files, a module that uses a module, the first-party library, diagnostics).
+- **History:**
+  - 2026-10-14 accepted under the owner's standing delegation and implemented.
+
+## D-100: Spaces of three dimensions and views that look at them
+
+- **Status:** Accepted; implemented on branch `space3d`.
+- **Original position:** D-014 makes spatial dimension a type parameter; D-022 gives every space standard axes and allows declared frames. The prototype accepted `euclidean(3)` in the model kernel, but nothing computed with three-dimensional vectors beyond componentwise arithmetic, and a spatial view (PK-7.2) drew only a plane, `x` to the right and `y` up or down.
+- **Raised by:** D-096, fourth item of the 0.3 headline.
+- **Builds on:** D-014, D-021, D-022, D-047, D-054, D-093; PK-7.2; MK-10.7a; 04-ir section 7.
+- **Question:** What does a model in a space of three dimensions need beyond the plane's vocabulary, and how is such a space shown on a flat medium by every renderer?
+- **Content it serves:** a charge spiralling in a magnetic field (the cyclotron), torque and angular momentum as vectors, a top or gyroscope, tilted orbits; later rigid bodies and optics in space.
+- **Options considered:**
+  For computing: **componentwise only** (an author writes the cross product by hand from components): no new word, but every torque and every magnetic force repeats six products and is easy to get wrong. **`cross(a, b)`** (taken): a built-in like `dot` (D-093), defined for two vectors of one space of three dimensions, the dimension the product of the two.
+  For the projection: **perspective** (a camera position, a field of view): realistic, but lengths along an axis can no longer be compared and a scene's scale depends on depth, against the plain textbook figure most lessons need. **Orthographic from an azimuth and an elevation** (taken): the projection of textbook and engineering figures; the view's `scale` keeps its meaning (one model length to pixels, everywhere); two angles say where the viewer stands. **A rotation matrix or quaternion**: complete but not readable by an author.
+  For who projects: **each renderer** (the browser and the SVG renderer each project points): two copies of the geometry and of axes and grid. **The engine** (taken): frames carry points already projected to the view's two coordinates, and a view's axes and floor grid come as projected lines (shape `lines`), so every medium draws them alike and a renderer needs no notion of a third axis.
+- **Accepted position:** `cross` and orthographic views, projected by the engine, under the standing delegation of 2026-09-30.
+  - MK-10.7a: `cross(a, b)` of two vectors of one space of three dimensions; MK-E01 otherwise.
+  - PK-7.2a: `spatial(Room, scale: 1 m -> 40 px, azimuth: a, elevation: e)`, by default 30 deg and 20 deg; `z` up on the screen; `y:` in such a view and `azimuth`, `elevation` in a view of a plane are SX-E08. A point `p` is drawn at `(p · r, -(p · u))` times the scale, `r` the view's right and `u` its up. Circles are a sphere's outline facing the viewer. `axes` are three labelled axis lines, `grid` the `x y` plane at `z = 0`. Ellipses, arcs, heatmaps and groups lie in a plane and are PK-E05 in such a view. A pointer position lands in the plane through the origin facing the viewer.
+  - IR: `ViewKind::Spatial.look`, the azimuth and elevation as expressions, absent for a plane or the defaults.
+- **Findings while building it:**
+  1. **Shared definitions lost their identities in a round trip.** Reconciling a reprinted document with its original (D-036) did not match the libraries of D-099, so a shared enumeration came back as `shared.enum.Heading~2`. Chapter 19 was not among the player's examples, and the round-trip test never saw it. Libraries' enumerations, functions and object types are now matched by name within the library of the same name, and their order restored; chapters 19 and 20 are in the player's examples.
+  2. **The content check read an empty program on Windows.** `web/check-content.mjs` extracted the spoon example from `examples/heat.md` with a pattern for `\n` only; a checkout with `\r\n` line ends gave no program. Line ends are normalized before extraction.
+- **Reason:** `cross` is the one operation of three dimensions that componentwise arithmetic does not give readably; an orthographic view keeps the view's scale and the comparisons a figure is drawn for; projecting in the engine keeps renderers two-dimensional and identical.
+- **Version 1 (D-081):** additions. `cross` was an unknown function, `azimuth` and `elevation` unknown options. No valid program changes meaning.
+- **Not yet:** rotating frames (a frame turning with time, its fictitious forces) and components read in a declared frame of three dimensions; perspective views and a camera that moves around a scene (orbit, animated azimuth and elevation in a timeline); depth order and hidden lines (shapes are drawn in written order); ellipses, arcs and groups in such a view; drags constrained to a chosen plane; surfaces and fields on grids of three axes.
+- **Consequences:** `Func::Cross` (checking, evaluation, typesetting as `×`, printing); `ViewKind::Spatial.look`; `prismal-present` frames project points, vectors and circles and emit `lines` for axes and grid; pointer positions map back through the projection; the host marks such views (`three_d`); the web player and `prismal-svg` draw `lines`; the formatter prints `azimuth` and `elevation`; `prismal_syntax::identity` matches libraries; PK-7.2a, MK-10.7a, 04-ir section 7, working syntax, the reference; guide chapter 20 (Three dimensions); `prismal-present/tests/space3d.rs` (a charge in a magnetic field, views from the front, from above and by default, the canonical text, diagnostics); a browser check of the projected axes and floor.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-101: Algorithms: statements run in order, one step per occurrence
+
+- **Status:** Accepted; implemented on branch `algorithms`.
+- **Original position:** R-56 (adopted): a process has an execution mode, `continuous`, `discrete`, `algorithmic` or `stochastic`, carried by the IR. RUN-04 (09.10c): algorithmic processes require ordered, iterative execution. MK-14.2 reserved the `algorithmic` kind; MK section 21 deferred it to "the slice that needs it". The catalogue (01, sections 11 and 12) lists sorting, searching, graph traversal, recursion, state machines. A model could already count with discrete state and events, but a procedure with loops had to be hand-compiled into a state machine of flags and counters, and a member of a collection could be named only by a constant number (MK-E26).
+- **Raised by:** D-096, fifth item of the 0.3 headline.
+- **Builds on:** D-004, D-024, D-027, D-041, D-050, D-055, D-057, D-058, D-076; R-25, R-26, R-56; MK sections 8, 14, 15, 16; RUN-04, RUN-06.
+- **Question:** How does an author write a procedure (a sort, a search, Euclid's algorithm) so that a learner sees each of its steps, without leaving the model's semantics of committed transitions?
+- **Content it serves:** sorting and searching drawn as bars, Euclid's algorithm, later graph traversal over relations, state machines, scheduling; any lesson where the order of operations is the subject.
+- **Options considered:**
+  For what an algorithm is: **a new kind of element** beside events, with its own scheduling: a second notion of "when". **A state machine written by hand** (a phase enumeration and events per phase): no new syntax, but a three-line loop becomes a dozen events, and the reader no longer sees the procedure. **An event whose work is statements, resumed at each occurrence** (taken): the algorithm keeps an event's trigger (`every`, `on request`, `on E`), enabling condition, log, followers and requests, so labs, lessons, buttons and hosts drive it as they drive events; only its work differs.
+  For the order of reads: **as a handler** (every read sees the values before the occurrence): a swap could be written without a temporary, but `set i = i + 1` followed by a read of `i` would read the old value, which no reader of a procedure expects. **In order** (taken): each statement reads what the ones before it wrote; the occurrence's net changes then enter the transition as a handler's `set` operations, so commits stay atomic, constraints are checked on the result and conflicts with other events are reported as before (R-25, R-26).
+  For an algorithm's variables: **locals** (`let`) living in the algorithm: they would need their own storage across steps, would be invisible to presentations, and would need rules for surviving a `step`. **The model's own discrete state** (taken): counters and temporaries are declared in `discrete { ... }`; everything an algorithm works on can be drawn, observed, checked, snapshotted and resumed, and no new kind of binding exists. Only the resume point is hidden (`A@resume`), as D-098's contact state is.
+  For lists: **a list type** (`Real[8]`, values indexed by number): a new type, new operations, and a list's items could not each carry a representation. **Collections of objects** (taken): the list is `bars: Bar[8]`, each item a member with its own bindings and representations (D-055); what was missing is choosing a member by a number computed during the run (`bars[j + 1]`), now read through `pick` and written as conditional sets, and a list of starting values, `(5, 2, 7)[index]`.
+- **Accepted position:** an algorithm is an event whose work is statements, under the standing delegation of 2026-09-30.
+  - Syntax: `algorithm A on <trigger> [if c] { statements }`; statements `set`, `emit`, `create`, `destroy`, `if c { } else { }` (with `else if`), `while c { }`, `for i in [a, b] { }`, `step`. `algorithm`, `while` and `step` are contextual words.
+  - MK-14.17 to MK-14.21: statements in order, resumption, the net changes as one transition, a finished algorithm no longer occurs, `for` counters as discrete `Real` bindings (MK-E37), `contribute` excluded (MK-E37), the instruction limit. MK-8.3c: members chosen by computed numbers in reads and writes, failing outside the collection; lists of values indexed by number. MK-10.7a: `floor`, `ceil`, `round`, `mod`.
+  - RC-5.12: the runtime runs an algorithm on a working copy, derived values recomputed after each statement; more than 1,000,000 instructions without `step` is a model failure.
+  - PK-7.3b: segments, polylines and polygons in plot views, from pairs of plot coordinates, so a bar chart is a segment per member.
+  - IR: `Event.algorithm`, statements `do`, `if`, `while`, `for`, `step`; the hidden binding `event-id@resume` added by the checker; `pick` printed as `(a, b, c)[k]`.
+- **Findings while building it:**
+  1. **A write to a member chosen during the run could silently do nothing.** Writes through a chosen member (D-059) were one conditional set per member; a number outside the collection matched none. The first member's condition is now a `pick` over all members, so an out-of-range number fails as a read does.
+  2. **A representation repeated per member reported its mistake once per member.** A segment in a plot view gave 24 copies of PK-E05 for one written line. Program diagnostics are now reported once.
+  3. **Segments could not be drawn in plot views.** Markers took plot coordinates (PK-7.3a) but segments, polylines and polygons did not, though their drawing already mapped any point; they now share the marker's check (PK-7.3b).
+- **Reason:** a procedure reads as itself, in the order it runs; its steps are the model's own transitions, so every existing guarantee (atomic commits, validation, conflicts, logs, replay, snapshots) holds for it; nothing an algorithm works on is hidden from presentations; no new type or kind of binding is introduced.
+- **Version 1 (D-081):** additions. `algorithm`, `while` and `step` were names or SX-E02 at the start of a statement; they stay names elsewhere. `floor`, `ceil`, `round` and `mod` were unknown functions; a name the author declares wins. Members by computed numbers were MK-E26. Segments in plot views were PK-E05. No valid program changes meaning.
+- **Not yet:** recursion and procedures with arguments (an algorithm calling another); local variables; iteration over the members of a collection or the relations of a member in an algorithm (`for b in bars`); stepping an algorithm backwards in a lesson (the timeline seeks runs, which covers replay); restarting one algorithm without restarting the run; neighbours of a cell of a field for cellular automata (catalogue 9.3); a list type, should content need lists of lists.
+- **Consequences:** IR `Stmt`, `Event.algorithm`, `resume_id`, `with_resume`, `Func::{Floor, Ceil, Round, Mod}`; elaboration of statements and of members chosen by computed numbers; kernel `CAlgorithm`, `CInstr`, `ALGORITHM_INSTRUCTIONS`, statement compilation, MK-E37; runtime `algorithm_step`; presentation segments and polygons in plot views, diagnostics reported once; parser `algorithm_decl`, `AlgoStmt`; lowering of statements and of `(a, b)[k]`; the formatter prints algorithms and lists; MK-14.17 to MK-14.21, MK-8.3c, MK-10.7a, RC-5.12, PK-7.3b, 04-ir sections 5.3 and 6, working syntax, the reference, the goal index; guide chapter 21 (Algorithms); `prismal-present/tests/algorithms.rs` (bubble sort, binary search stepped by requests with an emitted event, Euclid, the canonical text, diagnostics, runaway loops and missing members); a browser check of the sort lab's bars.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-102: Friction and restitution: bounded holding forces and impacts that bounce
+
+- **Status:** Accepted; implemented on branch `contact-friction`.
+- **Original position:** D-098 "Not yet": friction (a cone of forces, a second complementarity at the contact), many simultaneous contacts that depend on each other, impacts other than inelastic except through an author's event. D-093 "Not yet" listed constraints in object types across members as untested. The catalogue (01, sections 2.2 and 2.4) lists friction, sliding and rolling, collisions.
+- **Raised by:** the owner's order of work of 2026-10-15 (after the 0.3 headline): the open items of contact and inequality constraints.
+- **Builds on:** D-004, D-092, D-093, D-097, D-098; MK sections 12 and 15; RC-5.10, RC-5.11.
+- **Question:** How does an author write a crate that sticks and then slides, and a ball that bounces until it rests, with the same enforced constraints as contact, and without writing the switching by hand?
+- **Content it serves:** friction on floors and slopes (the angle where a crate starts to slide, a block brought to rest), pushing and pulling against friction, bouncing balls and the coefficient of restitution, later rolling and collisions between bodies.
+- **Options considered:**
+  For friction: **a force law in the flows** (`F = -mu N sign(v)`, or a smoothed `tanh`): no new semantics, but a crate at rest under a small push jitters or creeps, and the smooth form needs a stiff solver; neither shows sticking, which is the lesson. **A cone of forces with a full complementarity solver** (an LCP over every contact): general, the 09.x direction, but a large solver for one and two contacts. **A bounded holding force** (taken): friction is a constraint on the sliding speed, `v == 0`, held by an unknown `F` with `|F| <= B`; within the bound the equality holds (D-093); at it the constraint slips and `F` sits at the bound against the slip. This is the same switch as D-098's contact, with a different "off" equation, so it reuses hidden discrete state and events, exact switching instants and the transition rules.
+  For bounces: **an author's event** (chapter 5): remains possible, but then the constraint cannot also hold the ball once it rests. **Restitution on the inequality** (taken): the impact projects onto the boundary and onto a reversed, scaled gap rate instead of a zero one; accumulating bounces end in contact through the Zeno settle of the hidden touch event, as in chapter 5.
+  For a static coefficient larger than the sliding one: **two bounds** (`where |F| <= mu_s N`, sliding at `mu_k N`): a further clause; left for content that needs it (Not yet).
+- **Accepted position:** bounded holding forces and restitution, under the standing delegation of 2026-09-30.
+  - Syntax: `constraint grip: v == 0 m/s policy enforce with F where |F| <= mu * N`; `constraint floor: y >= 0 m policy enforce with N restitution e`. `where` (reserved) is a constraint clause after `with`; `restitution` is a contextual clause word.
+  - MK-12.12: hold and slip, `F == s B` while slipping with `s` the sign at release, holding again when `a - b` crosses zero, slipping again at once if the force needed is past the bound; at the start, slipping against the slip. MK-12.13: an impact moves onto the boundary and sets the gap's rate to `-e` times its value; accumulating impacts make contact; `e = 0` is inelastic.
+  - RC-5.13: hidden `c@hold`, `c@side` and the events `c@slip`, `c@grip`, `c@reslip`, `c@start`; the starting side measured from the solved rate's change with `F`. RC-5.14: the `rebound` operation on the hidden touch event, the projection with a target rate, the Zeno settle.
+  - IR: `Constraint.bound`, `Constraint.restitution`, operation `rebound` (made by elaboration).
+- **Findings while building it:**
+  1. **The projection could only aim at zero.** Each level of RC-5.10 moved the state onto `lhs == rhs`; a rebound needs a gap rate of `-e v`. The level's routine now takes target values, zero for projection.
+  2. **The side of a slip that is under way at the start depends on how the force is written.** A force written `-F` in the flows would have pushed a sliding crate faster. The side is now measured, as D-098 measures a holding force's direction, so either way of writing works.
+- **Reason:** sticking is the lesson of friction and bouncing the lesson of restitution; both come out of the enforced constraints the language already has, at exact instants, with the force in the model as an unknown a view can draw; no solver beyond D-092's Newton solve and D-093's projection is needed.
+- **Version 1 (D-081):** additions. `where` and `restitution` after a constraint were SX-E02; `with` on an equality was MK-E36. No valid program changes meaning.
+- **Not yet:** a static coefficient larger than the kinetic one; friction in two directions on a surface (a cone, a slip direction that turns); several contacts that switch together and depend on each other (a stack of blocks, a box on two corners: each switches by its own events, which is right when they do not interact at one instant); collisions between moving bodies (restitution between two members, which needs a gap between them, as `|p - q| >= r1 + r2` now gives, but untested); rolling without slipping as a named form (it is an enforced equality of velocities, writable now).
+- **Consequences:** IR `Constraint.{bound, restitution}`, `Op::Rebound`, `enforce::{hold_id, side_id}`, the hidden friction bindings and events, the rebounding touch event; kernel `CEquation.slip`, `CConstraint.{hold, restitution}`, `COp::Rebound`, `CModel::{rebound, orient_slips, move_onto}`; runtime rebounds in transitions; parser clauses `where` and `restitution`, lowering with SX-E08 for a bound not of the form `|F| <= B`, the formatter; MK-12.12, MK-12.13, RC-5.13, RC-5.14, 04-ir, working syntax, the reference; guide chapter 18 (Friction and bounces); `prismal-present/tests/friction.rs` (a crate held until `mu m g` then sliding with `v = (t - 4.905 s)² / 2`, a sliding crate stopping at `v0² / (2 mu g)`, friction written either way, a ball bouncing to `e² h` and resting at `3 sqrt(2 h / g)`, the canonical texts, diagnostics).
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-103: Geometric optics as a first-party module
+
+- **Status:** Accepted; implemented on branch `optics`.
+- **Original position:** the catalogue (01, section 4.3) lists rays, light sources, reflection, refraction, Snell's law, lenses, mirrors, focal points, image formation, ray diagrams, total internal reflection, dispersion and prisms (interference, diffraction and polarization are wave optics). The exploration record sketched domain libraries (`use physics.optics`, 09.9 sections 25 to 27) without content. D-099 made first-party libraries modules written in Prismal; `mechanics` was the only one.
+- **Raised by:** the owner's order of work of 2026-10-15: optics and ray tracing after the open items of contact.
+- **Builds on:** D-022, D-029, D-048, D-093 (`dot`), D-099, D-100; R-55; MK-7.1a, MK-10.7.
+- **Question:** What does the language need so that an author draws ray diagrams (refraction, total internal reflection, lenses and images, prisms) with exact angles, and which of it belongs in the core?
+- **Content it serves:** Snell's law and the critical angle, a laser in a tank, thin lenses and the lens equation, real and virtual images, mirrors, thick lenses and ball lenses, dispersion in a prism.
+- **Options considered:**
+  1. **A ray tracer in the core** (a `ray` representation that follows a source through declared surfaces, with materials): one word draws a whole path, but the core would gain a scene description (surfaces, materials, a search for the nearest hit) that only optics uses, against R-55 (domains add vocabulary, never core semantics), and the path's points would be hidden inside a drawing, where neither expectations nor other values could read them.
+  2. **Functions in a first-party module** (taken): reflection, Snell's law with total internal reflection, intersections with planes and spheres, the thin lens, image distance, magnification, the lensmaker's equation and Cauchy's dispersion, each a closed-form function of points and directions, written in Prismal (`lib/optics.prismal`). A ray's path is a chain of derived values, one per surface; drawings, observations and expectations read every point and angle. Shared definitions work in any space (D-099), so the same functions serve a plane and a room (D-100).
+  3. **Raw formulas in each program**: nothing to add, but Snell's law in vector form, with its total-reflection branch, would be rewritten in every lesson.
+- **Accepted position:** option 2, under the standing delegation of 2026-09-30.
+  - Module `optics` (D-099 first-party library): `direction`, `facing`, `reflect`, `incidence_cos`, `incidence`, `totally_reflected`, `critical_angle`, `refract`, `hit_plane`, `closest_along`, `half_chord_sq`, `sphere_distance`, `hit_sphere`, `meets_sphere`, `sphere_normal`, `thin_lens`, `image_distance`, `magnification`, `lensmaker`, `cauchy`, `angle_between`.
+  - Core additions found while writing it: the length units `μm` (`um`) and `nm` for wavelengths. Nothing else: directions are `Vector<1>`, `if` evaluates only the branch taken (so the square root of Snell's law past the critical angle is never taken), and a ray that misses a sphere has no point, which drawings show as not available.
+- **Findings while building it:**
+  1. **`unit` is reserved** (the display-unit clause), so the module's normalizing function is `direction`.
+  2. **An `if` cannot be broken before `else`** across lines in a function body; long conditional functions are written on one line. Recorded for the syntax's line rules (D-081) as a possible relaxation, not changed here.
+- **Reason:** optics is vocabulary over the core's geometry, as R-55 asks; every ray point is a model value that lessons can check and draw; the module is written in the language, so authors can read and extend it, and it serves three dimensions as well as two.
+- **Version 1 (D-081):** additions. `use optics` was SX-E03 (no module); `nm`, `μm` and `um` were unknown units. No valid program changes meaning.
+- **Not yet:** a ray that follows an unknown number of surfaces (a search for the nearest of several, which would use an algorithm, D-101, or aggregates over a collection of surfaces); colours from a wavelength; curved mirrors' paraxial form (`thin_mirror`); wave optics (interference, diffraction, polarization), which belong with fields (D-091); a dotted back-extension of rays for virtual images, drawn now as separate segments by the author.
+- **Consequences:** `lib/optics.prismal`, `prismal_syntax::modules::FIRST_PARTY`; units `μm`, `um`, `nm`; guide chapter 22 (Light and rays: refraction and total internal reflection, a thin lens and its image, a prism), chapter 19 and 2 and the reference updated, the goal index; `prismal-present/tests/optics.rs` (Snell's law into and out of water, total internal reflection at 60 degrees, the critical angle, reflection, a ray meeting a line, a thin lens's focus, image distance and magnification, a ray through a glass ball checked against the chord geometry, Cauchy's dispersion, the lensmaker's equation); browser checks of the three labs.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-104: Views of three dimensions: perspective, turns, depth, shapes in planes, drags across planes
+
+- **Status:** Accepted; implemented on branch `views3d`.
+- **Original position:** D-100 drew a space of three dimensions orthographically from a constant azimuth and elevation; shapes were drawn in written order whatever their depth; ellipses, arcs and groups were PK-E05 in such a view; a pointer landed in the plane through the origin facing the viewer. Its "Not yet" listed perspective views and a camera that moves around a scene, depth order and hidden lines, ellipses, arcs and groups in such a view, and drags constrained to a chosen plane.
+- **Raised by:** the owner on 2026-10-15, asking for the open items of D-100 and D-103 to be started.
+- **Builds on:** D-042 (timeline cameras), D-043 (groups), D-047 (input in the engine), D-054 (round geometry), D-075, D-095, D-100; PK-6.3b, PK-6.3c, PK-7.2a, PK-10.5.
+- **Question:** How does a view of three dimensions show depth, how do the author, a lesson and the learner turn it, how do flat shapes and groups take a place in space, and where does a drag in such a view move what it drags?
+- **Content it serves:** a planet on a tilted orbit passing behind its sun, a door swinging about a hinge, rings and discs in inclined planes (orbits, wheels, coils), a camera flying round a scene in a lesson, a learner turning a model to see it from another side, moving a body across a floor or a table.
+- **Options considered:**
+  For perspective: **a camera position and a field of view**: complete, but the scene's scale then depends on two numbers that do not say how large it is drawn. **A viewer's distance from the origin** (taken): `distance: d`; the plane through the origin facing the viewer keeps the view's `scale`, so a view keeps its size when perspective is added and an author changes one number to strengthen or weaken it.
+  For turning: **constant angles only** with separate words for animated and learner turns: three mechanisms. **Angles as expressions read at each frame** (taken), plus a `camera` clause in timelines and a learner permission: an author binds the angles to a slider or to time with no new word, a lesson turns the view with the action that already moves it, and `orbit` sits beside `zoom` and `pan`.
+  For depth: **a depth buffer in each renderer**: exact, but every medium would need the third coordinate, against D-100's choice that renderers stay two-dimensional. **Sorting whole representations**: one long line passing in front of and behind a body cannot be right. **The engine cuts hidden lines and orders bodies** (taken): bodies (closed shapes) are drawn from the farthest; the pieces of lines that an opaque body hides are cut away in the frame. Renderers draw what they receive, and media that cannot sort (SVG, video) are right too. Bodies stay see-through unless marked `opaque`, as before.
+  For flat shapes: **a plane given by three points**: indirect. **A normal** (taken): `normal: n`, the vector at right angles to the plane; the shape's axes are fixed from the group's `x` so that `rotate` and `from`/`to` keep their meaning, and with `z` as the normal a shape lies in the floor as it lies in a plane in two dimensions. A circle without a normal keeps D-100's meaning, a sphere's outline.
+  For groups: **Euler angles** (`yaw`, `pitch`, `roll`): three words and an order to learn. **An axis and the existing `rotate`** (taken): one more option, the axis a group turns about; nested groups compose.
+  For drags: **always the plane facing the viewer**: a body dragged across a floor would rise and sink as the view tilts. **A plane named by its normal, through where the drag began** (taken): `on drag across (0, 0, 1) as p`; without it, the plane faces the viewer, now through the dragged point rather than the origin.
+- **Accepted position:** the options taken above, under the standing delegation of 2026-09-30.
+  - PK-7.2b (new): perspective, the order of turns (learner, timeline, author), depth order, opaque bodies and hidden lines, shapes in planes, groups about an axis, drags across planes.
+  - Syntax: view option `distance`; `camera v ... azimuth a elevation e`; options `normal` (circle, ellipse, arc), `opaque` (circle, ellipse, polygon), `axis` (group); `on drag [part] [live] [across n] as p`; `permit learner { orbit }`. `across`, `azimuth`, `elevation` are contextual keywords.
+  - IR: `ViewKind::Spatial.distance`; `Action::Camera.azimuth`, `.elevation`; `Inverse.across`.
+  - Frames: a view frame of three dimensions carries `look`, its azimuth and elevation in radians; a representation carries `opaque`. Model coordinates (`RepFrame::geo`) stay in the engine.
+  - Host: the gesture `orbit` (HI-4.5), half a degree per pixel; a view reset undoes the learner's turn.
+- **Findings while building it:**
+  1. **Edge-on views hide what a picture means.** The first angles chosen for the guide's tilted orbit, azimuth 20 deg and elevation 12 deg, lay almost in the orbit's plane, and the orbit was drawn as a line. Views were checked as rendered images, and the guide's examples use angles at which their shapes open out.
+  2. **A closed circle in a plane is a disc.** An orbit drawn as `circle(O, R, normal: n)` covers the scene with its tint; the guide draws paths as an `arc` all the way round, a line.
+- **Reason:** perspective, turns and depth are what make a flat picture read as space; each is one option or clause next to the ones D-100 gave, and the engine does the geometry so that every renderer and medium shows the same picture.
+- **Version 1 (D-081):** additions. `distance`, `normal`, `opaque`, `axis`, the `camera` clauses `azimuth` and `elevation`, and `across` were errors before (SX-E08, SX-E02). Two behaviours change for programs that were valid: in a view of three dimensions, bodies are now drawn before lines and markers rather than in written order, and a drag lands in the plane through the dragged point rather than through the origin. Angles that read bindings were PK-E02 and are now evaluated at each frame.
+- **Not yet:** a view's centre other than the origin for perspective and turns (a `target`); surfaces (meshes, height maps) and fields on grids of three axes; shading by light direction; hidden pieces drawn dashed rather than cut; bodies that cut through each other drawn exactly (painter's order is by centre).
+- **Consequences:** `prismal-present` (`frame.rs`: `Look` with distance and angles, `Aim`, `Turn`, `Projector::look`, `ctx_at`, `set_turn`, `frame_turned`, `Tf` as a rotation of three dimensions, `Geo`; `depth.rs`: bodies, hidden lines and order; `interact.rs`: drags across planes; `timeline.rs`: camera turns); `prismal-host` (orbit gesture, `ViewState::turn`); `prismal-syntax` (parser, lowering, options, formatter); `prismal-svg` and `web/player.js` (opaque fills; "Reset view" with `orbit`); PK-7.2a, PK-7.2b, 04-ir section 7, working syntax, the reference; guide chapter 20 (A tilted orbit, seen from every side; A door on a hinge); `prismal-present/tests/views3d.rs` (perspective, angles read from a parameter, a timeline turn, an opaque ball hiding a marker and cutting a segment, shapes in a plane, a group about an axis, a drag across a plane, canonical text, diagnostics), `prismal-host/tests/orbit.rs`; rendered images of the guide's examples.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-105: Declared frames, components read in them, and views drawn from them
+
+- **Status:** Accepted; implemented on branch `frames`.
+- **Original position:** D-022 gave every space a standard frame and let a space declare further frames, with components read as `v.in(F).x` (MK-4.2, MK-4.6); nothing implemented them. D-100's "Not yet" listed rotating frames (a frame turning with time, its fictitious forces) and components read in a declared frame of three dimensions.
+- **Raised by:** the owner on 2026-10-15, with the other "Not yet" items of D-100 and D-103.
+- **Builds on:** D-022, D-091 (declarations with named options, `grid`), D-093 (`dot`), D-099 (`mechanics`), D-100 (`cross`), D-104; MK-4.2, MK-4.6, PK-7.2.
+- **Question:** How is a frame declared, how do expressions read values in it, how does a frame turn, and how is the motion seen from a moving frame shown?
+- **Content it serves:** gravity along and across a slope; a carousel, a turntable, the Earth turning under a pendulum or a wind; the Coriolis and centrifugal forces; motion described by a rider; later, rigid bodies with frames of their own.
+- **Options considered:**
+  For the declaration: **a frame value type** (`derived { F: Frame = frame(P, u) }`): frames would be values like any other, but a new type touches every type and value of the kernel, and a frame is never added, compared or drawn. **A transform from another frame** (D-022's wording): a chain of frames to resolve, for the one case in teaching that needs it (a frame on a frame). **A declaration with an origin and axes** (taken): `frame F(at: P, x: u)`, `frame F(at: P, x: u, y: v)`, written as `grid` is. A frame on a frame is an origin and axes computed from the other's.
+  For the axes: **all axes given**: in a plane the second axis is fixed by the first, and a set of given axes may not be square. **The first given and the rest made square** (taken): in a plane the second axis is the first turned a quarter turn; in three dimensions `y` is made square to `x` and the third axis is their cross product, so every frame is right-handed and orthonormal whatever its author writes.
+  For moving frames: **an angular velocity declared with the frame**: a second way to say what the axes already say. **Axes that read time and state** (taken): a frame turns because its axes do; nothing else is needed, and a frame can follow a body as well as a clock.
+  For fictitious forces: **added by the runtime when a model is written in a frame**: hidden terms in an author's equations. **Functions in `mechanics`** (taken): `coriolis(m, w, v)` and `centrifugal(m, w, r)`, written in Prismal; an author describing motion in a turning frame writes them into the flow and sees them.
+  For showing a frame: **the author transforms every drawn point**: possible with `.in(F)`, but every representation would need rewriting, and a trace would be read in the frame of the instant shown rather than of each sample. **A view option** (taken): `frame: F`, so the engine reads everything in the frame, traces sample by sample.
+- **Accepted position:** the options taken above, under the standing delegation of 2026-09-30.
+  - MK-4.6a (new): declared frames, their axes, `v.in(F).k`; PK-7.2c (new): views drawn in a frame.
+  - Syntax: `frame F(at: P, x: u[, y: v])` in a model; `e.in(F).x`; the view option `frame`. `frame` is a contextual keyword.
+  - IR: `Model.frames` (`FrameDecl`); `Expr::In { in, frame, axis, reads }`; `ViewKind::Spatial.frame`. While a model is checked, `reads` holds the frame's expressions (`prismal_ir::frames::with_reads`), so that the order of derived values and every other analysis of what an expression reads sees them.
+  - Kernel: `CExpr::InFrame` evaluates the frame's origin and axes on the state and the component; `frame_axes` is shared with the presentation engine.
+  - `mechanics`: `coriolis` and `centrifugal`.
+- **Findings while building it:**
+  1. **A frame's mistakes were reported nowhere.** Component reads compile the frame's parts quietly, to report a mistake once; a frame with an origin that was not a point then passed. Each frame is now checked once where it is declared.
+- **Reason:** a frame is an origin and axes, which is what an author knows; making the rest square keeps every frame right-handed; frames that move because their axes read time need no second mechanism; drawing from a frame in the engine keeps traces right.
+- **Version 1 (D-081):** additions. `frame F(...)` in a model was SX-E02, `.in(F)` was an unknown function, `frame:` an unknown view option. `frame` becomes a contextual keyword: a binding named `frame` is still a name, except at the start of a model member followed by a name and `(`.
+- **Not yet:** frames in object types (a frame per member, for rigid bodies); a frame defined from another frame by a rotation and an offset; heatmaps in a view drawn in a turning frame (they stay square to the screen); the angular velocity of a frame read from its axes (`F.spin`), so that `coriolis` need not be given it.
+- **Consequences:** `prismal-ir` (`FrameDecl`, `Expr::In`, `frames.rs`, elaboration), `prismal-kernel` (`frame_parts`, `CExpr::InFrame`, `frame_axes`, frames checked in `check_model`), `prismal-syntax` (parser, lowering, formatter), `prismal-present` (`Moving`, `ViewCtx::local`, `global`, `project`, `at_state`; traces per sample; text and typeset forms), `lib/mechanics.prismal`; MK-4.6a, PK-7.2c, 04-ir, working syntax, the reference; guide chapter 23 (Frames: a ball on a slope, a carousel, a puck on a turntable); `prismal-present/tests/frames.rs`.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-106: Ray optics continued: the nearest surface, rays to the edge, colours of light, curved mirrors
+
+- **Status:** Accepted; implemented on branch `optics-more`.
+- **Original position:** D-103's "Not yet": a ray that follows an unknown number of surfaces; colours from a wavelength; curved mirrors' paraxial form; a dotted back-extension of rays for virtual images, drawn as separate segments by the author. A derived value without a value (a ray that misses a sphere) stopped the run at its start, although D-103's guide said its drawing would only be left out.
+- **Raised by:** the owner on 2026-10-15, with the other "Not yet" items of D-100 and D-103.
+- **Builds on:** D-055 (aggregates), D-057 (`Extreme`), D-061 (styles), D-101 (`(a, b, c)[k]`), D-103; MK-5, MK-8.3a, PK-6.6a.
+- **Question:** How does a ray find the nearest of several surfaces, how does a path end where a ray leaves, how is a ray drawn to the edge and behind its start, how is light drawn in its own colour, and what does a curved mirror need?
+- **Content it serves:** a ray bouncing along mirrors, light in a fibre or between two mirrors, a concave mirror's real and virtual images, spectra drawn in their colours, a slider for a wavelength.
+- **Options considered:**
+  For the nearest surface: **a ray tracer in the core**: rejected by D-103 (R-55). **An algorithm that loops over surfaces** (D-101): it runs on an event, not as a value that follows a dragged mirror. **An aggregate that picks a member's value by a key** (taken): `first(e for b in c if cond by k)`, the value at the smallest key, a derived value like any other; the existing `min` cannot say which member it came from.
+  For a ray that leaves: **a sentinel value**: a fake point an author must test for. **No value** (taken): the next point has no value; MK-5 already said a status propagates and that only a status reaching state concerns the runtime. Derived bindings now hold a status instead of stopping the run, a polyline ends at its last point with a value, and `otherwise` picks the last point that has one.
+  For drawing a ray: **a long segment**: it stretches the view's framing to its far end. **A representation that the medium draws to its edge** (taken): `ray(P, d)`, carried as a start and a screen direction; `back: dotted` adds the extension behind `P`.
+  For colours: **named colours per wavelength by the author**: approximate and repeated. **A length as a colour** (taken): `color: 650 nm` or `color: λ`, turned into the colour of that light by the engine, the same in every medium.
+  For mirrors: **exact spheres only** (`hit_sphere`, `reflect`, already possible): correct but not the thin-mirror figure textbooks draw. **A paraxial `thin_mirror`** (taken) beside them, with `mirror_focus(R)`.
+- **Accepted position:** the options taken above, under the standing delegation of 2026-09-30.
+  - MK-8.3c (new): `first ... by`. MK-5.6a (new): derived bindings may hold a status.
+  - PK-6.3g (new): `ray`; polylines end at their last available point. PK-6.6a: a colour may be a wavelength.
+  - `optics`: `plane_distance`, `meets_segment`, `thin_mirror`, `mirror_focus`.
+  - IR: `Agg::First`, `Expr::Aggregate.by`, `Expr::Extreme.values`; kernel `Value::Absent`; frames carry `#rrggbb` colours and the shape `ray`.
+- **Findings while building it:**
+  1. **A missed ray stopped the run.** A derived value that had no value at the start failed the run's initialization, so D-103's statement that a missed ray is only left out of the drawing held for presentation expressions, not for derived values. MK-5.6a settles it as MK-5 intended.
+  2. **The SVG renderer and the host list the shapes they draw.** A new shape was printed as text by the SVG renderer until it was added to its list; the host's capabilities list it too.
+  3. **Function graphs were sampled at 100 points**, too few for interference fringes; they are sampled at 400.
+- **Reason:** each piece is the smallest addition that lets the guide's figures be written as values that follow the learner's changes; ray tracing stays vocabulary over the core, with one general aggregate added to the core.
+- **Version 1 (D-081):** additions: `first`, `by`, `ray`, `back`, a length as `color`. One change of behaviour: a run whose derived values have no value at some instant no longer fails for that reason alone; what reads them still does.
+- **Not yet:** an unbounded number of bounces (a chain is written out step by step); rays cut by opaque bodies in views of three dimensions; colours of mixed light.
+- **Consequences:** `prismal-ir` (`Agg::First`, `by`, `Extreme.values`), `prismal-kernel` (`Value::Absent`, derived bindings that hold a status, `first` typed and evaluated), `prismal-syntax` (`by`, `first`, `ray`, options), `prismal-present` (`ray`, `spectral`, polylines that end, 400 samples per function graph), `prismal-svg`, `web/player.js`, `prismal-host` kinds, `lib/optics.prismal`; MK-5.6a, MK-8.3c, PK-6.3g, PK-6.6a, 04-ir, the reference; guide chapter 22 (A concave mirror and its image, A ray between mirrors, colours in the prism); `prismal-present/tests/optics_more.rs`.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.
+
+## D-107: Wave optics as functions of the optics module, drawn with fields
+
+- **Status:** Accepted; implemented on branch `optics-more`.
+- **Original position:** D-103's "Not yet": wave optics (interference, diffraction, polarization), which belong with fields (D-091).
+- **Raised by:** the owner on 2026-10-15, with the other "Not yet" items.
+- **Builds on:** D-091 (fields, heatmaps), D-099, D-103, D-106 (colours of light).
+- **Question:** What does the language need to show interference, diffraction and polarization?
+- **Content it serves:** two-source interference in a ripple tank, Young's slits, single-slit diffraction, gratings, polarizers and Malus's law, Brewster's angle.
+- **Options considered:** **a wave equation for light on a grid**: the fields of D-091 integrate waves, but at light's wavelengths a grid would need billions of cells. **Superposed waves as derived fields and far-field patterns as functions** (taken): a derived field adds the waves of point sources cell by cell, for a picture on any scale; the patterns on a far screen are closed forms in the module.
+- **Accepted position:** the `optics` module gains `wavenumber`, `two_slit`, `single_slit`, `grating`, `bright_angle`, `malus`, `brewster`; nothing in the core.
+- **Reason:** the core already draws fields and graphs; what wave optics adds is formulas, which belong in the module (R-55).
+- **Version 1 (D-081):** additions to a module; no program changes meaning.
+- **Not yet:** thin films and coatings; complex amplitudes as values; near-field (Fresnel) diffraction.
+- **Consequences:** `lib/optics.prismal`; guide chapter 24 (Light as a wave: two sources, fringes on a screen, polarizers); the guide index and the player's examples.
+- **History:**
+  - 2026-10-15 accepted under the owner's standing delegation and implemented.

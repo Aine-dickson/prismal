@@ -283,7 +283,54 @@ event join on request(x in balls, y in balls) if not any(s.has(x) and s.has(y) f
 
 A second request for the same pair, in either order, is refused. See [chapter 9](09-objects.md).
 
+### Show each step of a procedure (sorting, searching)
+
+Write an **algorithm**: statements that run in order, with a **step** where each pause should be. Its counters and temporary values are **discrete** state; a list of values is a collection.
+
+```prismal
+// model
+algorithm sort on every 0.5 s {
+  for i in [1, 7] {
+    for j in [1, 8 - i] {
+      if bars[j].v > bars[j + 1].v {
+        set held = bars[j].v
+        set bars[j].v = bars[j + 1].v
+        set bars[j + 1].v = held
+      }
+      step
+    }
+  }
+}
+```
+
+See [chapter 21](21-algorithms.md).
+
+### Trace light through a lens, a mirror or a prism
+
+**Use** the first-party module **optics**: each surface a ray meets is one derived value, its new direction another.
+
+```prismal
+// file
+use optics
+// model / derived
+q:   Point     = hit_plane(source, aim, origin, (1, 0))
+out: Vector<1> = thin_lens(aim, q, origin, (1, 0), f)
+```
+
+See [chapter 22](22-light-and-rays.md).
+
 ## Show things
+
+### Draw a bar chart
+
+Draw one **segment** per value in a **plot** view, from the axis to the value.
+
+```prismal
+// presentation / view n: plot(x: [0, 9], y: [0, 9])
+for b in bars { segment((b.k, 0), (b.k, b.v), width: 8) }
+```
+
+See [chapter 21](21-algorithms.md).
 
 ### Give the page and its views titles
 

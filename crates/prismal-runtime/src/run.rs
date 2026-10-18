@@ -825,8 +825,36 @@ impl<'a> Engine<'a> {
     fn check_constraints(&self, vals: &[Value], _initial: bool) -> Result<Vec<RunDiag>, RunDiag> {
         let mut reports = vec![];
         for k in &self.cm.constraints {
-            // An enforced constraint is kept by projection (RC-5.10), not checked.
+            // An enforced constraint is kept by projection (RC-5.10), not checked. An inequality
+            // out of contact holds by itself; one found well past its boundary was crossed
+            // without touching, which a holding force of the wrong sign causes (RC-5.11).
             if k.policy == Policy::Enforce {
+                if let (Some((on, side)), Some(gap)) = (k.contact, k.levels.first()) {
+                    let c = self.ctx(vals);
+                    let force = || self.cm.ir.constraints.iter().find(|x| x.id == k.id).and_then(|x| x.force.clone()).map(|f| self.cm.bindings[self.cm.idx(&f)].name.clone()).unwrap_or_default();
+                    // A contact whose force comes out negative is released, unless a positive
+                    // force would close the gap: then the force is written the wrong way.
+                    let pulls = vals[on].boolean() && self.cm.equations.iter().find(|q| q.contact.is_some_and(|(c, _)| c == on)).is_some_and(|q| vals[q.contact.unwrap().1].num() < 0.0);
+                    if pulls && self.cm.holds_as_declared(vals, on, side, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))? == Some(false) {
+                        let name = force();
+                        return Err(self.diag(
+                            Category::Constraint,
+                            format!("constraint `{}`: a positive `{name}` closes it instead of holding it; write `{name}` in the flows so that it is positive when it holds the constraint (RC-5.11)", k.name),
+                            Some(&k.id),
+                        ));
+                    }
+                    if !vals[on].boolean() {
+                        if let (Ok((a, sa)), Ok((b, sb))) = (gap.lhs.eval_sized(&c), gap.rhs.eval_sized(&c)) {
+                            if side * (a.num() - b.num()) < -(1e-6 * (sa[0] + sb[0]) + 1e-6) {
+                                return Err(self.diag(
+                                    Category::Constraint,
+                                    format!("constraint `{}` is crossed out of contact (RC-5.11): the crossing was not found; give the solver a smaller step", k.name),
+                                    Some(&k.id),
+                                ));
+                            }
+                        }
+                    }
+                }
                 continue;
             }
             let c = self.ctx(vals);
@@ -1308,6 +1336,9 @@ impl<'a> Engine<'a> {
                 Some(c) => matches!(c.eval(&self.ctx(&vals)), Ok(Value::Bool(true))),
                 None => true,
             });
+            // A finished algorithm no longer occurs (MK-14.17, D-101).
+            due.retain(|&ei| !self.finished(ei));
+            requested.retain(|(ei, _)| !self.finished(*ei));
             due.sort();
             due.dedup();
             if due.is_empty() && requested.is_empty() {
@@ -1332,12 +1363,12 @@ impl<'a> Engine<'a> {
                         }
                     }
                 } else {
-                    ops.extend(self.cm.events[ei].handler.clone());
+                    ops.extend(self.work_of(ei)?);
                     handled.push((ei, false, false));
                 }
             }
-            for (ei, _) in requested.iter() {
-                ops.extend(self.cm.events[*ei].handler.clone());
+            for (ei, _) in requested.clone().iter() {
+                ops.extend(self.work_of(*ei)?);
                 handled.push((*ei, false, true));
             }
             let emitted = self.transition(&ops, false)?;
@@ -1385,6 +1416,104 @@ impl<'a> Engine<'a> {
         Ok(true)
     }
 
+    /// Whether event `ei` is an algorithm that has run to its end (D-101).
+    fn finished(&self, ei: usize) -> bool {
+        self.cm.events[ei].algorithm.as_ref().is_some_and(|a| self.vals[a.resume].num() as usize >= a.code.len())
+    }
+
+    /// The operations of an occurrence of event `ei`: its handler, or for an algorithm the
+    /// changes made by running it to its next `step` (D-101).
+    fn work_of(&mut self, ei: usize) -> Result<Vec<COp>, RunDiag> {
+        if self.cm.events[ei].algorithm.is_none() {
+            return Ok(self.cm.events[ei].handler.clone());
+        }
+        self.algorithm_step(ei)
+    }
+
+    /// Runs algorithm `ei` from where it stopped to its next `step` or its end, each
+    /// statement reading the values the ones before it wrote (MK-14.17, RC-5.12). The result
+    /// is a `set` of each stored value that changed, its resume point included, and the
+    /// events it emitted: the transition then treats them as a handler's operations.
+    fn algorithm_step(&mut self, ei: usize) -> Result<Vec<COp>, RunDiag> {
+        let cm = self.cm;
+        let ev = &cm.events[ei];
+        let alg = ev.algorithm.as_ref().unwrap();
+        let mut work = self.vals.clone();
+        let mut emits = vec![];
+        let mut pc = work[alg.resume].num() as usize;
+        let mut count = 0;
+        let fail = |s: &Self, st: Status| s.diag(Category::Model, format!("algorithm `{}`: {}", ev.name, st.cause), Some(&ev.id));
+        while pc < alg.code.len() {
+            count += 1;
+            if count > prismal_kernel::ALGORITHM_INSTRUCTIONS {
+                return Err(self.diag(Category::Model, format!("algorithm `{}` ran {} instructions without reaching `step` or its end", ev.name, prismal_kernel::ALGORITHM_INSTRUCTIONS), Some(&ev.id)));
+            }
+            match &alg.code[pc] {
+                prismal_kernel::CInstr::Step => {
+                    pc += 1;
+                    break;
+                }
+                prismal_kernel::CInstr::Jump(to) => pc = *to,
+                prismal_kernel::CInstr::Unless(c, to) => {
+                    let v = c.eval(&self.ctx(&work)).map_err(|s| fail(self, s))?;
+                    pc = if v.boolean() { pc + 1 } else { *to };
+                }
+                prismal_kernel::CInstr::Do(ops) => {
+                    let before = work.clone();
+                    self.apply_in_order(ops, &before, &mut work, &mut emits).map_err(|s| fail(self, s))?;
+                    cm.update_derived(&mut work, self.t, self.cfg.t0).map_err(|s| fail(self, s))?;
+                    pc += 1;
+                }
+            }
+        }
+        work[alg.resume] = Value::Num(pc as f64);
+        let mut out: Vec<COp> = (0..work.len())
+            .filter(|&b| !matches!(cm.bindings[b].role, Role::Derived | Role::Unknown | Role::Constant) && work[b] != self.vals[b])
+            .map(|b| COp::Set { binding: b, component: None, value: CExpr::Const(work[b].clone()) })
+            .collect();
+        out.extend(emits);
+        Ok(out)
+    }
+
+    /// Performs one statement's operations on `work`, all reading `before` (D-101).
+    fn apply_in_order(&self, ops: &[COp], before: &[Value], work: &mut [Value], emits: &mut Vec<COp>) -> Result<(), Status> {
+        for op in ops {
+            match op {
+                COp::If { cond, ops } => {
+                    if cond.eval(&self.ctx(before))?.boolean() {
+                        self.apply_in_order(ops, before, work, emits)?;
+                    }
+                }
+                COp::Set { binding, component, value } => {
+                    let v = value.eval(&self.ctx(before))?;
+                    match component {
+                        None => work[*binding] = v,
+                        Some(k) => {
+                            let mut a = work[*binding].arr();
+                            a.v[*k] = v.num();
+                            work[*binding] = match work[*binding] {
+                                Value::Point(_) => Value::Point(a),
+                                _ => Value::Vec(a),
+                            };
+                        }
+                    }
+                }
+                COp::SetField { binding, grid, value } => work[*binding] = prismal_kernel::per_cell(value, grid, &self.ctx(before))?,
+                COp::Destroy { binding } => work[*binding] = Value::Bool(false),
+                COp::Emit { event, payload } => {
+                    let p = match payload {
+                        Some(c) => Some(CExpr::Const(c.eval(&self.ctx(before))?)),
+                        None => None,
+                    };
+                    emits.push(COp::Emit { event: *event, payload: p });
+                }
+                COp::Contribute { .. } => return Err(Status::invalid("`contribute` in an algorithm")),
+                COp::Rebound { .. } => return Err(Status::invalid("a rebound in an algorithm")),
+            }
+        }
+        Ok(())
+    }
+
     /// One transition (MK-16.3): conflicts, proposed state, constraints, commit.
     /// Returns the events emitted, with their payloads. For interventions, a `reject`
     /// violation is returned as an error with category `Intervention`.
@@ -1397,6 +1526,8 @@ impl<'a> Engine<'a> {
         // `contribute` operations by binding: combined after all operations are read
         // (MK-14.9, MK-16.4, D-073).
         let mut contributions: Vec<(usize, String, Vec<Value>)> = vec![];
+        // Impacts with restitution (D-102), performed after the other operations.
+        let mut rebounds: Vec<usize> = vec![];
         // Conditional operations are read on the state before the transition (D-057).
         let mut flat: Vec<&COp> = vec![];
         fn performed<'o>(s: &Engine, ops: &'o [COp], out: &mut Vec<&'o COp>) -> Result<(), RunDiag> {
@@ -1417,6 +1548,7 @@ impl<'a> Engine<'a> {
         for op in flat {
             match op {
                 COp::If { .. } => unreachable!(),
+                COp::Rebound { constraint } => rebounds.push(*constraint),
                 // MK-16.5: destroying one member twice is not a conflict.
                 COp::Destroy { binding } => {
                     if targets.iter().any(|(b, _)| b == binding) {
@@ -1492,6 +1624,21 @@ impl<'a> Engine<'a> {
         // RC-5.10: a transition's result is moved onto the enforced constraints (a bob dragged
         // off its circle lands on it).
         let set: Vec<usize> = targets.iter().map(|(b, _)| *b).chain(contributions_set.iter().copied()).collect();
+        // RC-5.14 (D-102): an impact with restitution bounces instead of making contact; a
+        // restitution of 0 makes contact as without one.
+        for k in rebounds {
+            let c = &self.cm.constraints[k];
+            let (Some((on, _)), Some(e)) = (c.contact, &c.restitution) else { continue };
+            let e = e.eval(&self.ctx(&self.vals)).map_err(|s| self.diag(Category::Model, s.cause, Some(&c.id)))?.num();
+            if e < 0.0 {
+                return Err(self.diag(Category::Model, format!("constraint `{}`: a restitution of {e}; it is at least 0", c.name), Some(&c.id)));
+            }
+            if e > 0.0 {
+                proposed[on] = Value::Bool(false);
+                self.cm.rebound(&mut proposed, self.t, self.cfg.t0, k, e).map_err(|s| self.diag(Category::Model, s.cause, Some(&c.id)))?;
+            }
+        }
+        self.cm.separate(&mut proposed, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         self.cm.project(&mut proposed, self.t, self.cfg.t0, &set).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         self.cm.update_derived(&mut proposed, self.t, self.cfg.t0).map_err(|s| self.diag(Category::Model, s.cause, None))?;
         match self.check_constraints(&proposed, false) {
@@ -1695,7 +1842,7 @@ impl Run {
                     // belongs to, before any logged action applied at the same instant.
                     None => {
                         let at = || self.committed.iter().filter(|s| s.t == l.t);
-                        at().filter(|s| s.n >= l.n).take_while(|s| !s.by_action).last().or_else(|| at().last()).expect("event instant")
+                        at().filter(|s| s.n >= l.n).take_while(|s| !s.by_action).last().or_else(|| at().next_back()).expect("event instant")
                     }
                 };
                 self.eval_on(&c, &state.vals, l.t).expect("observation value")
@@ -1734,6 +1881,35 @@ impl Run {
 /// The type of an observation expression.
 pub fn observation_type(cm: &CModel, e: &Expr) -> Type {
     compile_expr(cm, e, None).expect("checks").1
+}
+
+/// Contributions combined with the value before the transition (MK-14.9, D-073): `sum`
+/// and `product` of numbers (`sum` of vectors by component), `min` and `max` of numbers,
+/// `any` and `all` of Booleans. The checker has matched each combination to its type.
+fn combine(how: &str, before: &Value, vs: &[Value]) -> Value {
+    match (how, before) {
+        ("sum", Value::Vec(a)) => {
+            let mut a = *a;
+            for v in vs {
+                let b = v.arr();
+                for k in 0..a.n as usize {
+                    a.v[k] += b.v[k];
+                }
+            }
+            Value::Vec(a)
+        }
+        ("any", _) => Value::Bool(before.boolean() || vs.iter().any(|v| v.boolean())),
+        ("all", _) => Value::Bool(before.boolean() && vs.iter().all(|v| v.boolean())),
+        _ => {
+            let f = |x: f64, y: f64| match how {
+                "sum" => x + y,
+                "product" => x * y,
+                "min" => x.min(y),
+                _ => x.max(y),
+            };
+            Value::Num(vs.iter().fold(before.num(), |acc, v| f(acc, v.num())))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1828,33 +2004,3 @@ mod tests {
         assert_eq!(out.committed.last().unwrap().n, 0, "no partial commit (RC-10.1)");
     }
 }
-
-/// Contributions combined with the value before the transition (MK-14.9, D-073): `sum`
-/// and `product` of numbers (`sum` of vectors by component), `min` and `max` of numbers,
-/// `any` and `all` of Booleans. The checker has matched each combination to its type.
-fn combine(how: &str, before: &Value, vs: &[Value]) -> Value {
-    match (how, before) {
-        ("sum", Value::Vec(a)) => {
-            let mut a = *a;
-            for v in vs {
-                let b = v.arr();
-                for k in 0..a.n as usize {
-                    a.v[k] += b.v[k];
-                }
-            }
-            Value::Vec(a)
-        }
-        ("any", _) => Value::Bool(before.boolean() || vs.iter().any(|v| v.boolean())),
-        ("all", _) => Value::Bool(before.boolean() && vs.iter().all(|v| v.boolean())),
-        _ => {
-            let f = |x: f64, y: f64| match how {
-                "sum" => x + y,
-                "product" => x * y,
-                "min" => x.min(y),
-                _ => x.max(y),
-            };
-            Value::Num(vs.iter().fold(before.num(), |acc, v| f(acc, v.num())))
-        }
-    }
-}
-

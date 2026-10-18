@@ -19,15 +19,17 @@ Candidate A amended as accepted in D-028: A's keyword-led statements, with group
 | `state { x: T = e ... }` | continuous state with initial definitions |
 | `discrete { x: T = e ... }` | discrete state |
 | `derived { x: T = e; f(x: A): B = e ... }` | derived bindings, including function-valued ones |
-| `unknown { x: T [= guess] ... }` | unknowns (MK-11.6, D-092): numbers or quantities that the equations reading them determine together; the value is the solver's starting guess, 0 when omitted |
-| `enum Phase { a, b, c }` | enumeration (MK-2.2a, D-049); cases by name (`a`) or qualified (`Phase.a`) |
-| `fn f(x: A): B = e` | declared function (MK-10.3a, D-048): reads only its parameters, constants and other functions |
+| `unknown { x: T [= guess] ... }` | unknowns (MK-11.6, D-092, D-097): numbers, quantities, vectors or points that the equations reading them determine together; the value is the solver's starting guess, 0 when omitted |
+| `enum Phase { a, b, c }` | enumeration (MK-2.2a, D-049); cases by name (`a`) or qualified (`Phase.a`); in a model, or outside models, shared (D-099) |
+| `fn f(x: A): B = e` | declared function (MK-10.3a, D-048): reads only its parameters, constants and other functions; in a model, or outside models, shared (D-099) |
 | `flow { der(x) = e; der(y) += e ... }` | defining flows and contributions (MK-14.7) |
 | `process P { flow ...; event ... }` | named process (MK-14.1), optional |
 | `event E on <trigger> [if cond] [{ ops }] [zeno stop \| zeno settle { ops }]` | event (MK-15) |
+| `algorithm A on <trigger> [if cond] { statements }`; statements `set`, `emit`, `create`, `destroy`, `if c { } else { }`, `while c { }`, `for i in [a, b] { }`, `step` | algorithm: an event whose statements run in order, one `step` per occurrence (MK-14.17, D-101) |
 | `equation N: lhs == rhs [checked within tol]` | equation (MK-11); without `checked`, an equation that reads an unknown is solved (MK-11.7), and one that reads `der(x)` of a state without a flow gives that state its rate (MK-11.9) |
-| `constraint [N:] cond [within tol] [policy p]` | constraint (MK-12); `p` is `reject`, `report` (the default), `stop` or `enforce`: an enforced constraint is an equation `a == b`, without `within`, kept true by the runtime (MK-12.6, D-093) |
-| `object Name { ... }` | object type (MK-7.13, D-055), declared in a model, with the body of a model |
+| `constraint [N:] cond [within tol] [policy p] [with F [where \|F\| <= B]] [restitution e]` | constraint (MK-12); `p` is `reject`, `report` (the default), `stop` or `enforce`: an enforced constraint is an equation `a == b`, without `within`, kept true by the runtime (MK-12.6, D-093), or an inequality `a >= b`, `a <= b` held by the unknown `F` it names with `with`, in contact or not (MK-12.11, D-098); `with F where \|F\| <= B` bounds the force of an enforced equality, which slips at the bound (friction), and `restitution e` makes an enforced inequality's impacts bounce (MK-12.12, MK-12.13, D-102) |
+| `object Name { ... }` | object type (MK-7.13, D-055), declared in a model, with the body of a model; or outside models, shared (MK-7.1a, D-099) |
+| `use M`, `use M.{A, B}` | at the top of a file: the shared definitions of module `M` (object types, enumerations and functions written outside models), or those named (MK-7.1a, D-099); `use` is a word only there |
 | `parts { a: T [{ x = e ... }]  c: T[n] [{ x = e ... }] }` | a contained object, or a collection of `n` members; overrides and input connections, with `index` the member's number (MK-8.3a) |
 | `flow { for b in c { der(b.x) = e ... } }` | flows written by the container for each member (MK-8.8) |
 | `parts { c: T[max m]  d: T[n, max m] { ... } }` | a collection whose membership changes (MK-8.2a, D-057): none or `n` members at the start, at most `m` made in a run |
@@ -53,9 +55,9 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 |---|---|
 | `presentation Name for Model { ... }` | presentation |
 | `observe { name = expr schedule ... }` | observations; schedules `live`, `every Δ`, `at τ`, `on E [microstep n]`, `over I` |
-| `view name: spatial(Space, scale: 1 m -> 40 px, y: up) { reps }`, `view name: plot(x: I, y: I) { reps }` | views containing their representations |
+| `view name: spatial(Space, scale: 1 m -> 40 px, y: up) { reps }`, `view name: plot(x: I, y: I) { reps }` | views containing their representations; a view of a space of three dimensions takes `azimuth: a, elevation: e` instead of `y` (PK-7.2a, D-100), and `distance: d` for perspective (PK-7.2b, D-104) |
 | `panel name { reps }` | region without a coordinate system (controls, formulas) |
-| `rep(...) [as name] { on drag [part] as p { propose x = e } }` | representation with its declared inverse; in `for b in c { ... }`, `propose b.x = e` moves that member (D-059) |
+| `rep(...) [as name] { on drag [part] [live] [across n] as p { propose x = e } }` | representation with its declared inverse; in `for b in c { ... }`, `propose b.x = e` moves that member (D-059); `across n`: the plane of a drag in three dimensions (D-104) |
 | `rep(...) [as name] { on click request E(v) }` | representation that requests an event when clicked; `on click request E(b)` for its member (D-059) |
 | `segment(P, Q, color: blue, line: dashed)` | author styles: a named color and a line style (D-061) |
 | `view v: ... { on click as q request E(q) ... }` | a view that requests an event with the point clicked, where no representation takes the click (D-060) |
@@ -71,7 +73,7 @@ Triggers: `rising(g)`, `falling(g)`, `crossing(g)`, `at τ`, `every Δ [from τ0
 | `layout row(scene, column(plot, controls))` | page layout: views side by side in a row, one below the other in a column, nested (D-063) |
 | `timeline { scene S { beat B { actions } } }` | timeline; run-directing actions apply in written order at the beat's start, then the others start together (D-033); `sequence { }` orders actions that take time |
 | `run rate r until E` | shorthand for `run rate r` and `wait until E` in the same beat |
-| `reveal fade\|draw [for d] [in view] { reps }`, `hide name [for d]`, `camera view [to P] [zoom z] [for d]` | animations of the presentation (D-042) |
+| `reveal fade\|draw [for d] [in view] { reps }`, `hide name [for d]`, `camera view [to P] [zoom z] [azimuth a] [elevation e] [for d]` | animations of the presentation (D-042; turns of a view of three dimensions, D-104) |
 | `animate name opacity\|offset to v [for d]`, `release name`, `bind name [for d]` | animated properties and the handover of a bound representation (D-068) |
 | `wait learner [limit d] [fallback { actions }]` | a continue point (D-067) |
 
@@ -93,7 +95,7 @@ The formatter prints, from the IR: enumerations, then declarations grouped in bl
 - **Statements** end at a newline or `;`. Several statements on one line are separated by `;`. A line ending in an operator (other than a closing `|`), `,`, an open bracket or one of the operator words continues on the next line; so does every line inside `( )` or `[ ]`.
 - **Reserved words** (D-040), never names: `space model presentation run object const param input state discrete derived fn flow process event equation constraint on if then else and or not otherwise in where true false zeno stop settle set contribute create destroy connect disconnect emit enter checked within policy reject report intervenable private symbol unit rising falling crossing at every from start request enum match`.
 - **Representation kinds** are read where a representation is expected; there `equation`, reserved elsewhere, is the representation kind of PK-6.3.
-- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart layout row column instrument grid boundary periodic unknown enforce`.
+- **Contextual keywords** (D-040), recognized only where such a word is expected and ordinary names elsewhere (`process drag`, `view scene`): `for view panel observe live over microstep show as drag click propose permit timeline scene beat sequence rate until hold seek reset branch intervene wait explore limit keep fallback narrate highlight hide reveal zoom animate camera bind release config expect exactly rel of with learner continue press undo redo combine ease title random runs reseed restart layout row column instrument grid boundary periodic unknown enforce use algorithm while step restitution across azimuth elevation frame by`.
 - **Built-in names** (not reserved, but predefined): `t`, `t0`, `elapsed`, `origin`, `der`, `π` and `pi` (D-039), `inf` (only as an interval bound), the SI units and named dimensions of MK section 3. Named dimensions: `Length`, `Mass`, `Time`, `Current`, `Amount`, `Area`, `Volume`, `Velocity`, `Acceleration`, `Frequency`, `Momentum`, `Force`, `Energy`, `Power`, `Pressure`, `Temperature`, `Charge`, `Voltage`, `Resistance`, `Capacitance`, `Inductance` (D-092), and `Angle` (dimensionless, D-021); base symbols `L M T I Θ N J` inside `Quantity<...>`.
 
 
@@ -102,7 +104,7 @@ The formatter prints, from the IR: enumerations, then declarations grouped in bl
 Details are added to a form in one of two ways, decided by where the form is written:
 
 - **Named options inside parentheses**, `name: value`, after the positional arguments of a representation, a view kind or a group: `marker(pos, color: red)`, `plot(x: I, y: I, follow: y)`, `group(at: P, rotate: θ)`. Each kind has a fixed list of options (guide chapter 10, Options and clauses); every representation also takes `when: c`. An option not on the list is SX-E08, with the nearest option suggested; an option given twice is SX-E09.
-- **Clauses after a statement's head**, a word and its value with no colon: ranges and modifiers of declarations (`in I`, `where c`, `intervenable`, `private`, `combine k`, `symbol "s"`, `unit u`), `within` and `policy` of a constraint, `checked within` of an equation, and the clauses of timeline actions (`for d`, `in view`, `to P`, `zoom z`, `ease e`, `until E`, `limit L`, `keep p, ...`). Clauses come in any order, each at most once (SX-E09 otherwise); the formatter prints them in one order. An event keeps the order `on trigger [if c] [{ ops }] [zeno ...]`, since its block sits among its clauses.
+- **Clauses after a statement's head**, a word and its value with no colon: ranges and modifiers of declarations (`in I`, `where c`, `intervenable`, `private`, `combine k`, `symbol "s"`, `unit u`), `within`, `policy` and `with` of a constraint, `checked within` of an equation, and the clauses of timeline actions (`for d`, `in view`, `to P`, `zoom z`, `ease e`, `until E`, `limit L`, `keep p, ...`). Clauses come in any order, each at most once (SX-E09 otherwise); the formatter prints them in one order. An event keeps the order `on trigger [if c] [{ ops }] [zeno ...]`, since its block sits among its clauses.
 
 The two families do not mix: a statement never takes `name: value`, and parentheses never take a clause word. A colon elsewhere labels rather than configures: a declaration's type (`x: Length`), a named equation or constraint (`equation energy: ...`), a learner step's time (`at 3 s: continue`). Inside parentheses, `every Δ` belongs to an argument (a sampled source), not to the representation.
 
@@ -587,3 +589,4 @@ run A_keep of Projectile with ProjectileLesson {
 - 2026-10-14 `ease e` after `reveal`, `hide ... for`, `camera` and `bind` (D-095), as after `animate`; additions under section 1.7.
 - 2026-10-14 `width: k` on drawn kinds that take a line style, and `animate R width to k` (D-095); additions under section 1.7.
 - 2026-10-14 `align: left|center|right` for a text put `at` a point (D-095); an addition under section 1.7.
+- 2026-10-15 views of three dimensions (D-104): the view option `distance`, the `camera` clauses `azimuth` and `elevation`, `on drag across n`, the options `normal` (circle, ellipse, arc), `opaque` (circle, ellipse, polygon) and `axis` (group); `across`, `azimuth` and `elevation` added to the contextual keywords. Additions under section 1.7.

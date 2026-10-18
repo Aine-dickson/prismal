@@ -22,7 +22,7 @@ pub const EXPLORE_CONTROLS: &[&str] = &["restart", "reseed"];
 /// Representation kinds of the first slice (PK-6.3).
 const KINDS: &[&str] = &[
     "marker", "arrow", "segment", "polyline", "polygon", "circle", "ellipse", "arc", "trace", "function_graph", "series_plot", "axes", "grid", "label",
-    "equation", "formula", "table", "slider", "number_input", "toggle", "select", "button", "group", "text", "title", "histogram", "heatmap",
+    "equation", "formula", "table", "slider", "number_input", "toggle", "select", "button", "group", "text", "title", "histogram", "heatmap", "ray",
 ];
 
 /// The named options each representation kind takes, besides `when` (D-081). A name not in
@@ -32,9 +32,12 @@ fn options(kind: &str) -> &'static [&'static str] {
         "marker" => &["at", "color", "label"],
         "arrow" => &["from", "scale", "color", "line", "width", "label"],
         "function_graph" => &["color", "line", "width", "label"],
-        "segment" | "polyline" | "polygon" | "circle" | "trace" | "series_plot" => &["color", "line", "width"],
-        "ellipse" => &["rotate", "color", "line", "width"],
-        "arc" => &["from", "to", "color", "line", "width"],
+        "segment" | "polyline" | "trace" | "series_plot" => &["color", "line", "width"],
+        "polygon" => &["color", "line", "width", "opaque"],
+        "circle" => &["normal", "color", "line", "width", "opaque"],
+        "ellipse" => &["rotate", "normal", "color", "line", "width", "opaque"],
+        "arc" => &["from", "to", "normal", "color", "line", "width"],
+        "ray" => &["back", "color", "line", "width"],
         "text" => &["at", "align"],
         "formula" | "equation" => &["live"],
         "slider" => &["range", "step", "ends"],
@@ -42,7 +45,7 @@ fn options(kind: &str) -> &'static [&'static str] {
         "button" => &["label"],
         "histogram" => &["bins", "color", "line", "width"],
         "heatmap" => &["range"],
-        "group" => &["at", "rotate", "scale"],
+        "group" => &["at", "rotate", "axis", "scale"],
         _ => &[],
     }
 }
@@ -62,7 +65,7 @@ fn ease_of(word: &str) -> Option<prismal_ir::present::Ease> {
 /// The named options of each view kind (D-081).
 fn view_options(kind: &str) -> &'static [&'static str] {
     match kind {
-        "spatial" => &["scale", "y"],
+        "spatial" => &["scale", "y", "azimuth", "elevation", "distance", "frame"],
         "plot" => &["x", "y", "follow", "x_unit", "y_unit", "window"],
         _ => &[],
     }
@@ -260,8 +263,10 @@ impl PresCx<'_, '_> {
             }
             let value = match (&a.value.kind, a.name.as_ref().map(|n| n.text.as_str())) {
                 (ExprKind::Str(s), _) => Arg::Text { text: s.clone() },
-                // Style words (D-061): `color: blue`, `line: dashed`.
-                (ExprKind::Name(w), Some("color" | "line" | "align")) => Arg::Word { word: w.clone() },
+                // Style words (D-061): `color: blue`, `line: dashed`. A colour that names a
+                // binding is a wavelength of light (D-106), an expression as `color: 650 nm` is.
+                (ExprKind::Name(w), Some("color")) if !self.cx.bindings.contains_key(w) => Arg::Word { word: w.clone() },
+                (ExprKind::Name(w), Some("line" | "align" | "back")) => Arg::Word { word: w.clone() },
                 // `label: none`: no label drawn beside the representation (D-078).
                 (ExprKind::Name(w), Some("label")) if w == "none" => Arg::Word { word: w.clone() },
                 (ExprKind::List(_), _) => match self.range(&a.value) {
@@ -344,7 +349,11 @@ impl PresCx<'_, '_> {
             if i.live && i.gesture.text != "drag" {
                 self.err("SX-E06", "only a drag can be `live`", i.gesture.span);
             }
-            Inverse { gesture: i.gesture.text.clone(), part: i.part.as_ref().map(|p| p.text.clone()), proposals, live: i.live }
+            if i.across.is_some() && i.gesture.text != "drag" {
+                self.err("SX-E06", "only a drag moves `across` a plane", i.gesture.span);
+            }
+            let across = i.across.as_ref().map(|n| self.cx.expr(n, &[]));
+            Inverse { gesture: i.gesture.text.clone(), part: i.part.as_ref().map(|p| p.text.clone()), proposals, live: i.live, across }
         });
         // Members are numbered within their group, which is their container (D-043).
         let mut inner = HashMap::new();
@@ -434,7 +443,39 @@ impl PresCx<'_, '_> {
                         true
                     }
                 };
-                ViewKind::Spatial { space, scale, y_up }
+                // D-100: a view of a space of three dimensions has `z` up and looks from an
+                // azimuth and an elevation.
+                let three = self.cx.space_dimension(&space) == Some(3);
+                let (az, el, dist) = (named("azimuth"), named("elevation"), named("distance"));
+                if three && named("y").is_some() {
+                    self.err("SX-E08", "a view of a space of three dimensions has `z` up; turn it with `azimuth:` and `elevation:` (PK-7.2a)", named("y").unwrap().span);
+                }
+                if !three {
+                    if let Some(e) = az.or(el) {
+                        self.err("SX-E08", "`azimuth` and `elevation` turn a view of a space of three dimensions (PK-7.2a)", e.span);
+                    }
+                    if let Some(e) = dist {
+                        self.err("SX-E08", "`distance` puts the viewer of a space of three dimensions in perspective (D-104)", e.span);
+                    }
+                }
+                let distance = if three { dist.map(|e| self.cx.expr(e, &[])) } else { None };
+                // `frame: F`: the view is drawn as seen from a declared frame (D-105).
+                let frame = match named("frame").map(|e| (&e.kind, e.span)) {
+                    None => None,
+                    Some((ExprKind::Name(n), _)) if self.cx.frames.contains_key(n) => Some(self.cx.frames[n].clone()),
+                    Some((_, span)) => {
+                        self.err("SX-E03", "a view's `frame` names a frame the model declares: `frame: turning`", span);
+                        None
+                    }
+                };
+                let look = (three && (az.is_some() || el.is_some())).then(|| {
+                    let deg = |cx: &mut Self, e: Option<&ast::Expr>, d: f64| match e {
+                        Some(e) => cx.cx.expr(e, &[]),
+                        None => Expr::Num { num: d, unit: prismal_ir::Unit::parse("deg").ok() },
+                    };
+                    [deg(self, az, 30.0), deg(self, el, 20.0)]
+                });
+                ViewKind::Spatial { space, scale, y_up, look, distance, frame }
             }
             "plot" => {
                 let (x, y) = match (named("x"), named("y")) {
@@ -688,13 +729,15 @@ impl PresCx<'_, '_> {
                     let reps = reps.iter().map(|r| self.rep(r, beat, counts)).collect();
                     out.push(Action::Reveal { view: v, style, duration, ease, reps });
                 }
-                ast::Action::Camera { view, center, zoom, duration, ease } => match self.views.get(&view.text).cloned() {
+                ast::Action::Camera { view, center, zoom, azimuth, elevation, duration, ease } => match self.views.get(&view.text).cloned() {
                     Some(v) => {
                         let ease = self.ease(ease.as_ref());
                         let center = center.as_ref().map(|e| self.expr(e));
                         let zoom = zoom.as_ref().map(|e| self.expr(e));
+                        let azimuth = azimuth.as_ref().map(|e| self.expr(e));
+                        let elevation = elevation.as_ref().map(|e| self.expr(e));
                         let duration = duration.as_ref().map(|e| self.expr(e));
-                        out.push(Action::Camera { view: v, center, zoom, duration, ease });
+                        out.push(Action::Camera { view: v, center, zoom, azimuth, elevation, duration, ease });
                     }
                     None => self.err("SX-E03", format!("unknown view `{}`", view.text), view.span),
                 },
@@ -799,12 +842,13 @@ fn find_model<'m>(models: &'m [Model], n: &ast::Name, diags: &mut Vec<Diag>) -> 
     m
 }
 
-pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: &[Space], diags: &mut Vec<Diag>, map: &mut SourceMap) -> Option<Presentation> {
+pub(crate) fn presentation(p: &ast::PresentationDecl, models: &[Model], spaces: &[Space], visible: &crate::modules::Visible, diags: &mut Vec<Diag>, map: &mut SourceMap) -> Option<Presentation> {
     let model = find_model(models, &p.model, diags)?;
     let id = p.name.text.clone();
     map.insert(id.clone(), p.span);
     let equations = model.equations.iter().map(|q| (q.name.clone(), q.id.clone())).collect();
     let mut px = PresCx { cx: ModelCx::scope(model, spaces, diags, map), equations, pres: &id, views: HashMap::new(), aliases: HashMap::new(), instruments: HashMap::new() };
+    px.cx.import(visible);
     // Instruments first: views and observations read through them.
     let mut instruments = vec![];
     for it in &p.items {
@@ -900,6 +944,7 @@ pub(crate) fn run(
     r: &ast::RunDecl,
     models: &[Model],
     spaces: &[Space],
+    visible: &crate::modules::Visible,
     presentations: &[Presentation],
     diags: &mut Vec<Diag>,
     map: &mut SourceMap,
@@ -922,6 +967,7 @@ pub(crate) fn run(
     let id = r.name.text.clone();
     map.insert(id.clone(), r.span);
     let mut cx = ModelCx::scope(model, spaces, diags, map);
+    cx.import(visible);
     let params = r.params.iter().map(|(n, v)| Override { binding: cx.binding(n), value: cx.expr(v, &[]) }).collect();
     let inputs = r.inputs.iter().map(|(n, v, at)| InputValue { binding: cx.binding(n), value: cx.expr(v, &[]), at: at.as_ref().map(|a| cx.expr(a, &[])) }).collect();
     let mut config = RunConfig::default();

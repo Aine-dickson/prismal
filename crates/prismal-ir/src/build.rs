@@ -155,6 +155,7 @@ impl ModelBuilder {
                 constraints: vec![],
                 enums: vec![],
                 grids: vec![],
+                frames: vec![],
                 functions: vec![],
                 notes: vec![],
             },
@@ -239,6 +240,9 @@ impl ModelBuilder {
             tol,
             policy,
             attached_to: attached_to.map(|s| s.to_string()),
+            force: None,
+            bound: None,
+            restitution: None,
         });
         id
     }
@@ -282,6 +286,7 @@ impl ModelBuilder {
             process: None,
             payload: None,
             each: None,
+            algorithm: None,
             notes: vec![],
         });
         id

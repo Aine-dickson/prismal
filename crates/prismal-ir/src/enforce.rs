@@ -33,8 +33,9 @@ pub fn equation_id(id: &str) -> String {
 /// The constraint `cond` (an equation `a == b`) and its rates; an error says why it cannot be
 /// enforced.
 pub fn rates(m: &Model, cond: &Expr) -> Result<Rates, String> {
-    let Expr::Bin { bin: BinOp::Eq, l, r } = cond else {
-        return Err("an enforced constraint is an equation, `a == b`".into());
+    // An inequality is differentiated as its boundary, `a == b` (D-098).
+    let Expr::Bin { bin: BinOp::Eq | BinOp::Ge | BinOp::Le, l, r } = cond else {
+        return Err("an enforced constraint is an equation `a == b` or an inequality `a >= b`, `a <= b`".into());
     };
     let mut cur = ((**l).clone(), (**r).clone());
     let mut levels = vec![];
@@ -104,7 +105,143 @@ pub fn elaborate(mut m: Model) -> Model {
         }
     }
     m.equations.extend(extra);
+    // D-098: an enforced inequality is in contact or not, a hidden discrete state switched by
+    // hidden events: it comes into contact when its gap closes, and leaves contact when the
+    // force that holds it would pull.
+    let mut bindings = vec![];
+    let mut events = vec![];
+    for k in m.constraints.iter().filter(|k| k.policy == Policy::Enforce) {
+        let (Some((l, r)), Some(force)) = (inequality(&k.cond), &k.force) else { continue };
+        let gap = bin(BinOp::Sub, l.clone(), r.clone());
+        let contact = contact_id(&k.id);
+        let at = |x: &str| Expr::Ref { r#ref: x.to_string() };
+        bindings.push(crate::Binding {
+            id: contact.clone(),
+            name: format!("contact of {}", k.name),
+            role: Role::Discrete,
+            ty: crate::Type::Boolean,
+            // In contact from the start when the gap is closed or closing past the boundary.
+            init: Some(bin(BinOp::Le, gap.clone(), zero())),
+            def: None,
+            intervenable: None,
+            private: true,
+            display: Default::default(),
+            notes: vec![],
+            when: None,
+            combine: None,
+            boundary: None,
+        });
+        let set = |v: bool| crate::Op::Set { target: crate::Target { binding: contact.clone(), component: None, member: None }, value: Expr::Bool { bool: v } };
+        let pulls = bin(BinOp::Lt, at(force), zero());
+        let event = |id: &str, name: &str, trigger: crate::Trigger, enable: Expr, value: bool| crate::Event {
+            id: format!("{}@{id}", k.id),
+            name: format!("{name} {}", k.name),
+            trigger,
+            enable: Some(enable),
+            handler: vec![set(value)],
+            zeno: None,
+            process: None,
+            payload: None,
+            each: None,
+            algorithm: None,
+            notes: vec![],
+        };
+        let not = |e: Expr| Expr::Not { not: Box::new(e) };
+        let mut touch = event("touch", "touch of", crate::Trigger::Falling { guard: gap }, not(at(&contact)), true);
+        // D-102: with restitution an impact bounces; bounces that accumulate end in contact.
+        if k.restitution.is_some() {
+            touch.handler.push(crate::Op::Rebound { constraint: k.id.clone() });
+            touch.zeno = Some(crate::Zeno { policy: crate::ZenoPolicy::Settle { ops: vec![set(true)] }, eps: None, n: None, window: None });
+        }
+        events.push(touch);
+        events.push(event("release", "release of", crate::Trigger::Falling { guard: at(force) }, at(&contact), false));
+        // A contact that pulls as soon as it is made, or from the start, ends at once.
+        events.push(event("settle", "settling of", crate::Trigger::On { event: format!("{}@touch", k.id) }, pulls.clone(), false));
+        events.push(event("start", "start of", crate::Trigger::Start, bin(BinOp::And, at(&contact), pulls), false));
+    }
+    // D-102: an enforced equality whose holding force is bounded, `with F where |F| <= B`,
+    // holds while `|F| <= B` and slips once its force would pass the bound: the force is then
+    // `side * B`, `side` the sign it had when it let go. It holds again when what it equates
+    // crosses equality (the slip stops), and slips again at once if the force needed is still
+    // past the bound.
+    for k in m.constraints.iter().filter(|k| k.policy == Policy::Enforce) {
+        let (Some(force), Some(bound), Expr::Bin { bin: BinOp::Eq, l, r }) = (&k.force, &k.bound, &k.cond) else { continue };
+        let gap = bin(BinOp::Sub, (**l).clone(), (**r).clone());
+        let (hold, side) = (hold_id(&k.id), side_id(&k.id));
+        let at = |x: &str| Expr::Ref { r#ref: x.to_string() };
+        let hidden = |id: &str, name: String, ty: crate::Type, init: Expr| crate::Binding {
+            id: id.to_string(),
+            name,
+            role: Role::Discrete,
+            ty,
+            init: Some(init),
+            def: None,
+            intervenable: None,
+            private: true,
+            display: Default::default(),
+            notes: vec![],
+            when: None,
+            combine: None,
+            boundary: None,
+        };
+        let sign = |e: Expr| Expr::If { r#if: Box::new(bin(BinOp::Gt, e, zero())), then: Box::new(num(1.0)), r#else: Box::new(num(-1.0)) };
+        // Holding from the start when equal; slipping otherwise, against the slip (the runtime
+        // corrects the side for a force written the other way, RC-5.13).
+        m.bindings.push(hidden(&hold, format!("hold of {}", k.name), crate::Type::Boolean, bin(BinOp::Eq, gap.clone(), zero())));
+        m.bindings.push(hidden(&side, format!("side of {}", k.name), crate::Type::real(), neg(sign(gap.clone()))));
+        let set = |b: &str, v: Expr| crate::Op::Set { target: crate::Target { binding: b.to_string(), component: None, member: None }, value: v };
+        let over = bin(BinOp::Sub, Expr::Norm { norm: Box::new(at(force)) }, bound.clone());
+        let past = bin(BinOp::Gt, over.clone(), zero());
+        let let_go = vec![set(&hold, Expr::Bool { bool: false }), set(&side, sign(at(force)))];
+        let event = |id: &str, name: &str, trigger: crate::Trigger, enable: Expr, handler: Vec<crate::Op>| crate::Event {
+            id: format!("{}@{id}", k.id),
+            name: format!("{name} {}", k.name),
+            trigger,
+            enable: Some(enable),
+            handler,
+            zeno: None,
+            process: None,
+            payload: None,
+            each: None,
+            algorithm: None,
+            notes: vec![],
+        };
+        let not = |e: Expr| Expr::Not { not: Box::new(e) };
+        m.events.push(event("slip", "slip of", crate::Trigger::Rising { guard: over }, at(&hold), let_go.clone()));
+        m.events.push(event("grip", "grip of", crate::Trigger::Crossing { guard: gap }, not(at(&hold)), vec![set(&hold, Expr::Bool { bool: true })]));
+        m.events.push(event("reslip", "slip again of", crate::Trigger::On { event: format!("{}@grip", k.id) }, past.clone(), let_go.clone()));
+        m.events.push(event("start", "start of", crate::Trigger::Start, bin(BinOp::And, at(&hold), past), let_go));
+    }
+    m.bindings.extend(bindings);
+    m.events.extend(events);
     m
+}
+
+/// The identity of the hidden discrete state that says whether bounded equality `id` holds
+/// (D-102).
+pub fn hold_id(id: &str) -> String {
+    format!("{id}@hold")
+}
+
+/// The identity of the hidden discrete state that holds the sign of the force of bounded
+/// equality `id` while it slips (D-102).
+pub fn side_id(id: &str) -> String {
+    format!("{id}@side")
+}
+
+/// An inequality `a >= b` or `a <= b` as the two sides of its gap, `a - b >= 0` or
+/// `b - a >= 0`.
+pub fn inequality(cond: &Expr) -> Option<(Expr, Expr)> {
+    match cond {
+        Expr::Bin { bin: BinOp::Ge, l, r } => Some(((**l).clone(), (**r).clone())),
+        Expr::Bin { bin: BinOp::Le, l, r } => Some(((**r).clone(), (**l).clone())),
+        _ => None,
+    }
+}
+
+/// The identity of the hidden discrete state that says whether inequality `id` is in contact.
+pub fn contact_id(id: &str) -> String {
+    format!("{id}@contact")
 }
 
 /// The identity of the hidden derived binding that holds the rate of state `id`.
@@ -114,7 +251,7 @@ pub fn flow_id(id: &str) -> String {
 
 /// The type of the rate of a value of type `t`: a quantity or vector per time, a point's
 /// velocity; `None` for other types.
-fn rate_type(t: &crate::Type) -> Option<crate::Type> {
+pub(crate) fn rate_type(t: &crate::Type) -> Option<crate::Type> {
     let per_t = crate::Dim::time().inv();
     Some(match t {
         crate::Type::Quantity { dim } => crate::Type::Quantity { dim: dim.mul(&per_t) },
@@ -260,8 +397,8 @@ pub fn ddt(m: &Model, e: &Expr) -> Result<Option<Expr>, String> {
                     };
                     let Some(da) = d(a)? else { return Ok(None) };
                     let base = match *n - 1.0 {
-                        k if k == 0.0 => None,
-                        k if k == 1.0 => Some(a.clone()),
+                        0.0 => None,
+                        1.0 => Some(a.clone()),
                         k => Some(bin(BinOp::Pow, a.clone(), num(k))),
                     };
                     let scaled = match base {
@@ -291,6 +428,18 @@ pub fn ddt(m: &Model, e: &Expr) -> Result<Option<Expr>, String> {
                 Func::Dot => {
                     let b = &args[1];
                     add(d(a)?.map(|da| call(Func::Dot, vec![da, b.clone()])), d(b)?.map(|db| call(Func::Dot, vec![a.clone(), db])))
+                }
+                // Constant between the jumps of whole numbers (D-101).
+                Func::Floor | Func::Ceil | Func::Round => None,
+                // mod(a, b)' = a' - b' floor(a / b)
+                Func::Mod => {
+                    let b = &args[1];
+                    sub(d(a)?, times(call(Func::Floor, vec![bin(BinOp::Div, a.clone(), b.clone())]), d(b)?))
+                }
+                // (a × b)' = a' × b + a × b'
+                Func::Cross => {
+                    let b = &args[1];
+                    add(d(a)?.map(|da| call(Func::Cross, vec![da, b.clone()])), d(b)?.map(|db| call(Func::Cross, vec![a.clone(), db])))
                 }
                 Func::Min | Func::Max => return Err("`min` and `max` have no rate where their arguments meet".into()),
                 Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean => return Err("constraints on fields are a later extension".into()),

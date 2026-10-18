@@ -100,6 +100,10 @@ pub struct CameraCue {
     pub duration: f64,
     pub center: Option<prismal_kernel::CExpr>,
     pub zoom: Option<f64>,
+    /// In a view of three dimensions, the azimuth and elevation it turns to, in radians
+    /// (D-104).
+    pub azimuth: Option<f64>,
+    pub elevation: Option<f64>,
     /// The easing of the move (D-095).
     pub ease: prismal_ir::present::Ease,
 }
@@ -601,9 +605,14 @@ impl Player {
                 }
                 p + d
             }
-            TAction::Camera { view, center, zoom, duration, ease } => {
+            TAction::Camera { view, center, zoom, azimuth, elevation, duration, ease } => {
                 let d = duration.as_ref().map(|d| self.num(d)).unwrap_or(1.0);
                 let z = zoom.as_ref().map(|z| self.num(z));
+                // D-104: a view of three dimensions turns as it moves.
+                if (azimuth.is_some() || elevation.is_some()) && !self.pb.projector.ctx(Some(view)).is_3d() {
+                    self.pb.diagnostics.push("PK-E05: a camera turns by `azimuth` and `elevation` in a view of three dimensions (D-104)".into());
+                }
+                let (az, el) = (azimuth.as_ref().map(|a| self.num(a)), elevation.as_ref().map(|e| self.num(e)));
                 let c = match (center, self.pb.projector.ctx(Some(view))) {
                     (Some(e), ViewCtx::Spatial { space, .. }) => match prismal_kernel::compile_expr(&self.pb.cm, e, Some(&prismal_ir::Type::Point { space })) {
                         Ok((ce, _)) => Some(ce),
@@ -625,7 +634,7 @@ impl Player {
                     }
                     _ => None,
                 };
-                self.pb.cameras.push(CameraCue { view: view.clone(), from: p, duration: d, center: c, zoom: z, ease: ease.unwrap_or(prismal_ir::present::Ease::Smooth) });
+                self.pb.cameras.push(CameraCue { view: view.clone(), from: p, duration: d, center: c, zoom: z, azimuth: az, elevation: el, ease: ease.unwrap_or(prismal_ir::present::Ease::Smooth) });
                 p + d
             }
             TAction::Narrate { text, duration } => {
@@ -984,7 +993,8 @@ impl Playback {
         let v = &self.runs[ri];
         let vals: Vec<Value> = v.run.state_at(t);
         let extra: Vec<(Option<Id>, CRep)> = self.shown.iter().filter(|s| s.from <= p && p < s.until).map(|s| (s.view.clone(), s.rep.clone())).collect();
-        let (mut views, mut overlay) = self.projector.frame(&self.cm, &v.run, &vals, t, &extra);
+        let turns = self.camera_turns(p, &v.run, &vals, t);
+        let (mut views, mut overlay) = self.projector.frame_turned(&self.cm, &v.run, &vals, t, &extra, &turns);
         // Released representations (D-068) show their geometry at the instant of the release,
         // and blend back to their projection while a `bind` hands them back.
         for r in self.released.iter().filter(|r| r.from <= p && p < r.bind + r.blend) {
@@ -1139,11 +1149,15 @@ impl Playback {
         // Cameras (D-042): each move starts from where the previous one left the camera.
         for vf in views.iter_mut() {
             let ctx = self.projector.ctx(Some(&vf.id));
+            let ctx = match self.projector.look(&vf.id, &v.run, &vals, t, &turns) {
+                Some(l) => ctx.looking(l),
+                None => ctx,
+            };
             let mut center: Option<[f64; 2]> = None;
             let mut zoom = 1.0;
             let mut blend = 1.0;
             let mut any = false;
-            for c in self.cameras.iter().filter(|c| c.view == vf.id && c.from <= p) {
+            for c in self.cameras.iter().filter(|c| c.view == vf.id && c.from <= p && (c.center.is_some() || c.zoom.is_some())) {
                 any = true;
                 let target = c.center.as_ref().and_then(|ce| v.run.eval_state(ce, &vals, t).ok()).map(|pt| ctx.to_view(&crate::flat(&pt))).or(center);
                 let tz = c.zoom.unwrap_or(zoom);
@@ -1185,6 +1199,26 @@ impl Playback {
             captions: self.captions.iter().filter(|c| c.start <= p && p < c.end).map(|c| c.text.clone()).collect(),
             announcements: self.announcements.iter().filter(|a| a.at > p - dt && a.at <= p).map(|a| a.event.clone()).collect(),
         }
+    }
+
+    /// The azimuth and elevation the timeline's cameras have turned each view of three
+    /// dimensions to at presentation instant `p` (D-104): each turn starts from where the
+    /// previous one left the view, the first from its author's look.
+    fn camera_turns(&self, p: f64, run: &prismal_runtime::Run, vals: &[Value], t: f64) -> Vec<crate::frame::Turn> {
+        let mut out = vec![];
+        for (id, ..) in &self.projector.views {
+            let mut cur: Option<[f64; 2]> = None;
+            for c in self.cameras.iter().filter(|c| &c.view == id && c.from <= p && (c.azimuth.is_some() || c.elevation.is_some())) {
+                let Some(start) = cur.or_else(|| self.projector.look(id, run, vals, t, &[]).map(|l| [l.azimuth, l.elevation])) else { break };
+                let target = [c.azimuth.unwrap_or(start[0]), c.elevation.unwrap_or(start[1])];
+                let k = if c.duration > 0.0 { c.ease.apply(((p - c.from) / c.duration).min(1.0)) } else { 1.0 };
+                cur = Some([start[0] + (target[0] - start[0]) * k, start[1] + (target[1] - start[1]) * k]);
+            }
+            if let Some(ae) = cur {
+                out.push((id.clone(), ae));
+            }
+        }
+        out
     }
 
     /// A released representation as it was at its release (D-068).

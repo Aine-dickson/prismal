@@ -57,6 +57,8 @@ pub enum Value {
     Func(Rc<CExpr>),
     /// A field's value in each cell of its grid (MK-9.4, D-091).
     Field(Rc<Vec<f64>>),
+    /// A derived binding with no value, and why (MK-5.2, D-106): reading it gives the status.
+    Absent(Rc<Status>),
 }
 
 impl PartialEq for Value {
@@ -73,6 +75,7 @@ impl PartialEq for Value {
             (Case(a), Case(b)) => a == b,
             (Func(a), Func(b)) => Rc::ptr_eq(a, b),
             (Field(a), Field(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.to_bits() == y.to_bits()),
+            (Absent(a), Absent(b)) => a == b,
             _ => false,
         }
     }
@@ -97,6 +100,7 @@ impl fmt::Display for Value {
             Value::Case(c) => write!(f, "case {c}"),
             Value::Func(_) => write!(f, "<function>"),
             Value::Field(d) => write!(f, "<field of {} cells>", d.len()),
+            Value::Absent(s) => write!(f, "<not available: {}>", s.cause),
         }
     }
 }
@@ -195,7 +199,8 @@ pub enum CExpr {
     Payload(usize),
     /// The smallest or largest value among the terms whose condition holds; no value when
     /// none holds (D-057).
-    Extreme(Func, Vec<(CExpr, CExpr)>),
+    /// With values (D-106): the value whose term is the smallest.
+    Extreme(Func, Vec<(CExpr, CExpr)>, Vec<CExpr>),
     /// The item whose number, from 1, the first expression gives; only it is evaluated (D-058).
     Pick(Box<CExpr>, Vec<CExpr>),
     /// A draw (MK-10.4, D-083).
@@ -204,6 +209,78 @@ pub enum CExpr {
     FieldAt(usize),
     /// An operation on a field (MK-9.7, MK-9.8, D-091).
     Field(Box<CFieldOp>),
+    /// A component read in a declared frame (MK-4.6, D-105).
+    InFrame(Box<CInFrame>),
+}
+
+/// `e.in(F).k` compiled (D-105): the value read (a point, measured from the frame's origin,
+/// or a vector), the frame's origin and axis expressions, the component and the dimension of
+/// the space.
+#[derive(Clone, Debug)]
+pub struct CInFrame {
+    pub value: CExpr,
+    pub point: bool,
+    pub at: CExpr,
+    pub x: CExpr,
+    pub y: Option<CExpr>,
+    pub axis: usize,
+    pub n: usize,
+}
+
+impl CInFrame {
+    /// The frame's origin and unit axes on a state (D-105).
+    pub fn axes(&self, c: &Ctx) -> Result<([f64; 3], [[f64; 3]; 3]), Status> {
+        let y = match &self.y {
+            Some(y) => Some(y.eval(c)?),
+            None => None,
+        };
+        frame_axes(self.at.eval(c)?, self.x.eval(c)?, y, self.n)
+    }
+}
+
+/// A frame's origin and unit axes from the values of its expressions (D-105): the first axis
+/// along `x`; in a plane the second the first turned a quarter turn; in three dimensions the
+/// second `y` made square to the first and the third their cross product.
+pub fn frame_axes(at: Value, x: Value, y: Option<Value>, n: usize) -> Result<([f64; 3], [[f64; 3]; 3]), Status> {
+    {
+        let three = |v: Value| -> Result<[f64; 3], Status> {
+            match v {
+                Value::Vec(a) | Value::Point(a) => Ok(a.v),
+                Value::Tuple(t) => {
+                    let mut out = [0.0; 3];
+                    for (k, x) in t.iter().take(3).enumerate() {
+                        let Value::Num(x) = x else { return Err(Status::invalid("a frame's axis has components that are not numbers")) };
+                        out[k] = *x;
+                    }
+                    Ok(out)
+                }
+                other => Err(Status::invalid(format!("a frame's axis is a vector, not {other}"))),
+            }
+        };
+        let dot = |a: &[f64; 3], b: &[f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let unit = |a: [f64; 3]| -> Result<[f64; 3], Status> {
+            let n = dot(&a, &a).sqrt();
+            if !(n > 0.0) || !n.is_finite() {
+                return Err(Status::invalid("a frame's axis has no direction"));
+            }
+            Ok([a[0] / n, a[1] / n, a[2] / n])
+        };
+        let at = three(at)?;
+        let e1 = unit(three(x)?)?;
+        let axes = if n < 3 {
+            [e1, [-e1[1], e1[0], 0.0], [0.0, 0.0, 1.0]]
+        } else {
+            let y = match y {
+                Some(y) => three(y)?,
+                None => return Err(Status::invalid("a frame of three dimensions needs `y`")),
+            };
+            let d = dot(&y, &e1);
+            let e2 = unit([y[0] - d * e1[0], y[1] - d * e1[1], y[2] - d * e1[2]])?;
+            let e3 = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+            [e1, e2, e3]
+        };
+        Ok((at, axes))
+    }
 }
 
 /// One axis of a grid: `n` equal cells of width `h` from `lo`, cell `i` centred at
@@ -502,7 +579,11 @@ impl CExpr {
         use Value::*;
         match self {
             CExpr::Const(v) => Ok(v.clone()),
-            CExpr::Load(i) => Ok(c.vals[*i].clone()),
+            // A derived binding with no value gives its status (MK-5.2, D-106).
+            CExpr::Load(i) => match &c.vals[*i] {
+                Value::Absent(s) => Err((**s).clone()),
+                v => Ok(v.clone()),
+            },
             CExpr::Arg(i) => Ok(c.args[*i].clone()),
             CExpr::Time => Ok(Num(c.t)),
             CExpr::Time0 => Ok(Num(c.t0)),
@@ -556,6 +637,17 @@ impl CExpr {
                 b.write_to(&mut y[..n]);
                 finite(x[..n].iter().zip(&y[..n]).map(|(p, q)| p * q).sum(), "dot product")
             }
+            CExpr::Call(F::Cross, args) => {
+                let (a, b) = (args[0].eval(c)?, args[1].eval(c)?);
+                let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
+                a.write_to(&mut x);
+                b.write_to(&mut y);
+                let z = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+                if z.iter().any(|v| !v.is_finite()) {
+                    return Err(Status::invalid("cross product is not finite"));
+                }
+                Ok(Value::Vec(Arr::from_slice(&z)))
+            }
             CExpr::Call(f, args) => {
                 let x = args[0].eval(c)?.num();
                 let y = if args.len() > 1 { args[1].eval(c)?.num() } else { 0.0 };
@@ -580,7 +672,16 @@ impl CExpr {
                     F::Min => x.min(y),
                     F::Max => x.max(y),
                     F::Atan2 => x.atan2(y),
-                    F::Dot => unreachable!(),
+                    F::Floor => x.floor(),
+                    F::Ceil => x.ceil(),
+                    F::Round => x.round(),
+                    F::Mod => {
+                        if y == 0.0 {
+                            return Err(Status::invalid("mod by zero"));
+                        }
+                        x - y * (x / y).floor()
+                    }
+                    F::Dot | F::Cross => unreachable!(),
                     F::Laplacian | F::Gradient | F::Integral | F::Mean => return Err(Status::invalid("a field operation compiled as a call")),
                 };
                 finite(r, "function")
@@ -612,6 +713,16 @@ impl CExpr {
                 let vals: Result<std::vec::Vec<Value>, Status> = items.iter().map(|a| a.eval(c)).collect();
                 Ok(Tuple(Rc::new(vals?)))
             }
+            CExpr::InFrame(f) => {
+                let (at, axes) = f.axes(c)?;
+                let v = match f.value.eval(c)? {
+                    Vec(a) | Point(a) => a.v,
+                    v => return Err(Status::invalid(format!("no component in a frame of {v}"))),
+                };
+                let d: [f64; 3] = if f.point { std::array::from_fn(|i| v[i] - at[i]) } else { v };
+                let e = axes[f.axis];
+                Ok(Num(d[0] * e[0] + d[1] * e[1] + d[2] * e[2]))
+            }
             CExpr::Comp(e, axis) => match e.eval(c)? {
                 Vec(a) | Point(a) => Ok(Num(a.v[*axis])),
                 Tuple(t) => Ok(t[*axis].clone()),
@@ -629,7 +740,23 @@ impl CExpr {
                     _ => Err(Status::invalid(format!("no member number {k}"))),
                 }
             }
-            CExpr::Extreme(f, terms) => {
+            // `first` (D-106): the value at the smallest key; the first member wins a tie.
+            CExpr::Extreme(_, terms, values) if !values.is_empty() => {
+                let mut best: Option<(f64, usize)> = None;
+                for (k, (w, v)) in terms.iter().enumerate() {
+                    if w.eval(c)?.boolean() {
+                        let x = v.eval(c)?.num();
+                        if best.is_none_or(|(b, _)| x < b) {
+                            best = Some((x, k));
+                        }
+                    }
+                }
+                match best {
+                    Some((_, k)) => values[k].eval(c),
+                    None => Err(Status::invalid("`first` over no member has no value")),
+                }
+            }
+            CExpr::Extreme(f, terms, _) => {
                 let mut best: Option<f64> = None;
                 for (w, v) in terms {
                     if w.eval(c)?.boolean() {
@@ -658,7 +785,7 @@ impl CExpr {
     /// `a` near `b` has a value near 0 and the size `|a| + |b|`, the scale its rounding is
     /// measured against (RC-5.6). Sizes multiply through products, quotients and dot
     /// products, and follow components and vectors; other forms have the size of their value.
-    pub fn eval_sized(&self, c: &Ctx, width: usize) -> Result<(Value, [f64; 3]), Status> {
+    pub fn eval_sized(&self, c: &Ctx) -> Result<(Value, [f64; 3]), Status> {
         let plain = |v: Value| {
             let mut x = [0.0; 3];
             let w = v.width();
@@ -670,11 +797,11 @@ impl CExpr {
         let size = |v: &Value| v.width().min(3);
         Ok(match self {
             CExpr::Bin(op @ (BinOp::Add | BinOp::Sub), l, r) => {
-                let ((a, sa), (b, sb)) = (l.eval_sized(c, width)?, r.eval_sized(c, width)?);
+                let ((a, sa), (b, sb)) = (l.eval_sized(c)?, r.eval_sized(c)?);
                 (binary(*op, a, b)?, [sa[0] + sb[0], sa[1] + sb[1], sa[2] + sb[2]])
             }
             CExpr::Bin(op @ (BinOp::Mul | BinOp::Div), l, r) => {
-                let ((a, sa), (b, sb)) = (l.eval_sized(c, width)?, r.eval_sized(c, width)?);
+                let ((a, sa), (b, sb)) = (l.eval_sized(c)?, r.eval_sized(c)?);
                 let (na, nb) = (size(&a), size(&b));
                 // A product's size is the product of its factors' sizes; a quotient's, its
                 // numerator's over the divisor.
@@ -692,23 +819,27 @@ impl CExpr {
                 (v, s)
             }
             CExpr::Call(F::Dot, args) => {
-                let ((a, sa), (_, sb)) = (args[0].eval_sized(c, 3)?, args[1].eval_sized(c, 3)?);
+                let ((a, sa), (_, sb)) = (args[0].eval_sized(c)?, args[1].eval_sized(c)?);
                 let n = a.width().min(3);
                 (self.eval(c)?, [(0..n).map(|k| sa[k] * sb[k]).sum(), 0.0, 0.0])
             }
+            CExpr::Call(F::Cross, args) => {
+                let ((_, a), (_, b)) = (args[0].eval_sized(c)?, args[1].eval_sized(c)?);
+                (self.eval(c)?, [a[1] * b[2] + a[2] * b[1], a[2] * b[0] + a[0] * b[2], a[0] * b[1] + a[1] * b[0]])
+            }
             CExpr::Comp(e, k) => {
-                let (_, s) = e.eval_sized(c, 3)?;
+                let (_, s) = e.eval_sized(c)?;
                 (self.eval(c)?, [s[(*k).min(2)], 0.0, 0.0])
             }
             CExpr::MakeVec(items) => {
                 let mut s = [0.0; 3];
                 for (k, e) in items.iter().take(3).enumerate() {
-                    s[k] = e.eval_sized(c, 1)?.1[0];
+                    s[k] = e.eval_sized(c)?.1[0];
                 }
                 (self.eval(c)?, s)
             }
             CExpr::Neg(e) => {
-                let (_, s) = e.eval_sized(c, width)?;
+                let (_, s) = e.eval_sized(c)?;
                 (self.eval(c)?, s)
             }
             _ => plain(self.eval(c)?),
@@ -1007,6 +1138,9 @@ impl CExpr {
                     F::Exp => a.map(f64::exp),
                     F::Log => a.map(f64::ln),
                     F::Abs => a.map(f64::abs),
+                    F::Floor => a.map(f64::floor),
+                    F::Ceil => a.map(f64::ceil),
+                    F::Round => a.map(f64::round),
                     _ => return Ok(None),
                 }
             }

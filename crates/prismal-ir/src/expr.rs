@@ -47,6 +47,8 @@ pub enum Agg {
     Any,
     All,
     Count,
+    /// The value at the member with the smallest key (D-106).
+    First,
 }
 
 impl Agg {
@@ -58,6 +60,7 @@ impl Agg {
             Agg::Any => "any",
             Agg::All => "all",
             Agg::Count => "count",
+            Agg::First => "first",
         }
     }
 }
@@ -92,6 +95,14 @@ pub enum Func {
     Atan2,
     /// The dot product of two vectors of one space, or the product of two quantities (D-093).
     Dot,
+    /// The cross product of two vectors of one space of three dimensions (D-100).
+    Cross,
+    /// Whole numbers (D-101): the largest at most a number, the smallest at least it, the
+    /// nearest (halves away from zero); and `mod(a, b) = a - b floor(a / b)`.
+    Floor,
+    Ceil,
+    Round,
+    Mod,
     /// Of a field, at the cell of a pointwise expression (MK-9.7, D-091).
     Laplacian,
     Gradient,
@@ -223,6 +234,16 @@ pub enum Expr {
         comp: Box<Expr>,
         axis: usize,
     },
+    /// `e.in(F).x`: component `axis` of a point or vector read in frame `F` (MK-4.6, D-105).
+    /// `reads` holds, while a model is checked, the frame's expressions, so that what the
+    /// frame reads is read here; it is empty in a document.
+    In {
+        r#in: Box<Expr>,
+        frame: Id,
+        axis: usize,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reads: Vec<Expr>,
+    },
     Lambda {
         lambda: Lambda,
     },
@@ -271,6 +292,9 @@ pub enum Expr {
         body: Option<Box<Expr>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         filter: Option<Box<Expr>>,
+        /// For `first`: the key the members are ordered by (D-106).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<Box<Expr>>,
     },
     /// The smallest (`min`) or largest (`max`) of the values whose condition holds, and no
     /// value when none holds: `min` and `max` over a collection whose membership changes,
@@ -278,6 +302,9 @@ pub enum Expr {
     Extreme {
         extreme: Func,
         terms: Vec<Guarded>,
+        /// For `first` (D-106): the value of each term, given where its key is the smallest.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        values: Vec<Expr>,
     },
     /// The member at an endpoint of a relation instance: `s.a` (`of` the relation), or `a`
     /// inside the relation type (`of` absent) (D-058).
@@ -346,6 +373,10 @@ impl Expr {
         match self {
             Expr::Neg { neg: e } | Expr::Not { not: e } | Expr::Norm { norm: e } => e.walk(f),
             Expr::Comp { comp: e, .. } => e.walk(f),
+            Expr::In { r#in, reads, .. } => {
+                r#in.walk(f);
+                reads.iter().for_each(|x| x.walk(f));
+            }
             Expr::Bin { l, r, .. } => {
                 l.walk(f);
                 r.walk(f);
@@ -371,7 +402,8 @@ impl Expr {
             }
             Expr::Field { of, .. } => of.walk(f),
             Expr::Item { index, .. } => index.walk(f),
-            Expr::Aggregate { body, filter, .. } => {
+            Expr::Aggregate { body, filter, by, .. } => {
+                by.iter().for_each(|b| b.walk(f));
                 body.iter().for_each(|b| b.walk(f));
                 filter.iter().for_each(|c| c.walk(f));
             }
@@ -384,10 +416,13 @@ impl Expr {
                 pick.walk(f);
                 from.iter().for_each(|x| x.walk(f));
             }
-            Expr::Extreme { terms, .. } => terms.iter().for_each(|g| {
-                g.when.walk(f);
-                g.value.walk(f);
-            }),
+            Expr::Extreme { terms, values, .. } => {
+                terms.iter().for_each(|g| {
+                    g.when.walk(f);
+                    g.value.walk(f);
+                });
+                values.iter().for_each(|v| v.walk(f));
+            }
             _ => {}
         }
     }

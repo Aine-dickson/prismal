@@ -12,6 +12,8 @@ pub mod units;
 pub use dim::{Dim, Ratio};
 pub mod elaborate;
 pub mod enforce;
+pub mod frames;
+pub mod link;
 
 pub use expr::{Agg, Arm, BinOp, Builtin, Constant, Dist, Expr, Func, Guarded, Lambda};
 pub use units::Unit;
@@ -36,11 +38,48 @@ pub struct Document {
     pub presentations: Vec<present::Presentation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runs: Vec<present::RunCase>,
+    /// The modules the document uses, `use name` or `use name.{A, B}` (D-099).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uses: Vec<Use>,
+    /// Definitions written outside models (D-099): the document's own, as the library named
+    /// `SHARED`, and those of every module it uses, directly or through another module, so
+    /// that the document is complete without its modules' files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<Library>,
 }
+
+/// `use module` or `use module.{A, B}` (D-099): the module's shared definitions, or the named
+/// ones, become visible to the document's models by name.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Use {
+    pub module: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub names: Option<Vec<String>>,
+}
+
+/// Object types, enumerations and functions written outside any model (MK-7.1a, D-099). They
+/// are written once for every space: their points and vectors are of the space `ANY_SPACE`,
+/// which becomes the space of the model that uses them (`link`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Library {
+    /// The module's name, or `SHARED` for the document's own definitions.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enums: Vec<EnumDecl>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub functions: Vec<FunctionDecl>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<Model>,
+}
+
+/// The library of a document's own shared definitions (D-099).
+pub const SHARED: &str = "shared";
+/// The space of shared definitions: the space of the model that uses them (D-099).
+pub const ANY_SPACE: &str = "@space";
 
 impl Document {
     pub fn new(spaces: Vec<Space>, models: Vec<Model>) -> Document {
-        Document { format: FORMAT.into(), version: VERSION.into(), spaces, models, presentations: vec![], runs: vec![] }
+        Document { format: FORMAT.into(), version: VERSION.into(), spaces, models, presentations: vec![], runs: vec![], uses: vec![], libraries: vec![] }
     }
     pub fn model(&self, id: &str) -> Option<&Model> {
         self.models.iter().find(|m| m.id == id)
@@ -195,6 +234,20 @@ pub struct Grid {
     pub id: Id,
     pub name: String,
     pub axes: Vec<GridAxis>,
+}
+
+/// A frame of the model's space (MK-4.2, D-022, D-105): an origin `at` and axes. Its first
+/// axis lies along `x`; in a plane the second is the first turned a quarter turn, and in a
+/// space of three dimensions it is `y` made square to the first, the third their cross
+/// product. The expressions may read the model's values and time: such a frame moves.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrameDecl {
+    pub id: Id,
+    pub name: String,
+    pub at: Expr,
+    pub x: Expr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -375,6 +428,10 @@ pub enum Op {
         r#if: Expr,
         then: Vec<Op>,
     },
+    /// An impact on the enforced inequality `constraint`, which has a restitution: the state
+    /// is moved onto its boundary with its gap's rate reversed and scaled (D-102). Made by
+    /// elaboration for the hidden touch event.
+    Rebound { constraint: Id },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -418,8 +475,85 @@ pub struct Event {
     /// collection, named `var` in its trigger, condition and handler (D-057).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub each: Option<Each>,
+    /// An algorithm (MK-14.17, D-101): statements run in order, resumed at each occurrence
+    /// and run to the next `step`; the handler is then empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub algorithm: Option<Vec<Stmt>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+}
+
+/// A statement of an algorithm (MK-14.17, D-101). Each statement reads the values the
+/// statements before it wrote.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "stmt", rename_all = "snake_case")]
+pub enum Stmt {
+    /// Operations performed together, as a handler's: they read the values before them.
+    /// Written as one operation; elaboration may make several (a member chosen by number).
+    Do { ops: Vec<Op> },
+    If {
+        r#if: Expr,
+        then: Vec<Stmt>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        r#else: Vec<Stmt>,
+    },
+    While { r#while: Expr, body: Vec<Stmt> },
+    /// `for i in [from, to] { body }`: the discrete binding `var` takes `from`, and while it
+    /// is at most `to` (read again at each turn) the body runs and `var` grows by 1.
+    For { var: Id, from: Expr, to: Expr, body: Vec<Stmt> },
+    /// The end of one occurrence's work: the next occurrence resumes after it.
+    Step,
+}
+
+impl Stmt {
+    /// Every operation of `stmts`, nested ones included.
+    pub fn ops(stmts: &[Stmt]) -> Vec<&Op> {
+        let mut out = vec![];
+        fn walk<'s>(ss: &'s [Stmt], out: &mut Vec<&'s Op>) {
+            for s in ss {
+                match s {
+                    Stmt::Do { ops } => out.extend(ops.iter()),
+                    Stmt::If { then, r#else, .. } => {
+                        walk(then, out);
+                        walk(r#else, out);
+                    }
+                    Stmt::While { body, .. } | Stmt::For { body, .. } => walk(body, out),
+                    Stmt::Step => {}
+                }
+            }
+        }
+        walk(stmts, &mut out);
+        out
+    }
+}
+
+/// The identity of the hidden discrete state that holds where algorithm `id` resumes (D-101).
+pub fn resume_id(id: &str) -> String {
+    format!("{id}@resume")
+}
+
+/// Gives each algorithm its hidden resume binding, if it has none (D-101): a discrete
+/// number, 0 at the start, that says where its next occurrence continues.
+pub fn with_resume(mut m: Model) -> Model {
+    let missing: Vec<(Id, String)> = m.events.iter().filter(|e| e.algorithm.is_some() && !m.bindings.iter().any(|b| b.id == resume_id(&e.id))).map(|e| (resume_id(&e.id), e.name.clone())).collect();
+    for (id, name) in missing {
+        m.bindings.push(Binding {
+            id,
+            name: format!("resume of {name}"),
+            role: Role::Discrete,
+            ty: Type::real(),
+            init: Some(Expr::Num { num: 0.0, unit: None }),
+            def: None,
+            intervenable: None,
+            private: true,
+            display: Default::default(),
+            notes: vec![],
+            when: None,
+            combine: None,
+            boundary: None,
+        });
+    }
+    m
 }
 
 /// An event's payload: its name as written (for display) and its type.
@@ -515,6 +649,19 @@ pub struct Constraint {
     /// Printing hint only (04-ir section 5.4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attached_to: Option<Id>,
+    /// The unknown that holds an enforced inequality constraint, `with N` (MK-12.11, D-098):
+    /// positive while it acts, zero while the constraint is not in contact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<Id>,
+    /// `where |F| <= B` (D-102): the bound of the holding force of an enforced equality. Within
+    /// it the constraint holds; at it the constraint slips, the force at the bound against
+    /// the slip: Coulomb friction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound: Option<Expr>,
+    /// `restitution e` (D-102): an enforced inequality's impacts reverse the gap's rate, scaled
+    /// by `e`, instead of stopping it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restitution: Option<Expr>,
 }
 
 /// A model: the root object type (MK-7.2).
@@ -542,6 +689,9 @@ pub struct Model {
     /// Grids of field state (MK-9.5, D-091).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grids: Vec<Grid>,
+    /// Declared frames of the model's space (MK-4.2, D-105).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<FrameDecl>,
     /// Declared functions (MK-10.3, D-048).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub functions: Vec<FunctionDecl>,

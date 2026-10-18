@@ -111,6 +111,41 @@ impl<'a, 'b> Tc<'a, 'b> {
         self.scope.spaces.iter().find(|s| s.id == space).map(|s| s.dimension as usize)
     }
 
+    /// A declared frame's origin and axes, compiled (MK-4.2, D-105): the origin a point of the
+    /// model's space, the axes vectors of it of any dimension (a tuple of numbers is read as
+    /// one); `y` in a space of three dimensions and only there.
+    pub fn frame_parts(&mut self, f: &prismal_ir::FrameDecl) -> Option<(CExpr, CExpr, Option<CExpr>)> {
+        let Some(space) = self.scope.model.default_space.clone() else {
+            return self.err("MK-E01", format!("frame `{}` needs the model's space: `model M in Space`", f.name)).map(|_| unreachable!());
+        };
+        let n = self.space_dim(&space).unwrap_or(0);
+        let at = self.expect(&f.at, &Type::Point { space: space.clone() });
+        let axis = |tc: &mut Self, e: &Expr, what: &str| -> Option<CExpr> {
+            let (c, t) = match tc.expr(e, None)? {
+                (_, Type::Tuple { items }) => {
+                    let dim = items.iter().find_map(|i| match i {
+                        Type::Quantity { dim } if !dim.is_none() => Some(*dim),
+                        _ => None,
+                    });
+                    tc.expr(e, Some(&Type::Vector { space: space.clone(), dim: dim.unwrap_or(Dim::NONE) }))?
+                }
+                other => other,
+            };
+            match t {
+                Type::Vector { space: s, .. } if s == space => Some(c),
+                other => tc.err("MK-E01", format!("a frame's `{what}` is a vector of its space, not {}", show(&other))).map(|_| unreachable!()),
+            }
+        };
+        let x = axis(self, &f.x, "x");
+        let y = match (&f.y, n) {
+            (Some(y), 3) => Some(axis(self, y, "y")?),
+            (None, 3) => return self.err("MK-E01", format!("frame `{}` lies in a space of three dimensions: give its second axis, `y: v`", f.name)).map(|_| unreachable!()),
+            (Some(_), _) => return self.err("MK-E01", format!("frame `{}` lies in a plane: its second axis is its first turned a quarter turn, and takes no `y`", f.name)).map(|_| unreachable!()),
+            (None, _) => None,
+        };
+        Some((at?, x?, y))
+    }
+
     fn binding(&self, id: &str) -> Option<(usize, &'a Binding)> {
         self.scope.index.get(id).map(|&i| (i, &self.scope.model.bindings[i]))
     }
@@ -182,7 +217,9 @@ impl<'a, 'b> Tc<'a, 'b> {
             },
             Expr::Match { r#match, arms } => self.match_expr(r#match, arms, exp),
             // `min` or `max` over the members alive (D-057): quantities of one type.
-            Expr::Extreme { extreme, terms } => {
+            // `first` (D-106): the value at the smallest key, the values of one type.
+            Expr::Extreme { extreme, terms, values } => {
+                let first = !values.is_empty();
                 let mut t: Option<Type> = None;
                 let mut out = vec![];
                 for g in terms {
@@ -190,17 +227,32 @@ impl<'a, 'b> Tc<'a, 'b> {
                     let v = match &t {
                         Some(want) => self.expect(&g.value, want)?,
                         None => {
-                            let (v, vt) = self.expr(&g.value, exp)?;
+                            let (v, vt) = self.expr(&g.value, if first { None } else { exp })?;
                             t = Some(vt);
                             v
                         }
                     };
                     out.push((w, v));
                 }
-                match t {
-                    Some(t @ Type::Quantity { .. }) => Some((CExpr::Extreme(*extreme, out), t)),
-                    Some(other) => self.err("MK-E01", format!("`min` and `max` compare quantities, not {}", show(&other))),
-                    None => self.err("MK-E26", "`min` or `max` over no member has no value".into()),
+                let mut vt: Option<Type> = None;
+                let mut vs = vec![];
+                for v in values {
+                    vs.push(match &vt {
+                        Some(want) => self.expect(v, want)?,
+                        None => {
+                            let (c, ty) = self.expr(v, exp)?;
+                            vt = Some(ty);
+                            c
+                        }
+                    });
+                }
+                match (t, vt) {
+                    (Some(Type::Quantity { .. }), Some(vt)) => Some((CExpr::Extreme(*extreme, out, vs), vt)),
+                    (Some(t @ Type::Quantity { .. }), None) => Some((CExpr::Extreme(*extreme, out, vs), t)),
+                    (Some(other), _) if first => self.err("MK-E01", format!("`first` orders members by a number or a quantity, not {}", show(&other))),
+                    (Some(other), _) => self.err("MK-E01", format!("`min` and `max` compare quantities, not {}", show(&other))),
+                    (None, _) if first => self.err("MK-E26", "`first` over no member has no value".into()),
+                    (None, _) => self.err("MK-E26", "`min` or `max` over no member has no value".into()),
                 }
             }
             // A binding of the member chosen by number (D-058): the items have one type.
@@ -361,6 +413,32 @@ impl<'a, 'b> Tc<'a, 'b> {
                     types.push(t);
                 }
                 Some((CExpr::MakeTuple(items), Type::Tuple { items: types }))
+            }
+            // `e.in(F).x` (MK-4.6, D-105).
+            Expr::In { r#in, frame, axis, .. } => {
+                let Some(fr) = self.scope.model.frames.iter().find(|f| &f.id == frame) else {
+                    return self.err("MK-E01", format!("unknown frame `{frame}`"));
+                };
+                let (c, t) = self.expr(r#in, None)?;
+                let (point, dim) = match &t {
+                    Type::Point { .. } => (true, Dim::length()),
+                    Type::Vector { dim, .. } => (false, *dim),
+                    other => return self.err("MK-E01", format!("components in a frame are read of a point or a vector, not {}", show(other))),
+                };
+                let n = match &t {
+                    Type::Point { space } | Type::Vector { space, .. } => self.space_dim(space).unwrap_or(0),
+                    _ => 0,
+                };
+                if *axis >= n {
+                    return self.err("MK-E01", format!("a frame of a space of {n} dimensions has no component {axis}"));
+                }
+                // The frame is checked where it is declared; here its parts are compiled
+                // quietly.
+                let before = self.diags.len();
+                let parts = self.frame_parts(fr);
+                self.diags.truncate(before);
+                let (at, x, y) = parts?;
+                Some((CExpr::InFrame(Box::new(crate::eval::CInFrame { value: c, point, at, x, y, axis: *axis, n })), Type::Quantity { dim }))
             }
             Expr::Comp { comp, axis } => {
                 let (c, t) = self.expr(comp, None)?;
@@ -593,13 +671,38 @@ impl<'a, 'b> Tc<'a, 'b> {
     }
 
     fn call(&mut self, f: Func, args: &[Expr]) -> Typed {
-        // D-093: `dot(a, b)` of two vectors of one space, or of two quantities.
-        if f == Func::Dot {
+        // D-093: `dot(a, b)` of two vectors of one space, or of two quantities. D-100:
+        // `cross(a, b)` of two vectors of one space of three dimensions.
+        if f == Func::Dot || f == Func::Cross {
+            let word = if f == Func::Dot { "dot" } else { "cross" };
             if args.len() != 2 {
-                return self.err("MK-E01", "dot takes 2 arguments".into());
+                return self.err("MK-E01", format!("{word} takes 2 arguments"));
             }
-            let (a, at) = self.expr(&args[0], None)?;
-            let (b, bt) = self.expr(&args[1], None)?;
+            let (mut a, mut at) = self.expr(&args[0], None)?;
+            let (mut b, mut bt) = self.expr(&args[1], None)?;
+            // A tuple beside a vector is a vector of its space (D-032, D-097):
+            // `dot(N, (cos(α), -sin(α)))`.
+            let as_vector = |t: &Type, other: &Type| match (t, other) {
+                (Type::Tuple { items }, Type::Vector { space, .. }) => match items.first() {
+                    Some(Type::Quantity { dim }) if items.iter().all(|i| i == &items[0]) => Some(Type::Vector { space: space.clone(), dim: *dim }),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(want) = as_vector(&bt, &at) {
+                (b, bt) = self.expr(&args[1], Some(&want))?;
+            } else if let Some(want) = as_vector(&at, &bt) {
+                (a, at) = self.expr(&args[0], Some(&want))?;
+            }
+            if f == Func::Cross {
+                return match (&at, &bt) {
+                    (Type::Vector { space: s, dim: x }, Type::Vector { space: t, dim: y }) if s == t && self.space_dim(s) == Some(3) => {
+                        let ty = Type::Vector { space: s.clone(), dim: x.mul(y) };
+                        Some((CExpr::Call(f, vec![a, b]), ty))
+                    }
+                    _ => self.err("MK-E01", format!("cross of {} and {}: two vectors of one space of three dimensions (MK-10.7a)", show(&at), show(&bt))),
+                };
+            }
             let dim = match (&at, &bt) {
                 (Type::Quantity { dim: x }, Type::Quantity { dim: y }) => x.mul(y),
                 (Type::Vector { space: s, dim: x }, Type::Vector { space: t, dim: y }) if s == t => x.mul(y),
@@ -635,7 +738,7 @@ impl<'a, 'b> Tc<'a, 'b> {
             }
             return Some((CExpr::Field(Box::new(self.field_op(i, grid, op)?)), ty));
         }
-        let n = if matches!(f, Func::Min | Func::Max | Func::Atan2) { 2 } else { 1 };
+        let n = if matches!(f, Func::Min | Func::Max | Func::Atan2 | Func::Mod) { 2 } else { 1 };
         if args.len() != n {
             return self.err("MK-E01", format!("{f:?} takes {n} arguments"));
         }
@@ -653,12 +756,19 @@ impl<'a, 'b> Tc<'a, 'b> {
             }
             Func::Sqrt => Some((CExpr::Call(f, vec![a]), Type::Quantity { dim: dim.pow(Ratio::new(1, 2)) })),
             Func::Abs => Some((CExpr::Call(f, vec![a]), Type::Quantity { dim })),
-            Func::Min | Func::Max | Func::Atan2 => {
+            // D-101: a whole number of a quantity would depend on its unit.
+            Func::Floor | Func::Ceil | Func::Round => {
+                if !dim.is_none() {
+                    return self.err("MK-E02", format!("{} of a quantity with dimension {dim}: divide by a unit first, `{}(x / 1 m)`", func_word(f), func_word(f)));
+                }
+                Some((CExpr::Call(f, vec![a]), Type::real()))
+            }
+            Func::Min | Func::Max | Func::Atan2 | Func::Mod => {
                 let bc = self.expect(&args[1], &Type::Quantity { dim })?;
                 let rt = if f == Func::Atan2 { Type::real() } else { Type::Quantity { dim } };
                 Some((CExpr::Call(f, vec![a, bc]), rt))
             }
-            Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean | Func::Dot => unreachable!(),
+            Func::Laplacian | Func::Gradient | Func::Integral | Func::Mean | Func::Dot | Func::Cross => unreachable!(),
         }
     }
 
@@ -736,6 +846,9 @@ fn func_word(f: Func) -> &'static str {
         Func::Mean => "mean",
         Func::Min => "min",
         Func::Max => "max",
+        Func::Floor => "floor",
+        Func::Ceil => "ceil",
+        Func::Round => "round",
         _ => "function",
     }
 }
@@ -955,6 +1068,22 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     } else {
         model
     };
+    // D-105: each component read in a frame reads what the frame reads.
+    let framed;
+    let model = if !model.frames.is_empty() {
+        framed = prismal_ir::frames::with_reads(model);
+        &framed
+    } else {
+        model
+    };
+    // D-101: each algorithm resumes from a hidden discrete binding.
+    let resumed;
+    let model = if model.events.iter().any(|e| e.algorithm.is_some() && !model.bindings.iter().any(|b| b.id == resume_id(&e.id))) {
+        resumed = with_resume(model.clone());
+        &resumed
+    } else {
+        model
+    };
     let mut diags = vec![];
     let mut index = HashMap::new();
     for (i, b) in model.bindings.iter().enumerate() {
@@ -966,6 +1095,10 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
     let grids = check_grids(spaces, model, &index, &funcs, &mut diags);
     let scope = Scope { spaces, model, index: &index, funcs: &funcs, grids: &grids };
     check_boundaries(model, &grids, &mut diags);
+    // D-105: each declared frame's origin and axes, checked once where it is declared.
+    for f in &model.frames {
+        Tc::new(&scope, &mut diags, &f.id).frame_parts(f);
+    }
 
     // Bindings: initial definitions and definitions.
     let mut cbindings = vec![];
@@ -986,10 +1119,10 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             },
             _ => None,
         };
-        // D-092: an unknown is a number or quantity; its value, if given, is the solver's
-        // starting guess.
-        if b.role == Role::Unknown && !matches!(b.ty, Type::Quantity { .. }) {
-            tc.err("MK-E01", format!("the unknown `{}` is a number or a quantity (MK-11.6)", b.name));
+        // D-092, D-097: an unknown is a number, a quantity, a vector or a point; its value, if
+        // given, is the solver's starting guess.
+        if b.role == Role::Unknown && !matches!(b.ty, Type::Quantity { .. } | Type::Vector { .. } | Type::Point { .. }) {
+            tc.err("MK-E01", format!("the unknown `{}` is a number, a quantity, a vector or a point (MK-11.6)", b.name));
         }
         let init = match (&b.init, b.role, &field) {
             (Some(e), Role::Unknown, _) => tc.expect(e, &b.ty),
@@ -1195,7 +1328,12 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
                 n: z.n,
                 window: z.window,
             });
-        cevents.push(CEvent { id: e.id.clone(), name: e.name.clone(), trigger, enable, handler, zeno });
+        let algorithm = e.algorithm.as_ref().map(|stmts| {
+            let mut code = vec![];
+            compile_stmts(&mut tc, model, &index, stmts, &mut code);
+            CAlgorithm { resume: index.get(&prismal_ir::resume_id(&e.id)).copied().unwrap_or(0), code }
+        });
+        cevents.push(CEvent { id: e.id.clone(), name: e.name.clone(), trigger, enable, handler, zeno, algorithm });
     }
     // MK-15.11, MK-15.12 with D-038: self-retriggering crossing events need a Zeno policy.
     for e in &model.events {
@@ -1251,7 +1389,7 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
             Type::Vector { space, .. } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(1),
             _ => 1,
         };
-        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field, width });
+        cequations.push(CEquation { id: q.id.clone(), name: q.name.clone(), lhs: l, rhs: r, check_tol: tol, check: q.role == EquationRole::Check, field, width, contact: None, slip: None });
     }
 
     // Constraints (MK section 12).
@@ -1329,13 +1467,87 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
                 }
             }
         }
-        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy, levels });
+        // D-098: an enforced inequality is held by the unknown it names, `with N`, which its
+        // solved rate reads; out of contact that unknown is zero.
+        let mut contact = None;
+        let (mut hold, mut restitution) = (None, None);
+        let inequality = prismal_ir::enforce::inequality(&k.cond).is_some();
+        // D-102: an enforced equality held by a bounded force, `with F where |F| <= B`.
+        let bounded = k.bound.is_some() && k.policy == Policy::Enforce && matches!(k.cond, Expr::Bin { bin: BinOp::Eq, .. });
+        if k.bound.is_some() && !bounded {
+            tc.err("MK-E36", format!("constraint `{}`: `where |F| <= B` bounds the force that holds an enforced equality, `a == b policy enforce with F where |F| <= B` (MK-12.12)", k.name));
+            continue;
+        }
+        if k.restitution.is_some() && !(inequality && k.policy == Policy::Enforce) {
+            tc.err("MK-E36", format!("constraint `{}`: `restitution` belongs to an enforced inequality, whose impacts it makes bounce (MK-12.13)", k.name));
+            continue;
+        }
+        if let Some(e) = &k.restitution {
+            restitution = tc.expect(e, &Type::real());
+        }
+        if bounded {
+            let fi = k.force.as_ref().and_then(|f| index.get(f).copied()).filter(|&i| model.bindings[i].role == Role::Unknown && matches!(model.bindings[i].ty, Type::Quantity { .. }));
+            let Some(fi) = fi else {
+                tc.err("MK-E36", format!("constraint `{}`: `with` names a number or quantity declared in an `unknown` block (MK-12.12)", k.name));
+                continue;
+            };
+            let solved = model.equations.iter().find(|q| q.id == prismal_ir::enforce::equation_id(&k.id));
+            let reads = solved.is_some_and(|q| {
+                let refs: Vec<Id> = q.lhs.refs().into_iter().chain(q.rhs.refs()).collect();
+                closure_derived(model, &index, &refs).contains(&fi)
+            });
+            if !reads {
+                tc.err("MK-E36", format!("constraint `{}` is held by `{}`, but no rate of it reads `{}`: read it in the flows, in the direction it acts (MK-12.12)", k.name, model.bindings[fi].name, model.bindings[fi].name));
+                continue;
+            }
+            let Some(b) = tc.expect(k.bound.as_ref().unwrap(), &model.bindings[fi].ty) else { continue };
+            hold = index.get(&prismal_ir::enforce::hold_id(&k.id)).copied();
+            let side = index.get(&prismal_ir::enforce::side_id(&k.id)).copied();
+            if let (Some(h), Some(sd), Some(q)) = (hold, side, cequations.iter_mut().find(|q| q.id == prismal_ir::enforce::equation_id(&k.id))) {
+                q.slip = Some((h, fi, sd, b));
+            }
+        }
+        match (&k.force, inequality && k.policy == Policy::Enforce) {
+            _ if bounded => {}
+            (Some(_), false) => {
+                tc.err("MK-E36", format!("constraint `{}`: `with` names the unknown that holds an enforced inequality, `a >= b policy enforce with N` (MK-12.11)", k.name));
+                continue;
+            }
+            (None, true) => {
+                tc.err("MK-E36", format!("constraint `{}` is an enforced inequality: name the unknown that holds it, `with N`, positive while it pushes or pulls (MK-12.11)", k.name));
+                continue;
+            }
+            (Some(f), true) => {
+                let fi = index.get(f).copied().filter(|&i| model.bindings[i].role == Role::Unknown && matches!(model.bindings[i].ty, Type::Quantity { .. }));
+                let Some(fi) = fi else {
+                    tc.err("MK-E36", format!("constraint `{}`: `with` names a number or quantity declared in an `unknown` block (MK-12.11)", k.name));
+                    continue;
+                };
+                let solved = model.equations.iter().find(|q| q.id == prismal_ir::enforce::equation_id(&k.id));
+                let reads = solved.is_some_and(|q| {
+                    let refs: Vec<Id> = q.lhs.refs().into_iter().chain(q.rhs.refs()).collect();
+                    closure_derived(model, &index, &refs).contains(&fi)
+                });
+                if !reads {
+                    tc.err("MK-E36", format!("constraint `{}` is held by `{}`, but no rate of it reads `{}`: read it in the flows, in the direction it acts (MK-12.11)", k.name, model.bindings[fi].name, model.bindings[fi].name));
+                    continue;
+                }
+                let side = if matches!(k.cond, Expr::Bin { bin: BinOp::Ge, .. }) { 1.0 } else { -1.0 };
+                contact = index.get(&prismal_ir::enforce::contact_id(&k.id)).copied().map(|on| (on, side));
+                if let (Some((on, _)), Some(q)) = (contact, cequations.iter_mut().find(|q| q.id == prismal_ir::enforce::equation_id(&k.id))) {
+                    q.contact = Some((on, fi));
+                }
+            }
+            (None, false) => {}
+        }
+        cconstraints.push(CConstraint { id: k.id.clone(), name: k.name.clone(), cond, within: parts, policy: k.policy, levels, contact, hold, restitution });
     }
 
     // Solved equations (MK-11.6 to MK-11.9, D-092).
     let plan = plan_solve(model, &index, &cequations, spaces, &mut diags);
     let solve = plan.as_ref().map(|p| CSolve {
         unknowns: p.unknowns.clone(),
+        widths: p.widths.clone(),
         guess: p.unknowns.iter().map(|&i| cbindings[i].init.clone()).collect(),
         inner: p.inner.clone(),
         equations: p.equations.clone(),
@@ -1378,6 +1590,8 @@ pub fn check_model(spaces: &[Space], model: &Model) -> Result<CModel, Vec<Diagno
 /// Which bindings and equations a solve involves (D-092).
 struct SolvePlan {
     unknowns: Vec<usize>,
+    /// The number of components of each unknown: 1, or the dimension of its space.
+    widths: Vec<usize>,
     /// Derived bindings the solving equations read that depend on unknowns, in order: they
     /// are computed inside the solve.
     inner: Vec<usize>,
@@ -1389,34 +1603,20 @@ struct SolvePlan {
 /// directly or through derived values, determine the unknowns. There are as many of their
 /// components as unknowns, and each unknown can be matched to an equation that reads it.
 fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CEquation], spaces: &[Space], diags: &mut Vec<Diagnostic>) -> Option<SolvePlan> {
-    // MK-11.9: elaboration has given every state of numbers or quantities whose rate an
-    // equation reads a hidden unknown and its flow. A rate still without a flow is of a vector
-    // or a point, whose unknowns are a later extension.
-    for q in model.equations.iter().filter(|q| q.role != EquationRole::Check) {
-        let mut rates = BTreeSet::new();
-        for side in [&q.lhs, &q.rhs] {
-            side.walk(&mut |x| {
-                if let Expr::Der { der } = x {
-                    rates.insert(der.clone());
-                }
-            });
-        }
-        for x in rates {
-            let Some(b) = index.get(&x).map(|&i| &model.bindings[i]) else { continue };
-            if b.role == Role::Continuous && !matches!(b.ty, Type::Field { .. }) && !model.flows.iter().any(|f| f.target == x) {
-                diags.push(Diagnostic {
-                    code: "MK-E35",
-                    message: format!("equation `{}` gives the rate of `{}`, a vector or point: rates of vectors given by equations are a later extension; write its flow, `flow der({}) = ...` (MK-11.9)", q.name, b.name, b.name),
-                    element: q.id.clone(),
-                });
-            }
-        }
-    }
+    // MK-11.9: elaboration has given every state whose rate a solved equation reads a hidden
+    // unknown and its flow (D-092, D-097).
     let unknowns: Vec<usize> = model.bindings.iter().enumerate().filter(|(_, b)| b.role == Role::Unknown).map(|(i, _)| i).collect();
     if unknowns.is_empty() {
         return None;
     }
     let is_u = |i: &usize| model.bindings[*i].role == Role::Unknown;
+    // D-097: a vector or point unknown has one component per axis of its space.
+    let width_of = |i: usize| match &model.bindings[i].ty {
+        Type::Vector { space, .. } | Type::Point { space } => spaces.iter().find(|s| &s.id == space).map(|s| s.dimension as usize).unwrap_or(2),
+        _ => 1,
+    };
+    let widths: Vec<usize> = unknowns.iter().map(|&i| width_of(i)).collect();
+    let total: usize = widths.iter().sum();
     let mut err = |code: &'static str, m: String| diags.push(Diagnostic { code, message: m, element: model.id.clone() });
     // Derived bindings that depend on an unknown.
     let reads_u = |i: usize| closure_derived(model, index, &model.bindings[i].def.as_ref().map(|d| d.refs()).unwrap_or_default()).iter().any(is_u);
@@ -1449,7 +1649,6 @@ fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CE
     }
     // An equation of vectors has one component per axis of its space.
     let comps = |k: usize| -> usize { eqs.get(k).map(|c| c.width).unwrap_or(1) };
-    let _ = spaces;
     let rows: Vec<(usize, &BTreeSet<usize>)> = sets.iter().flat_map(|(k, us)| std::iter::repeat_n((*k, us), comps(*k))).collect();
     let names = |is: &[usize]| is.iter().map(|&i| format!("`{}`", model.bindings[i].name)).collect::<Vec<_>>().join(", ");
     let eq_names = |ks: &[usize]| ks.iter().map(|&k| format!("`{}`", model.equations[k].name)).collect::<Vec<_>>().join(", ");
@@ -1458,15 +1657,26 @@ fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CE
         err("MK-E34", format!("no equation determines {}: write an equation that reads it (MK-11.7)", names(&unused)));
         return None;
     }
-    if rows.len() != unknowns.len() {
-        let which = if rows.len() < unknowns.len() { "fewer" } else { "more" };
-        err("MK-E34", format!("{} unknowns ({}) and {} equation components ({}): {which} equations than unknowns (MK-11.7)", unknowns.len(), names(&unknowns), rows.len(), eq_names(&equations)));
+    if rows.len() != total {
+        let which = if rows.len() < total { "fewer" } else { "more" };
+        let count = if total == unknowns.len() { format!("{total} unknowns ({})", names(&unknowns)) } else { format!("{total} unknown components ({})", names(&unknowns)) };
+        err("MK-E34", format!("{count} and {} equation components ({}): {which} equations than unknowns (MK-11.7)", rows.len(), eq_names(&equations)));
         return None;
     }
-    // A matching of equation components to unknowns (augmenting paths).
+    // A matching of equation components to unknown components (augmenting paths). A
+    // component of an equation may determine any component of an unknown it reads.
+    let mut cols: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut col_of: Vec<usize> = vec![];
+    for (&u, &w) in unknowns.iter().zip(&widths) {
+        for _ in 0..w {
+            cols.entry(u).or_default().push(col_of.len());
+            col_of.push(u);
+        }
+    }
+    let row_cols: Vec<Vec<usize>> = rows.iter().map(|(_, us)| us.iter().flat_map(|u| cols[u].iter().copied()).collect()).collect();
     let mut owner: HashMap<usize, usize> = HashMap::new();
-    fn augment(r: usize, rows: &[(usize, &BTreeSet<usize>)], owner: &mut HashMap<usize, usize>, seen: &mut BTreeSet<usize>) -> bool {
-        for &u in rows[r].1 {
+    fn augment(r: usize, rows: &[Vec<usize>], owner: &mut HashMap<usize, usize>, seen: &mut BTreeSet<usize>) -> bool {
+        for &u in &rows[r] {
             if !seen.insert(u) {
                 continue;
             }
@@ -1481,16 +1691,17 @@ fn plan_solve(model: &Model, index: &HashMap<Id, usize>, eqs: &[crate::model::CE
         }
         false
     }
-    for r in 0..rows.len() {
-        if !augment(r, &rows, &mut owner, &mut BTreeSet::new()) {
-            let lone: Vec<usize> = unknowns.iter().copied().filter(|u| !owner.contains_key(u)).collect();
+    for r in 0..row_cols.len() {
+        if !augment(r, &row_cols, &mut owner, &mut BTreeSet::new()) {
+            let mut lone: Vec<usize> = (0..col_of.len()).filter(|c| !owner.contains_key(c)).map(|c| col_of[c]).collect();
+            lone.dedup();
             err("MK-E34", format!("the equations {} do not determine {} separately: some of them read the same unknowns only (MK-11.7)", eq_names(&equations), names(&lone)));
             return None;
         }
     }
     // The derived values inside the solve, in dependency order.
     let inner: Vec<usize> = order_derived(model, index, None, &mut vec![]).into_iter().filter(|i| inner.contains(i)).collect();
-    Some(SolvePlan { unknowns, inner, equations })
+    Some(SolvePlan { unknowns, widths, inner, equations })
 }
 
 
@@ -1523,7 +1734,7 @@ fn check_grids(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, func
         };
         // A grid in the plane lies in the model's space of two dimensions, in lengths.
         let plane = g.axes.len() == 2;
-        if plane && !model.default_space.as_ref().and_then(|s| spaces.iter().find(|x| &x.id == s)).is_some_and(|s| s.dimension == 2) {
+        if plane && model.default_space.as_ref().and_then(|s| spaces.iter().find(|x| &x.id == s)).is_none_or(|s| s.dimension != 2) {
             tc.err("MK-E01", format!("grid `{}` has two axes, so it lies in the model's plane: `model M in Plane` with `space Plane = euclidean(2)` (MK-9.5)", g.name));
             continue;
         }
@@ -1590,6 +1801,71 @@ fn const_value(c: &CExpr) -> Option<f64> {
     }
 }
 
+/// Compiles an algorithm's statements to a flat program (MK-14.17, D-101): `if` and `while`
+/// to conditional jumps, `for i in [a, b]` to `set i = a`, a test of `i <= b` before each
+/// turn and `set i = i + 1` after it.
+fn compile_stmts(tc: &mut Tc, model: &Model, index: &HashMap<Id, usize>, stmts: &[Stmt], code: &mut Vec<CInstr>) {
+    let patch = |code: &mut Vec<CInstr>, at: usize, to: usize| match &mut code[at] {
+        CInstr::Unless(_, t) | CInstr::Jump(t) => *t = to,
+        _ => unreachable!(),
+    };
+    for st in stmts {
+        match st {
+            Stmt::Do { ops } => {
+                if ops.iter().any(|o| matches!(o, Op::Contribute { .. })) {
+                    tc.err("MK-E37", "`contribute` combines the contributions of one instant; an algorithm writes in order with `set` (MK-14.17)".into());
+                }
+                let c = check_ops(tc, model, index, ops, false);
+                code.push(CInstr::Do(c));
+            }
+            Stmt::If { r#if, then, r#else } => {
+                let cond = tc.expect(r#if, &Type::Boolean).unwrap_or(CExpr::Const(Value::Bool(false)));
+                let test = code.len();
+                code.push(CInstr::Unless(cond, 0));
+                compile_stmts(tc, model, index, then, code);
+                if r#else.is_empty() {
+                    let end = code.len();
+                    patch(code, test, end);
+                } else {
+                    let skip = code.len();
+                    code.push(CInstr::Jump(0));
+                    let other = code.len();
+                    patch(code, test, other);
+                    compile_stmts(tc, model, index, r#else, code);
+                    let end = code.len();
+                    patch(code, skip, end);
+                }
+            }
+            Stmt::While { r#while, body } => {
+                let top = code.len();
+                let cond = tc.expect(r#while, &Type::Boolean).unwrap_or(CExpr::Const(Value::Bool(false)));
+                code.push(CInstr::Unless(cond, 0));
+                compile_stmts(tc, model, index, body, code);
+                code.push(CInstr::Jump(top));
+                let end = code.len();
+                patch(code, top, end);
+            }
+            Stmt::For { var, from, to, body } => {
+                let Some(&i) = index.get(var).filter(|&&i| model.bindings[i].role == Role::Discrete && model.bindings[i].ty == Type::real()) else {
+                    let name = var.rsplit('.').next().unwrap_or(var);
+                    tc.err("MK-E37", format!("the counter `{name}` of a `for` is a discrete number of the model: `discrete {{ {name}: Real = 0 }}` (MK-14.17)"));
+                    continue;
+                };
+                let (Some(a), Some(b)) = (tc.expect(from, &Type::real()), tc.expect(to, &Type::real())) else { continue };
+                code.push(CInstr::Do(vec![COp::Set { binding: i, component: None, value: a }]));
+                let top = code.len();
+                code.push(CInstr::Unless(CExpr::Bin(BinOp::Le, Box::new(CExpr::Load(i)), Box::new(b)), 0));
+                compile_stmts(tc, model, index, body, code);
+                code.push(CInstr::Do(vec![COp::Set { binding: i, component: None, value: CExpr::Bin(BinOp::Add, Box::new(CExpr::Load(i)), Box::new(CExpr::Const(Value::Num(1.0)))) }]));
+                code.push(CInstr::Jump(top));
+                let end = code.len();
+                patch(code, top, end);
+            }
+            Stmt::Step => code.push(CInstr::Step),
+        }
+    }
+}
+
 fn check_ops(tc: &mut Tc, model: &Model, index: &HashMap<Id, usize>, ops: &[Op], intervention: bool) -> Vec<COp> {
     let mut out = vec![];
     let mut targets: Vec<(usize, Option<usize>)> = vec![];
@@ -1604,6 +1880,13 @@ fn check_ops(tc: &mut Tc, model: &Model, index: &HashMap<Id, usize>, ops: &[Op],
             Op::Create { .. } | Op::Connect { .. } | Op::Disconnect { .. } | Op::Destroy { member: Expr::Var { .. } | Expr::Part { .. } | Expr::Item { .. } | Expr::End { .. } | Expr::Other { .. } } => {
                 tc.err("MK-E00", "`create`, `destroy`, `connect` or `disconnect` in a model that was not elaborated (D-057, D-058)".into());
             }
+            // D-102: an impact with restitution, made by elaboration.
+            Op::Rebound { constraint } => match model.constraints.iter().position(|k| &k.id == constraint) {
+                Some(k) => out.push(COp::Rebound { constraint: k }),
+                None => {
+                    tc.err("MK-E00", format!("a rebound on an unknown constraint `{constraint}`"));
+                }
+            },
             // After elaboration a destroy names the member's liveness binding (D-057).
             Op::Destroy { member } => match member {
                 Expr::Ref { r#ref } if index.get(r#ref).is_some_and(|&i| model.bindings[i].role == Role::Discrete && model.bindings[i].ty == Type::Boolean) => {

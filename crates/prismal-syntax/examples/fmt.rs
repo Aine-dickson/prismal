@@ -7,7 +7,7 @@
 //! is written to OUT.json, to be the previous IR of the next edit.
 
 use prismal_ir::Document;
-use prismal_syntax::{compile, diff, format, markdown_source, reconcile};
+use prismal_syntax::{compile_with, diff, format, markdown_source, reconcile, DirModules};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,7 +24,9 @@ fn main() {
     };
     let text = read(&path);
     let src = if path.ends_with(".md") { markdown_source(&text) } else { text };
-    let mut doc = match compile(&src) {
+    // `use` finds modules beside the file, then the first-party ones (D-099).
+    let dir = std::path::Path::new(&path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let mut doc = match compile_with(&src, &DirModules { roots: vec![dir] }) {
         Ok(c) => c.doc,
         Err(ds) => {
             for d in &ds {

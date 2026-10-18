@@ -15,6 +15,7 @@
 
 pub mod check;
 pub mod data;
+pub mod depth;
 pub mod expect;
 pub mod frame;
 pub mod interact;
@@ -61,8 +62,9 @@ impl Program {
 
     /// [`Program::new`] with working capacities for collections declared without a limit.
     pub fn sized(source: Document, capacities: prismal_ir::elaborate::Capacities) -> Result<Program, Vec<PDiag>> {
-        // Objects and collections become a flat model first (D-055).
-        let doc = prismal_ir::elaborate::document_with(&source, &capacities).map_err(|ds| ds.into_iter().map(|d| PDiag { code: d.code, message: d.message, element: d.element }).collect::<Vec<_>>())?;
+        // Shared definitions are copied into the models that read them (D-099), then objects
+        // and collections become a flat model (D-055).
+        let doc = prismal_ir::elaborate::document_with(&prismal_ir::link::link(source.clone()), &capacities).map_err(|ds| ds.into_iter().map(|d| PDiag { code: d.code, message: d.message, element: d.element }).collect::<Vec<_>>())?;
         // Rates given by solved equations become unknowns (D-092).
         let doc = prismal_ir::elaborate::solved_rates(doc);
         let mut diags = vec![];
@@ -83,6 +85,15 @@ impl Program {
         if diags.is_empty() {
             Ok(prog)
         } else {
+            // A representation repeated per member reports a mistake once, not per member.
+            let mut seen: Vec<PDiag> = vec![];
+            diags.retain(|d| {
+                let again = seen.contains(d);
+                if !again {
+                    seen.push(d.clone());
+                }
+                !again
+            });
             Err(diags)
         }
     }
@@ -168,7 +179,7 @@ pub fn flat(v: &Value) -> Vec<f64> {
         Value::Vec(a) | Value::Point(a) => a.as_slice().to_vec(),
         Value::Tuple(items) => items.iter().flat_map(flat).collect(),
         Value::Case(c) => vec![*c as f64],
-        Value::Func(_) => vec![],
+        Value::Func(_) | Value::Absent(_) => vec![],
         Value::Field(d) => d.to_vec(),
     }
 }

@@ -18,7 +18,7 @@
 
 use std::collections::BTreeMap;
 use crate::present::{Action, Arg, Check, Inverse, Item, LearnerInput, Observation, Operand, Presentation, Prop, Rep, RunCase, Schedule, Source, Subject, Tolerance, ViewKind};
-use crate::{Agg, BinOp, Binding, Builtin, Constraint, Display, Document, Each, Event, Expr, Flow, Guarded, Id, Model, Op, Policy, Role, Target, Trigger, Type, Zeno, ZenoPolicy};
+use crate::{Agg, BinOp, Binding, Builtin, Constraint, Display, Document, Each, Event, Expr, Flow, Guarded, Id, Model, Op, Policy, Role, Stmt, Target, Trigger, Type, Zeno, ZenoPolicy};
 
 /// A problem found while elaborating; `element` is the identity of what was written.
 #[derive(Clone, Debug, PartialEq)]
@@ -305,6 +305,16 @@ impl<'a> Cx<'a> {
                 Some((_, sel)) => Some(sel.clone()),
                 None => self.member(s, e).map(Sel::One),
             },
+            // D-101: a member chosen by a number computed during the run (`bars[j + 1]`).
+            Expr::Item { item, index } if self.constant_index(s, index).is_none() => {
+                let (ms, many) = self.members(s, item)?;
+                if !many {
+                    self.err("MK-E26", format!("`{}` is one object, not a collection", part_name(s.ty, item)));
+                    return None;
+                }
+                let index = self.expr(s, index);
+                Some(Sel::Chosen { members: ms, index, coll: coll_key(&s.path, item) })
+            }
             _ => self.member(s, e).map(Sel::One),
         }
     }
@@ -446,7 +456,10 @@ impl<'a> Cx<'a> {
         match e {
             Expr::Ref { r#ref } => Expr::Ref { r#ref: s.local(r#ref) },
             Expr::Der { der } => Expr::Der { der: s.local(der) },
-            Expr::Fn { r#fn } => Expr::Fn { r#fn: s.local(r#fn) },
+            // A function of the member's type is the member's; a shared one (D-099) is the
+            // model's, as linked.
+            Expr::Fn { r#fn } if s.ty.functions.iter().any(|f| &f.id == r#fn) => Expr::Fn { r#fn: s.local(r#fn) },
+            Expr::Fn { r#fn } => Expr::Fn { r#fn: r#fn.clone() },
             Expr::Payload { payload } => match &s.payload {
                 Some((from, to)) if from == payload => Expr::Payload { payload: to.clone() },
                 _ => Expr::Payload { payload: s.local(payload) },
@@ -487,7 +500,7 @@ impl<'a> Cx<'a> {
                 }
                 Expr::bin(*bin, ia, ic)
             }
-            Expr::Aggregate { aggregate, var, over, body, filter } => self.aggregate(s, *aggregate, var, over, body.as_deref(), filter.as_deref()),
+            Expr::Aggregate { aggregate, var, over, body, filter, by } => self.aggregate(s, *aggregate, var, over, body.as_deref(), filter.as_deref(), by.as_deref()),
             Expr::Neg { neg } => Expr::Neg { neg: b(self, neg) },
             Expr::Not { not } => Expr::Not { not: b(self, not) },
             Expr::Norm { norm } => Expr::Norm { norm: b(self, norm) },
@@ -498,6 +511,8 @@ impl<'a> Cx<'a> {
             Expr::If { r#if, then, r#else } => Expr::If { r#if: b(self, r#if), then: b(self, then), r#else: b(self, r#else) },
             Expr::Tuple { tuple } => Expr::Tuple { tuple: tuple.iter().map(|a| self.expr(s, a)).collect() },
             Expr::Comp { comp, axis } => Expr::Comp { comp: b(self, comp), axis: *axis },
+            // A frame is the model's (D-105): the value read in it is renamed, the frame not.
+            Expr::In { r#in, frame, axis, .. } => Expr::In { r#in: b(self, r#in), frame: frame.clone(), axis: *axis, reads: vec![] },
             Expr::Lambda { lambda } => {
                 let mut l = lambda.clone();
                 l.body = b(self, &lambda.body);
@@ -508,15 +523,16 @@ impl<'a> Cx<'a> {
                 r#match: b(self, r#match),
                 arms: arms.iter().map(|a| crate::Arm { case: a.case.clone(), value: self.expr(s, &a.value) }).collect(),
             },
-            Expr::Extreme { extreme, terms } => Expr::Extreme {
+            Expr::Extreme { extreme, terms, values } => Expr::Extreme {
                 extreme: *extreme,
                 terms: terms.iter().map(|g| Guarded { when: self.expr(s, &g.when), value: self.expr(s, &g.value) }).collect(),
+                values: values.iter().map(|v| self.expr(s, v)).collect(),
             },
             Expr::Num { .. } | Expr::Bool { .. } | Expr::Case { .. } | Expr::Param { .. } | Expr::Builtin { .. } | Expr::Const { .. } | Expr::Origin { .. } => e.clone(),
         }
     }
 
-    fn aggregate(&mut self, s: &Scope<'a>, agg: Agg, var: &str, over: &str, body: Option<&Expr>, filter: Option<&Expr>) -> Expr {
+    fn aggregate(&mut self, s: &Scope<'a>, agg: Agg, var: &str, over: &str, body: Option<&Expr>, filter: Option<&Expr>, by: Option<&Expr>) -> Expr {
         let zero = Expr::Num { num: 0.0, unit: None };
         let Some((members, many)) = self.members(s, over) else { return zero };
         if !many {
@@ -525,6 +541,7 @@ impl<'a> Cx<'a> {
         }
         let mut terms: Vec<Expr> = vec![];
         let mut guarded: Vec<Guarded> = vec![];
+        let mut values: Vec<Expr> = vec![];
         let changing = members.iter().any(|m| m.live.is_some());
         for inst in members {
             let live = inst.live.clone();
@@ -534,6 +551,15 @@ impl<'a> Cx<'a> {
                 continue;
             }
             let written = cond.filter(|c| !matches!(c, Expr::Bool { bool: true }));
+            // D-106: `first` keeps, for each member alive that passes the filter, its key and
+            // its value; the value with the smallest key is the result.
+            if agg == Agg::First {
+                let key = by.map(|k| self.expr(&inner, k)).unwrap_or_else(|| zero.clone());
+                let value = body.map(|e| self.expr(&inner, e)).unwrap_or_else(|| zero.clone());
+                guarded.push(Guarded { when: both(live, written).unwrap_or(Expr::Bool { bool: true }), value: key });
+                values.push(value);
+                continue;
+            }
             // D-057: `min` and `max` over a collection that changes take the members alive.
             if changing && matches!(agg, Agg::Min | Agg::Max) {
                 if written.is_some() {
@@ -555,7 +581,7 @@ impl<'a> Cx<'a> {
                 (Agg::Sum | Agg::Count, Some(c)) => Expr::If { r#if: Box::new(c), then: Box::new(value), r#else: Box::new(zero.clone()) },
                 (Agg::Any, Some(c)) => Expr::bin(BinOp::And, c, value),
                 (Agg::All, Some(c)) => Expr::bin(BinOp::Or, Expr::Not { not: Box::new(c) }, value),
-                (Agg::Min | Agg::Max, Some(_)) => {
+                (Agg::Min | Agg::Max | Agg::First, Some(_)) => {
                     self.err("MK-E26", format!("a filter of `{}` compares members only (`if o != b`)", agg.name()));
                     return zero;
                 }
@@ -577,7 +603,8 @@ impl<'a> Cx<'a> {
             Agg::Sum | Agg::Count => fold(terms, &|a, b| Expr::bin(BinOp::Add, a, b)).unwrap_or(zero),
             Agg::Any => fold(terms, &|a, b| Expr::bin(BinOp::Or, a, b)).unwrap_or(Expr::Bool { bool: false }),
             Agg::All => fold(terms, &|a, b| Expr::bin(BinOp::And, a, b)).unwrap_or(Expr::Bool { bool: true }),
-            Agg::Min | Agg::Max if changing => Expr::Extreme { extreme: if agg == Agg::Min { crate::Func::Min } else { crate::Func::Max }, terms: guarded },
+            Agg::First => Expr::Extreme { extreme: crate::Func::Min, terms: guarded, values },
+            Agg::Min | Agg::Max if changing => Expr::Extreme { extreme: if agg == Agg::Min { crate::Func::Min } else { crate::Func::Max }, terms: guarded, values: vec![] },
             Agg::Min | Agg::Max => {
                 let func = if agg == Agg::Min { crate::Func::Min } else { crate::Func::Max };
                 match fold(terms, &|a, b| Expr::Call { call: func, args: vec![a, b] }) {
@@ -616,6 +643,7 @@ impl<'a> Cx<'a> {
         let chosen = match m {
             Expr::End { .. } | Expr::Other { .. } => true,
             Expr::Var { var } => matches!(s.vars.iter().rev().find(|(v, _)| v == var), Some((_, Sel::Chosen { .. }))),
+            Expr::Item { index, .. } => self.constant_index(s, index).is_none(),
             _ => false,
         };
         if !chosen {
@@ -630,7 +658,19 @@ impl<'a> Cx<'a> {
             self.err("MK-E26", format!("an object `{}` has no binding `{}`", members[0].ty.name, t.binding.rsplit('.').next().unwrap_or(&t.binding)));
             return Some(vec![]);
         }
-        Some(members.iter().map(|m| (Expr::bin(BinOp::Eq, index.clone(), num(m.pos as f64)), Target { binding: flat(&t.binding, &m.path), component: t.component, member: None })).collect())
+        // The first member's condition picks among all members, so that a number outside the
+        // collection fails as a read of it does (D-101), not silently writing nothing.
+        let n = members.len();
+        Some(
+            members
+                .iter()
+                .enumerate()
+                .map(|(k, m)| {
+                    let cond = if k == 0 { Expr::Pick { pick: Box::new(index.clone()), from: (0..n).map(|j| Expr::Bool { bool: members[j].pos == m.pos }).collect() } } else { Expr::bin(BinOp::Eq, index.clone(), num(m.pos as f64)) };
+                    (cond, Target { binding: flat(&t.binding, &m.path), component: t.component, member: None })
+                })
+                .collect(),
+        )
     }
 
     /// The payload `e` supplied to an event that declares `declared`, in scope `s`: a member
@@ -688,6 +728,7 @@ impl<'a> Cx<'a> {
                 }
                 Op::If { r#if, then } => out.push(Op::If { r#if: self.expr(s, r#if), then: self.ops(s, then) }),
                 Op::Destroy { member: Expr::Ref { .. } } | Op::Make { .. } => out.push(o.clone()),
+                Op::Rebound { constraint } => out.push(Op::Rebound { constraint: s.local(constraint) }),
                 Op::Destroy { member } | Op::Disconnect { relation: member } => {
                     let what = if matches!(o, Op::Destroy { .. }) { "destroyed" } else { "disconnected" };
                     let Some(sel) = self.select(s, member) else { continue };
@@ -910,8 +951,24 @@ impl<'a> Cx<'a> {
             process: e.process.as_ref().map(|p| s.local(p)),
             payload,
             each: None,
+            algorithm: e.algorithm.as_ref().map(|a| self.stmts(s, a)),
             notes: e.notes.clone(),
         }
+    }
+
+    /// The statements of an algorithm (D-101): their operations and expressions elaborated
+    /// as a handler's, a loop's binding named in the scope of the model.
+    fn stmts(&mut self, s: &Scope<'a>, stmts: &[Stmt]) -> Vec<Stmt> {
+        stmts
+            .iter()
+            .map(|st| match st {
+                Stmt::Do { ops } => Stmt::Do { ops: self.ops(s, ops) },
+                Stmt::If { r#if, then, r#else } => Stmt::If { r#if: self.expr(s, r#if), then: self.stmts(s, then), r#else: self.stmts(s, r#else) },
+                Stmt::While { r#while, body } => Stmt::While { r#while: self.expr(s, r#while), body: self.stmts(s, body) },
+                Stmt::For { var, from, to, body } => Stmt::For { var: s.local(var), from: self.expr(s, from), to: self.expr(s, to), body: self.stmts(s, body) },
+                Stmt::Step => Stmt::Step,
+            })
+            .collect()
     }
 
     fn guarded(live: &Expr, g: Expr) -> Expr {
@@ -1070,7 +1127,13 @@ impl<'a> Cx<'a> {
                 nc.cond = Expr::bin(BinOp::Or, Expr::Not { not: Box::new(l.clone()) }, nc.cond);
             }
             nc.tol = c.tol.as_ref().map(|t| self.expr(s, t));
+            nc.bound = c.bound.as_ref().map(|t| self.expr(s, t));
+            nc.restitution = c.restitution.as_ref().map(|t| self.expr(s, t));
             nc.attached_to = c.attached_to.as_ref().map(|a| s.local(a));
+            nc.force = c.force.as_ref().and_then(|f| match self.expr(s, &Expr::Ref { r#ref: f.clone() }) {
+                Expr::Ref { r#ref } => Some(r#ref),
+                _ => None,
+            });
             out.constraints.push(nc);
         }
         for p in &ty.parts {
@@ -1153,6 +1216,9 @@ impl<'a> Cx<'a> {
             tol: None,
             policy: Policy::Stop,
             attached_to: None,
+            force: None,
+            bound: None,
+            restitution: None,
         });
     }
 }
@@ -1257,6 +1323,7 @@ impl<'a> PCx<'a, '_> {
                 gesture: inv.gesture.clone(),
                 part: inv.part.clone(),
                 live: inv.live,
+                across: inv.across.as_ref().map(|n| self.e(s, n)),
                 proposals: inv.proposals.iter().map(|p| crate::present::Proposal { target: self.proposed(s, p), value: self.e(s, &p.value), member: None }).collect(),
             }),
             members: self.reps(s, &r.members),
@@ -1297,7 +1364,15 @@ impl<'a> PCx<'a, '_> {
             let na = match a {
                 Action::Show { view, reps } => Action::Show { view: view.clone(), reps: self.reps(&s, reps) },
                 Action::Reveal { view, style, duration, ease, reps } => Action::Reveal { view: view.clone(), style: *style, duration: ex(self, duration), ease: *ease, reps: self.reps(&s, reps) },
-                Action::Camera { view, center, zoom, duration, ease } => Action::Camera { view: view.clone(), center: ex(self, center), zoom: ex(self, zoom), duration: ex(self, duration), ease: *ease },
+                Action::Camera { view, center, zoom, azimuth, elevation, duration, ease } => Action::Camera {
+                    view: view.clone(),
+                    center: ex(self, center),
+                    zoom: ex(self, zoom),
+                    azimuth: ex(self, azimuth),
+                    elevation: ex(self, elevation),
+                    duration: ex(self, duration),
+                    ease: *ease,
+                },
                 Action::Narrate { text, duration } => Action::Narrate { text: text.clone(), duration: ex(self, duration) },
                 Action::Run { rate } => Action::Run { rate: self.e(&s, rate) },
                 Action::Seek { time } => Action::Seek { time: self.e(&s, time) },
@@ -1379,7 +1454,14 @@ fn presentation<'a>(cx: &mut Cx<'a>, root: &'a Model, p: &Presentation) -> Prese
     for v in &mut out.views {
         pc.cx.element = v.id.clone();
         v.kind = match &v.kind {
-            ViewKind::Spatial { space, scale, y_up } => ViewKind::Spatial { space: space.clone(), scale: crate::present::Scale { quantity: pc.e(&s, &scale.quantity), px: scale.px }, y_up: *y_up },
+            ViewKind::Spatial { space, scale, y_up, look, distance, frame } => ViewKind::Spatial {
+                frame: frame.clone(),
+                space: space.clone(),
+                scale: crate::present::Scale { quantity: pc.e(&s, &scale.quantity), px: scale.px },
+                y_up: *y_up,
+                look: look.as_ref().map(|[a, b]| [pc.e(&s, a), pc.e(&s, b)]),
+                distance: distance.as_ref().map(|d| pc.e(&s, d)),
+            },
             ViewKind::Plot { x, y, follow, units, window } => ViewKind::Plot { x: [pc.e(&s, &x[0]), pc.e(&s, &x[1])], y: [pc.e(&s, &y[0]), pc.e(&s, &y[1])], follow: *follow, units: units.clone(), window: window.as_ref().map(|w| pc.e(&s, w)) },
             ViewKind::Panel => ViewKind::Panel,
         };
@@ -1606,9 +1688,9 @@ fn rates(m: &mut Model) {
         for side in [&q.lhs, &q.rhs] {
             side.walk(&mut |x| {
                 if let Expr::Der { der } = x {
-                    // Unknowns are numbers or quantities: rates of vectors and points are
-                    // left to the check (MK-E35).
-                    let stateful = m.binding(der).is_some_and(|b| b.role == Role::Continuous && matches!(b.ty, Type::Quantity { .. }));
+                    // The rate of a number, quantity, vector or point (D-097); rates of
+                    // fields are left to the check (MK-E35).
+                    let stateful = m.binding(der).is_some_and(|b| b.role == Role::Continuous && matches!(b.ty, Type::Quantity { .. } | Type::Vector { .. } | Type::Point { .. }));
                     if stateful && !flowing.contains(der) && !found.contains(der) {
                         found.push(der.clone());
                     }
@@ -1618,9 +1700,7 @@ fn rates(m: &mut Model) {
     }
     for x in found {
         let b = m.binding(&x).expect("found").clone();
-        let per_t = crate::Dim::time().inv();
-        let Type::Quantity { dim } = &b.ty else { continue };
-        let ty = Type::Quantity { dim: dim.mul(&per_t) };
+        let Some(ty) = crate::enforce::rate_type(&b.ty) else { continue };
         let rate = format!("{x}@rate");
         m.bindings.push(Binding {
             id: rate.clone(),

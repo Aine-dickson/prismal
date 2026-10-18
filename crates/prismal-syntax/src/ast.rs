@@ -20,6 +20,19 @@ pub enum Item {
     Model(ModelDecl),
     Presentation(PresentationDecl),
     Run(RunDecl),
+    /// `use name` or `use name.{A, B}` (D-099).
+    Use(UseDecl),
+    /// An object type, enumeration or function written outside models (D-099).
+    Shared(Member),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UseDecl {
+    /// The module's name, its parts as written: `physics.mechanics`.
+    pub path: Vec<Name>,
+    /// The names imported, or every shared definition of the module.
+    pub names: Option<Vec<Name>>,
+    pub span: Span,
 }
 
 // ---------------------------------------------------------------- models
@@ -58,6 +71,8 @@ pub enum Member {
     Parts(Vec<PartDecl>),
     /// `grid rod(x: [0 m, 1 m], cells: 100)` (MK-9.5, D-091).
     Grid { name: Name, args: Vec<Arg>, span: Span },
+    /// `frame turning(at: P, x: u)`, `frame cabin(at: P, x: u, y: v)` (MK-4.2, D-105).
+    Frame { name: Name, args: Vec<Arg>, span: Span },
     /// `boundary T { left = e; right = e }` or `boundary T periodic` (MK-9.6, D-091).
     Boundary { field: Name, periodic: bool, fixed: Vec<(Name, Expr)>, span: Span },
 }
@@ -189,8 +204,21 @@ pub struct EventDecl {
     pub enable: Option<Expr>,
     pub handler: Vec<OpStmt>,
     pub zeno: Option<ZenoClause>,
+    /// `algorithm name on trigger { statements }` (D-101): the event runs these in order.
+    pub algorithm: Option<Vec<AlgoStmt>>,
     pub notes: Vec<String>,
     pub span: Span,
+}
+
+/// A statement of an algorithm (D-101).
+#[derive(Clone, Debug, PartialEq)]
+pub enum AlgoStmt {
+    Op(OpStmt),
+    If { cond: Expr, then: Vec<AlgoStmt>, otherwise: Vec<AlgoStmt>, span: Span },
+    While { cond: Expr, body: Vec<AlgoStmt>, span: Span },
+    /// `for i in [a, b] { ... }`, `i` a discrete binding of the model.
+    For { var: Name, from: Expr, to: Expr, body: Vec<AlgoStmt>, span: Span },
+    Step(Span),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -269,6 +297,12 @@ pub struct ConstraintDecl {
     pub cond: Expr,
     pub within: Option<Expr>,
     pub policy: Option<Name>,
+    /// `with N`: the unknown that holds an enforced inequality (D-098).
+    pub force: Option<Name>,
+    /// `where |F| <= B`: the bound of the holding force (D-102).
+    pub bound: Option<Expr>,
+    /// `restitution e` (D-102).
+    pub restitution: Option<Expr>,
     pub span: Span,
 }
 
@@ -382,7 +416,9 @@ pub enum ExprKind {
     /// `(pos on landed)` and `(vel on landed microstep 0)` (expectations, PK-3.4).
     On(Box<Expr>, Name, Option<u32>),
     /// `sum(b.m for b in row if b.on)`: an aggregate over a collection (D-055).
-    Aggregate { agg: Name, body: Box<Expr>, var: Name, over: Name, filter: Option<Box<Expr>> },
+    /// `first(e for b in row if c by k)`: the value at the member with the smallest key
+    /// (D-106).
+    Aggregate { agg: Name, body: Box<Expr>, var: Name, over: Name, filter: Option<Box<Expr>>, by: Option<Box<Expr>> },
     /// `start of b3`, `end of b8` (timeline expectations).
     BeatTime { start: bool, beat: Name },
     /// `match e { case => value, ... }` (MK-10.2, D-049).
@@ -477,6 +513,8 @@ pub struct Interaction {
     pub part: Option<Name>,
     /// `on drag live as p`: drag mode `live` (PK-10.9, D-071).
     pub live: bool,
+    /// `on drag across n as p`: the normal of the plane a drag moves in (D-104).
+    pub across: Option<Expr>,
     pub bind: Name,
     /// `propose x = e`, or a member's binding `propose b.pos = e` (D-059).
     pub proposals: Vec<(Path, Expr)>,
@@ -512,7 +550,8 @@ pub enum Action {
     /// `reveal fade|draw [for d] [in view] { reps }`
     Reveal { style: Name, duration: Option<Expr>, view: Option<Name>, ease: Option<Name>, reps: Vec<Rep> },
     /// `camera view [to P] [zoom z] [for d]`
-    Camera { view: Name, center: Option<Expr>, zoom: Option<Expr>, duration: Option<Expr>, ease: Option<Name> },
+    /// `camera v [to P] [zoom z] [azimuth a] [elevation e] [for d] [ease w]` (D-042, D-104).
+    Camera { view: Name, center: Option<Expr>, zoom: Option<Expr>, azimuth: Option<Expr>, elevation: Option<Expr>, duration: Option<Expr>, ease: Option<Name> },
     Seek(Expr),
     Show(Rep),
     Explore { limit: Option<Expr>, keep: Vec<Name>, reps: Vec<Rep>, fallback: Vec<Action> },

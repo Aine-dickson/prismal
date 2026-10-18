@@ -53,7 +53,12 @@ pub fn named_dim(name: &str) -> Option<Dim> {
     })
 }
 
-const FUNCS: [(&str, Func, usize); 15] = [
+const FUNCS: [(&str, Func, usize); 20] = [
+    // Whole numbers (D-101).
+    ("floor", Func::Floor, 1),
+    ("ceil", Func::Ceil, 1),
+    ("round", Func::Round, 1),
+    ("mod", Func::Mod, 2),
     ("sin", Func::Sin, 1),
     ("cos", Func::Cos, 1),
     ("tan", Func::Tan, 1),
@@ -65,6 +70,7 @@ const FUNCS: [(&str, Func, usize); 15] = [
     ("max", Func::Max, 2),
     ("atan2", Func::Atan2, 2),
     ("dot", Func::Dot, 2),
+    ("cross", Func::Cross, 2),
     // Of fields (D-091); `min` and `max` of one field are its smallest and largest value.
     ("laplacian", Func::Laplacian, 1),
     ("gradient", Func::Gradient, 1),
@@ -73,8 +79,34 @@ const FUNCS: [(&str, Func, usize); 15] = [
 ];
 
 pub fn lower(file: &ast::File) -> (Document, SourceMap, Vec<Diag>) {
+    lower_with(file, &crate::modules::NoModules)
+}
+
+/// Lowers a file whose `use` lines find their modules in `modules` (D-099).
+pub fn lower_with(file: &ast::File, modules: &dyn crate::modules::Modules) -> (Document, SourceMap, Vec<Diag>) {
     let mut diags = vec![];
     let mut map = SourceMap::new();
+    // Modules first, then the file's own shared definitions: models read both by name.
+    let mut libraries: Vec<Library> = vec![];
+    let (uses, visible) = uses_of(file, modules, &mut vec![], &mut libraries, &mut diags);
+    let mut visible = visible;
+    let shared: Vec<Member> = file.items.iter().filter_map(|it| if let ast::Item::Shared(m) = it { Some(m.clone()) } else { None }).collect();
+    if !shared.is_empty() {
+        let own = lower_library(SHARED, &shared, &visible, &mut diags, &mut map);
+        let mut origins: crate::modules::Origins = HashMap::new();
+        let mut before = crate::modules::Visible::default();
+        for u in &uses {
+            if let Some(l) = libraries.iter().find(|l| l.name == u.module) {
+                before.add(l, u.names.as_deref(), &mut origins);
+            }
+        }
+        let (clashes, _) = visible.add(&own, None, &mut origins);
+        for (n, other) in clashes {
+            let span = shared.iter().find_map(|m| shared_name(m).filter(|x| x.text == n).map(|x| x.span)).unwrap_or_default();
+            diags.push(Diag::new("SX-E09", format!("`{n}` is also defined by the module `{other}`: a name means one thing; rename one, or import the module's other names only, `use {other}.{{...}}`"), span));
+        }
+        libraries.insert(0, own);
+    }
     let mut spaces: Vec<Space> = vec![];
     for it in &file.items {
         if let ast::Item::Space(s) = it {
@@ -96,6 +128,7 @@ pub fn lower(file: &ast::File) -> (Document, SourceMap, Vec<Diag>) {
                 continue;
             }
             let mut cx = ModelCx::new(m, &spaces, &mut diags, &mut map);
+            cx.import(&visible);
             let model = cx.lower(m);
             models.push(model);
         }
@@ -107,7 +140,7 @@ pub fn lower(file: &ast::File) -> (Document, SourceMap, Vec<Diag>) {
                 diags.push(Diag::new("SX-E09", format!("presentation `{}` declared twice", p.name.text), p.name.span));
                 continue;
             }
-            if let Some(pr) = crate::lower_present::presentation(p, &models, &spaces, &mut diags, &mut map) {
+            if let Some(pr) = crate::lower_present::presentation(p, &models, &spaces, &visible, &mut diags, &mut map) {
                 presentations.push(pr);
             }
         }
@@ -119,7 +152,7 @@ pub fn lower(file: &ast::File) -> (Document, SourceMap, Vec<Diag>) {
                 diags.push(Diag::new("SX-E09", format!("run `{}` declared twice", r.name.text), r.name.span));
                 continue;
             }
-            if let Some(rc) = crate::lower_present::run(r, &models, &spaces, &presentations, &mut diags, &mut map) {
+            if let Some(rc) = crate::lower_present::run(r, &models, &spaces, &visible, &presentations, &mut diags, &mut map) {
                 runs.push(rc);
             }
         }
@@ -127,7 +160,104 @@ pub fn lower(file: &ast::File) -> (Document, SourceMap, Vec<Diag>) {
     let mut doc = Document::new(spaces, models);
     doc.presentations = presentations;
     doc.runs = runs;
+    doc.uses = uses;
+    doc.libraries = libraries;
     (doc, map, diags)
+}
+
+/// The name an object type, enumeration or function declares.
+fn shared_name(m: &Member) -> Option<&ast::Name> {
+    match m {
+        Member::Object(o) => Some(&o.name),
+        Member::Enum(e) => Some(&e.name),
+        Member::Fn(f) => Some(&f.name),
+        _ => None,
+    }
+}
+
+/// The `use` lines of a file: each module loaded into `libraries` (with the modules it uses),
+/// and the names they make visible. Two modules that give one name are reported at the second
+/// `use`; so is a name asked for that the module does not define.
+fn uses_of(file: &ast::File, modules: &dyn crate::modules::Modules, stack: &mut Vec<String>, libraries: &mut Vec<Library>, diags: &mut Vec<Diag>) -> (Vec<Use>, crate::modules::Visible) {
+    let mut uses = vec![];
+    let mut visible = crate::modules::Visible::default();
+    let mut origins: crate::modules::Origins = HashMap::new();
+    for it in &file.items {
+        let ast::Item::Use(u) = it else { continue };
+        let name = u.path.iter().map(|n| n.text.as_str()).collect::<Vec<_>>().join(".");
+        if name == SHARED {
+            diags.push(Diag::new("SX-E08", format!("`{SHARED}` names the definitions of the file itself; a module has another name"), u.span));
+            continue;
+        }
+        if uses.iter().any(|x: &Use| x.module == name) {
+            diags.push(Diag::new("SX-E09", format!("module `{name}` is used twice: list every name in one `use`"), u.span));
+            continue;
+        }
+        if !load_module(&name, u.span, modules, stack, libraries, diags) {
+            continue;
+        }
+        let names: Option<Vec<String>> = u.names.as_ref().map(|ns| ns.iter().map(|n| n.text.clone()).collect());
+        let lib = libraries.iter().find(|l| l.name == name).expect("loaded");
+        let (clashes, missing) = visible.add(lib, names.as_deref(), &mut origins);
+        for (n, other) in clashes {
+            diags.push(Diag::new("SX-E09", format!("`{n}` is defined by both `{other}` and `{name}`: a name means one thing; import it from one, `use {other}.{{{n}}}`"), u.span));
+        }
+        for n in missing {
+            diags.push(Diag::new("SX-E03", format!("module `{name}` defines no `{n}`"), u.span));
+        }
+        uses.push(Use { module: name, names });
+    }
+    (uses, visible)
+}
+
+/// Loads module `name` and the modules it uses into `libraries`, once each. Its diagnostics
+/// are reported at the `use` that names it. Returns whether it is loaded.
+fn load_module(name: &str, span: Span, modules: &dyn crate::modules::Modules, stack: &mut Vec<String>, libraries: &mut Vec<Library>, diags: &mut Vec<Diag>) -> bool {
+    if libraries.iter().any(|l| l.name == name) {
+        return true;
+    }
+    if stack.iter().any(|s| s == name) {
+        let cycle = stack.iter().skip_while(|s| *s != name).cloned().chain(std::iter::once(name.to_string())).collect::<Vec<_>>().join(" -> ");
+        diags.push(Diag::new("SX-E08", format!("modules use each other: {cycle}; a module's definitions cannot depend on themselves"), span));
+        return false;
+    }
+    let Some(src) = modules.source(name) else {
+        diags.push(Diag::new("SX-E03", format!("no module `{name}`"), span));
+        return false;
+    };
+    let (file, mut inner) = crate::parse(&src);
+    let mut lib = None;
+    if inner.is_empty() {
+        stack.push(name.to_string());
+        let (_, visible) = uses_of(&file, modules, stack, libraries, &mut inner);
+        stack.pop();
+        let shared: Vec<Member> = file.items.iter().filter_map(|it| if let ast::Item::Shared(m) = it { Some(m.clone()) } else { None }).collect();
+        let mut map = SourceMap::new();
+        lib = Some(lower_library(name, &shared, &visible, &mut inner, &mut map));
+    }
+    let ok = inner.is_empty();
+    for d in inner {
+        diags.push(Diag::new(d.code, format!("in module `{name}`, line {}: {}", d.span.line, d.message), span));
+    }
+    if ok {
+        libraries.push(lib.expect("lowered"));
+    }
+    ok
+}
+
+/// Lowers shared definitions (D-099) as the body of a model named after the library, in the
+/// space `ANY_SPACE` that linking replaces with each model's.
+fn lower_library(name: &str, members: &[Member], visible: &crate::modules::Visible, diags: &mut Vec<Diag>, map: &mut SourceMap) -> Library {
+    let mut any = build::space("", 3);
+    any.id = ANY_SPACE.into();
+    let decl = ast::ModelDecl { name: ast::Name { text: name.to_string(), span: Span::default() }, space: None, members: members.to_vec(), notes: vec![], span: Span::default() };
+    let spaces: [Space; 0] = [];
+    let mut cx = ModelCx::new(&decl, &spaces, diags, map);
+    cx.space = Some(&any);
+    cx.library = true;
+    cx.import(visible);
+    let m = cx.lower(&decl);
+    Library { name: name.to_string(), enums: m.enums, functions: m.functions, objects: m.objects }
 }
 
 /// Lowers an expression in the scope of a model already in `doc`: names resolve to its
@@ -137,7 +267,9 @@ pub fn lower_expr(doc: &Document, model: &str, e: &ast::Expr) -> Result<Expr, Ve
     let m = doc.models.iter().find(|m| m.name == model).ok_or_else(|| vec![Diag::new("SX-E03", format!("unknown model `{model}`"), e.span)])?;
     let mut diags = vec![];
     let mut map = SourceMap::new();
+    let visible = crate::modules::Visible::of(&doc.uses, &doc.libraries);
     let mut cx = ModelCx::scope(m, &doc.spaces, &mut diags, &mut map);
+    cx.import(&visible);
     let out = cx.expr(e, &[]);
     if diags.is_empty() {
         Ok(out)
@@ -204,6 +336,8 @@ pub(crate) struct ModelCx<'a> {
     pub(crate) functions: HashMap<String, Id>,
     /// Grids by name (D-091).
     pub(crate) grids: HashMap<String, Id>,
+    /// Declared frames, by name (D-105).
+    pub(crate) frames: HashMap<String, Id>,
     /// While lowering an event with payloads: each value payload's name, the event, and its
     /// component when the event carries several (D-050, D-059). Member payloads are in `vars`.
     payload: Vec<(String, Id, Option<usize>)>,
@@ -211,9 +345,43 @@ pub(crate) struct ModelCx<'a> {
     pub(crate) map: &'a mut SourceMap,
     flows: usize,
     model: Model,
+    /// Names of shared definitions made visible by `import` (D-099): a declaration of the
+    /// model with one of these names is its own, not a second declaration.
+    imported: std::collections::HashSet<String>,
+    /// The shared definitions imported, passed on to object types' bodies (D-099).
+    shared: crate::modules::Visible,
+    /// Lowering a library's shared definitions: its object types also read its functions and
+    /// enumerations (D-099).
+    library: bool,
 }
 
 impl<'a> ModelCx<'a> {
+    /// Makes shared definitions visible by name (D-099); the model's own definitions of the
+    /// same names win.
+    pub(crate) fn import(&mut self, v: &crate::modules::Visible) {
+        self.shared.objects.extend(v.objects.iter().map(|(k, x)| (k.clone(), x.clone())));
+        self.shared.enums.extend(v.enums.iter().map(|(k, x)| (k.clone(), x.clone())));
+        self.shared.functions.extend(v.functions.iter().map(|(k, x)| (k.clone(), x.clone())));
+        for (n, o) in &v.objects {
+            if !self.objects.contains_key(n) {
+                self.objects.insert(n.clone(), o.clone());
+                self.imported.insert(n.clone());
+            }
+        }
+        for (n, e) in &v.enums {
+            if !self.enums.contains_key(n) {
+                self.enums.insert(n.clone(), e.clone());
+                self.imported.insert(n.clone());
+            }
+        }
+        for (n, f) in &v.functions {
+            if !self.functions.contains_key(n) {
+                self.functions.insert(n.clone(), f.clone());
+                self.imported.insert(n.clone());
+            }
+        }
+    }
+
     /// The scope of a lowered model, for expressions written outside it (presentations, runs).
     pub(crate) fn scope(m: &Model, spaces: &'a [Space], diags: &'a mut Vec<Diag>, map: &'a mut SourceMap) -> ModelCx<'a> {
         let mut objects: HashMap<String, ObjInfo> = m.objects.iter().map(|o| (o.name.clone(), obj_info(o))).collect();
@@ -242,12 +410,21 @@ impl<'a> ModelCx<'a> {
             enums: m.enums.iter().map(|e| (e.name.clone(), (e.id.clone(), e.cases.clone()))).collect(),
             functions: m.functions.iter().map(|f| (f.name.clone(), f.id.clone())).collect(),
             grids: m.grids.iter().map(|g| (g.name.clone(), g.id.clone())).collect(),
+            frames: m.frames.iter().map(|f| (f.name.clone(), f.id.clone())).collect(),
             payload: vec![],
             diags,
             map,
             flows: 0,
             model: build::ModelBuilder::new(&m.name).finish(),
+            imported: Default::default(),
+            shared: Default::default(),
+            library: false,
         }
+    }
+
+    /// The dimension of a space of the document (D-100).
+    pub(crate) fn space_dimension(&self, id: &str) -> Option<u32> {
+        self.spaces.iter().find(|s| s.id == id).map(|s| s.dimension)
     }
 
     pub(crate) fn space_by_name(&self, name: &str) -> Option<Id> {
@@ -282,11 +459,15 @@ impl<'a> ModelCx<'a> {
             enums: HashMap::new(),
             functions: HashMap::new(),
             grids: HashMap::new(),
+            frames: HashMap::new(),
             payload: vec![],
             diags,
             map,
             flows: 0,
             model,
+            imported: Default::default(),
+            shared: Default::default(),
+            library: false,
         }
     }
 
@@ -324,8 +505,16 @@ impl<'a> ModelCx<'a> {
         let info = self.objects[&o.name.text].clone();
         let decl = ast::ModelDecl { name: ast::Name { text: info.id.clone(), span: o.name.span }, space: None, members: o.members.clone(), notes: o.notes.clone(), span: o.span };
         let objects = self.objects.clone();
+        let shared = self.shared.clone();
+        let own = self.library.then(|| (self.functions.clone(), self.enums.clone()));
         let mut sub = ModelCx::new(&decl, self.spaces, &mut *self.diags, &mut *self.map);
         sub.space = self.space;
+        // Shared definitions are visible in object types too (D-099); in a library, so are
+        // the library's own functions and enumerations.
+        sub.import(&shared);
+        if let Some((functions, enums)) = own {
+            sub.import(&crate::modules::Visible { objects: HashMap::new(), enums, functions });
+        }
         sub.objects = objects;
         sub.parts = info.parts.clone();
         sub.in_object = true;
@@ -543,11 +732,12 @@ impl<'a> ModelCx<'a> {
             "any" => Agg::Any,
             "all" => Agg::All,
             "count" => Agg::Count,
+            "first" => Agg::First,
             _ => return None,
         };
         let [arg] = args else { return None };
         match &arg.value.kind {
-            ExprKind::Aggregate { body, var, over, filter, .. } => {
+            ExprKind::Aggregate { body, var, over, filter, by, .. } => {
                 let Some(p) = self.part_ref(&over.text).ok() else {
                     self.err("SX-E03", format!("unknown collection `{}`", over.text), over.span);
                     return Some(Self::placeholder());
@@ -558,13 +748,26 @@ impl<'a> ModelCx<'a> {
                 self.vars.push((var.text.clone(), p.object.clone()));
                 let body = if agg == Agg::Count { None } else { Some(Box::new(self.expr(body, locals))) };
                 let filter = filter.as_ref().map(|f| Box::new(self.expr(f, locals)));
+                // D-106: `first` orders the members by a key; the others take none.
+                let by = match (by, agg) {
+                    (Some(k), Agg::First) => Some(Box::new(self.expr(k, locals))),
+                    (None, Agg::First) => {
+                        self.err("SX-E02", "`first` takes the members in order of a key: `first(b.n for b in walls if c by d(b))`", span);
+                        None
+                    }
+                    (Some(k), _) => {
+                        self.err("SX-E02", format!("`by` orders the members for `first`; `{name}` takes them all"), k.span);
+                        None
+                    }
+                    (None, _) => None,
+                };
                 self.vars.pop();
-                Some(Expr::Aggregate { aggregate: agg, var: var.text.clone(), over: p.id, body, filter })
+                Some(Expr::Aggregate { aggregate: agg, var: var.text.clone(), over: p.id, body, filter, by })
             }
             // `count(drops)`, `count(left.atoms)` (D-065).
             _ if agg == Agg::Count && Self::dotted(&args[0].value).is_some_and(|n| self.part_ref(&n).is_ok_and(|p| p.many)) => {
                 let p = self.part_ref(&Self::dotted(&args[0].value).unwrap()).ok()?;
-                Some(Expr::Aggregate { aggregate: agg, var: "_".into(), over: p.id, body: None, filter: None })
+                Some(Expr::Aggregate { aggregate: agg, var: "_".into(), over: p.id, body: None, filter: None, by: None })
             }
             _ if agg == Agg::Count => {
                 self.err("SX-E08", "`count` takes a collection: `count(row)`, or `count(b for b in row if c)`", span);
@@ -589,7 +792,7 @@ impl<'a> ModelCx<'a> {
             if let Member::Object(o) = mem {
                 let id = format!("{}.{}", self.name, o.name.text);
                 let info = self.declare_names(&id, &o.members);
-                if self.objects.insert(o.name.text.clone(), info).is_some() {
+                if self.objects.insert(o.name.text.clone(), info).is_some() && !self.imported.remove(&o.name.text) {
                     self.err("SX-E09", format!("object type `{}` declared twice", o.name.text), o.name.span);
                 }
             }
@@ -625,19 +828,24 @@ impl<'a> ModelCx<'a> {
                 Member::Enum(e) => {
                     let id = format!("{}.enum.{}", self.name, e.name.text);
                     let cases = e.cases.iter().map(|c| c.text.clone()).collect();
-                    if self.enums.insert(e.name.text.clone(), (id, cases)).is_some() {
+                    if self.enums.insert(e.name.text.clone(), (id, cases)).is_some() && !self.imported.remove(&e.name.text) {
                         self.err("SX-E09", format!("enumeration `{}` declared twice", e.name.text), e.name.span);
                     }
                 }
                 Member::Fn(f) => {
                     let id = format!("{}.fn.{}", self.name, f.name.text);
-                    if self.functions.insert(f.name.text.clone(), id).is_some() {
+                    if self.functions.insert(f.name.text.clone(), id).is_some() && !self.imported.remove(&f.name.text) {
                         self.err("SX-E09", format!("function `{}` declared twice", f.name.text), f.name.span);
                     }
                 }
                 Member::Grid { name, .. } => {
                     if self.grids.insert(name.text.clone(), format!("{}.grid.{}", self.name, name.text)).is_some() {
                         self.err("SX-E09", format!("grid `{}` declared twice", name.text), name.span);
+                    }
+                }
+                Member::Frame { name, .. } => {
+                    if self.frames.insert(name.text.clone(), format!("{}.frame.{}", self.name, name.text)).is_some() {
+                        self.err("SX-E09", format!("frame `{}` declared twice", name.text), name.span);
                     }
                 }
                 _ => {}
@@ -674,6 +882,7 @@ impl<'a> ModelCx<'a> {
                 }
                 Member::Flow(f) => self.flow(f, None),
                 Member::Grid { name, args, span } => self.grid(name, args, *span),
+                Member::Frame { name, args, span } => self.frame(name, args, *span),
                 // After the declarations: below.
                 Member::Boundary { .. } => {}
                 Member::Process(p) => {
@@ -726,6 +935,34 @@ impl<'a> ModelCx<'a> {
                         }
                     };
                     self.push_constraint(&name, cond, tol, policy, None, c.span);
+                    if let Some(f) = &c.force {
+                        let force = match self.expr(&ast::Expr { kind: ast::ExprKind::Name(f.text.clone()), span: f.span }, &[]) {
+                            Expr::Ref { r#ref } => Some(r#ref),
+                            _ => {
+                                self.err("SX-E03", format!("`{}` is not a binding of the model: `with` names the unknown that holds the constraint", f.text), f.span);
+                                None
+                            }
+                        };
+                        self.model.constraints.last_mut().expect("pushed").force = force;
+                    }
+                    // D-102: `where |F| <= B` bounds the force named by `with`.
+                    if let Some(b) = &c.bound {
+                        let is_force = |l: &ast::Expr| matches!(&l.kind, ast::ExprKind::Norm(x) if matches!(&x.kind, ast::ExprKind::Name(n) if c.force.as_ref().is_some_and(|f| &f.text == n)));
+                        match &b.kind {
+                            ast::ExprKind::Compare(l, rest) if rest.len() == 1 && rest[0].0 == ast::CmpOp::Le && is_force(l) => {
+                                let r = self.expr(&rest[0].1, &[]);
+                                self.model.constraints.last_mut().expect("pushed").bound = Some(r);
+                            }
+                            _ => {
+                                let f = c.force.as_ref().map(|f| f.text.clone()).unwrap_or_else(|| "F".into());
+                                self.err("SX-E08", format!("`where` bounds the force that holds the constraint: `with {f} where |{f}| <= B`"), b.span);
+                            }
+                        }
+                    }
+                    if let Some(e) = &c.restitution {
+                        let e = self.expr(e, &[]);
+                        self.model.constraints.last_mut().expect("pushed").restitution = Some(e);
+                    }
                 }
                 Member::Object(o) => self.object(o),
                 Member::Parts(ps) => self.parts_decl(ps),
@@ -766,7 +1003,7 @@ impl<'a> ModelCx<'a> {
             self.err("SX-E09", format!("constraint `{name}` declared twice"), span);
         }
         self.map.insert(id.clone(), span);
-        self.model.constraints.push(Constraint { id, name: name.into(), cond, tol, policy, attached_to });
+        self.model.constraints.push(Constraint { id, name: name.into(), cond, tol, policy, attached_to, force: None, bound: None, restitution: None });
     }
 
     // ------------------------------------------------------------ declarations
@@ -909,6 +1146,34 @@ impl<'a> ModelCx<'a> {
         }
         let axes = ranges.into_iter().zip(cells).map(|((lo, hi), cells)| GridAxis { lo, hi, cells }).collect();
         self.model.grids.push(Grid { id, name: name.text.clone(), axes });
+    }
+
+    /// `frame turning(at: P, x: u)`, or in three dimensions `frame cabin(at: P, x: u, y: v)`
+    /// (MK-4.2, D-105): a frame of the model's space, an origin and axes.
+    fn frame(&mut self, name: &ast::Name, args: &[ast::Arg], span: Span) {
+        let id = format!("{}.frame.{}", self.name, name.text);
+        self.map.insert(id.clone(), span);
+        if self.in_object {
+            self.err("SX-E08", "a frame belongs to a model, not to an object type: declare it in the model and read members in it", span);
+            return;
+        }
+        let (mut at, mut x, mut y) = (None, None, None);
+        for a in args {
+            match a.name.as_ref().map(|n| n.text.as_str()) {
+                Some("at") => at = Some(self.expr(&a.value, &[])),
+                Some("x") => x = Some(self.expr(&a.value, &[])),
+                Some("y") => y = Some(self.expr(&a.value, &[])),
+                Some(other) => self.err("SX-E08", format!("`frame` takes no option `{other}`; its options are `at`, `x`, `y`"), a.name.as_ref().unwrap().span),
+                None => self.err("SX-E08", "a frame takes named options: `frame turning(at: origin, x: (cos(a), sin(a)))`", a.value.span),
+            }
+        }
+        let three = self.space.is_some_and(|s| s.dimension == 3);
+        match (at, x, &y, three) {
+            (Some(at), Some(x), Some(_), true) | (Some(at), Some(x), None, false) => self.model.frames.push(prismal_ir::FrameDecl { id, name: name.text.clone(), at, x, y }),
+            (Some(_), Some(_), None, true) => self.err("SX-E08", format!("frame `{}` lies in a space of three dimensions: give its second axis too, `y: v`", name.text), span),
+            (Some(_), Some(_), Some(_), false) => self.err("SX-E08", format!("frame `{}` lies in a plane: its second axis is its first turned a quarter turn, so it takes no `y`", name.text), span),
+            _ => self.err("SX-E08", "a frame has an origin and a first axis: `frame turning(at: origin, x: (cos(a), sin(a)))`", span),
+        }
     }
 
     /// `boundary T { left = e }`, `boundary T periodic` (MK-9.6, D-091).
@@ -1059,6 +1324,7 @@ impl<'a> ModelCx<'a> {
         };
         let enable = e.enable.as_ref().map(|c| self.expr(c, &[]));
         let handler = e.handler.iter().map(|o| self.op(o)).collect();
+        let algorithm = e.algorithm.as_ref().map(|a| self.stmts(a));
         let zeno = e.zeno.as_ref().map(|z| Zeno {
             policy: match z {
                 ast::ZenoClause::Stop => ZenoPolicy::Stop,
@@ -1084,8 +1350,23 @@ impl<'a> ModelCx<'a> {
             process: process.cloned(),
             payload,
             each,
+            algorithm,
             notes: e.notes.clone(),
         });
+    }
+
+    /// The statements of an algorithm (D-101).
+    fn stmts(&mut self, stmts: &[ast::AlgoStmt]) -> Vec<Stmt> {
+        stmts
+            .iter()
+            .map(|s| match s {
+                ast::AlgoStmt::Op(o) => Stmt::Do { ops: vec![self.op(o)] },
+                ast::AlgoStmt::If { cond, then, otherwise, .. } => Stmt::If { r#if: self.expr(cond, &[]), then: self.stmts(then), r#else: self.stmts(otherwise) },
+                ast::AlgoStmt::While { cond, body, .. } => Stmt::While { r#while: self.expr(cond, &[]), body: self.stmts(body) },
+                ast::AlgoStmt::For { var, from, to, body, .. } => Stmt::For { var: self.binding(var), from: self.expr(from, &[]), to: self.expr(to, &[]), body: self.stmts(body) },
+                ast::AlgoStmt::Step(_) => Stmt::Step,
+            })
+            .collect()
     }
 
     pub(crate) fn op(&mut self, o: &ast::OpStmt) -> Op {
@@ -1233,6 +1514,17 @@ impl<'a> ModelCx<'a> {
                 self.err("SX-E03", format!("unknown event `{}` in model `{}`", n.text, self.name), n.span);
                 format!("{}.event.{}", self.name, n.text)
             }
+        }
+    }
+
+    /// `v.in(F)`: the value and the frame's name, for a component read in a frame (D-105).
+    fn in_frame(x: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr)> {
+        match &x.kind {
+            ExprKind::Call(f, args) if args.len() == 1 && args[0].name.is_none() => match &f.kind {
+                ExprKind::Field(v, m) if m.text == "in" => Some((v, &args[0].value)),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -1450,7 +1742,25 @@ impl<'a> ModelCx<'a> {
                     _ => self.member_expr(e, locals).map(|(m, _)| m).unwrap_or_else(Self::placeholder),
                 }
             }
+            ExprKind::Call(f, _) if matches!(&f.kind, ExprKind::Field(_, m) if m.text == "in") => {
+                self.err("SX-E02", "a value in a frame is read by its components: `v.in(turning).x`", e.span);
+                Self::placeholder()
+            }
             ExprKind::Call(f, args) => self.call(f, args, e.span, locals),
+            // `v.in(F).x`: a component read in a declared frame (MK-4.6, D-105).
+            ExprKind::Field(x, n) if Self::in_frame(x).is_some() => {
+                let (v, f) = Self::in_frame(x).unwrap();
+                let frame = match &f.kind {
+                    ExprKind::Name(name) if self.frames.contains_key(name) => self.frames[name].clone(),
+                    _ => {
+                        self.err("SX-E03", "`in` reads components in a frame the model declares: `v.in(turning).x`", f.span);
+                        return Self::placeholder();
+                    }
+                };
+                let v = self.expr(v, locals);
+                let axis = self.axis(n);
+                Expr::In { r#in: Box::new(v), frame, axis, reads: vec![] }
+            }
             ExprKind::Field(x, n) if matches!(&x.kind, ExprKind::Name(e) if self.enums.contains_key(e) && !self.bindings.contains_key(e) && !locals.contains(e)) => {
                 let ExprKind::Name(e) = &x.kind else { unreachable!() };
                 if !self.enums[e].1.contains(&n.text) {
@@ -1488,6 +1798,11 @@ impl<'a> ModelCx<'a> {
             ExprKind::Str(_) => {
                 self.err("SX-E08", "text belongs to presentations, not to a model", e.span);
                 Self::placeholder()
+            }
+            // D-101: an item of a list of values by its number, from 1: `(5, 2, 6)[index]`.
+            ExprKind::Index(x, i) if matches!(x.kind, ExprKind::Tuple(_)) => {
+                let ExprKind::Tuple(items) = &x.kind else { unreachable!() };
+                Expr::Pick { pick: Box::new(self.expr(i, locals)), from: items.iter().map(|v| self.expr(v, locals)).collect() }
             }
             ExprKind::Index(..) => match self.member_expr(e, locals) {
                 Some((m, _)) => m,
@@ -1631,7 +1946,7 @@ impl<'a> ModelCx<'a> {
 }
 
 /// The names of a lowered object type or model: its bindings and parts (D-055).
-fn obj_info(m: &Model) -> ObjInfo {
+pub(crate) fn obj_info(m: &Model) -> ObjInfo {
     ObjInfo {
         id: m.id.clone(),
         bindings: m.bindings.iter().map(|b| (b.name.clone(), b.id.clone())).collect(),

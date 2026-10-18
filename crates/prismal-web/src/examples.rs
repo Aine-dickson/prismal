@@ -29,6 +29,12 @@ const GUIDE: &[(&str, &str)] = &[
     ("16", include_str!("../../../docs/guide/16-fields.md")),
     ("17", include_str!("../../../docs/guide/17-solving-equations.md")),
     ("18", include_str!("../../../docs/guide/18-constraints.md")),
+    ("19", include_str!("../../../docs/guide/19-modules.md")),
+    ("20", include_str!("../../../docs/guide/20-three-dimensions.md")),
+    ("21", include_str!("../../../docs/guide/21-algorithms.md")),
+    ("22", include_str!("../../../docs/guide/22-light-and-rays.md")),
+    ("23", include_str!("../../../docs/guide/23-frames.md")),
+    ("24", include_str!("../../../docs/guide/24-light-as-a-wave.md")),
 ];
 
 /// An example program: a title and its source in the working syntax.
@@ -135,7 +141,7 @@ pub fn split_guide(md: &str) -> (Vec<GuideProgram>, Vec<GuideError>) {
                 match lang.as_str() {
                     "text" | "cases" => {
                         let first = text.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with("//")).unwrap_or("");
-                        let begins = lang == "text" && (first.starts_with("model ") || first.starts_with("space "));
+                        let begins = lang == "text" && (first.starts_with("model ") || first.starts_with("space ") || first.starts_with("use "));
                         // A space declared on its own belongs with the model that follows it.
                         let current_has_model = programs.last().is_some_and(|p| !p.title.is_empty());
                         if programs.is_empty() || (begins && current_has_model) {

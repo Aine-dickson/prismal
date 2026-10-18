@@ -22,11 +22,27 @@ const INDENT: &str = "  ";
 /// Prints a document in the canonical form.
 pub fn format(doc: &Document) -> String {
     let mut parts = vec![];
+    // D-099: `use` lines, then the document's own shared definitions after its spaces.
+    if !doc.uses.is_empty() {
+        let lines: Vec<String> = doc
+            .uses
+            .iter()
+            .map(|u| match &u.names {
+                Some(ns) => format!("use {}.{{{}}}", u.module, ns.join(", ")),
+                None => format!("use {}", u.module),
+            })
+            .collect();
+        parts.push(lines.join("
+"));
+    }
     for s in &doc.spaces {
         let mut out = String::new();
         notes(&mut out, "", &s.notes);
         let _ = write!(out, "space {} = euclidean({})", s.name, s.dimension);
         parts.push(out);
+    }
+    if let Some(own) = doc.libraries.iter().find(|l| l.name == prismal_ir::SHARED) {
+        parts.extend(shared(doc, own));
     }
     for m in &doc.models {
         parts.push(Printer::new(doc, m).model());
@@ -44,6 +60,24 @@ pub fn format(doc: &Document) -> String {
     let mut s = parts.join("\n\n");
     s.push('\n');
     s
+}
+
+/// The sections of a library printed outside any model: printed as the body of a model in the
+/// library's space, then unindented (D-099).
+fn shared(doc: &Document, lib: &prismal_ir::Library) -> Vec<String> {
+    let mut m = prismal_ir::build::ModelBuilder::new(&lib.name).finish();
+    m.default_space = Some(prismal_ir::ANY_SPACE.into());
+    m.enums = lib.enums.clone();
+    m.functions = lib.functions.clone();
+    m.objects = lib.objects.clone();
+    let text = Printer::new(doc, &m).model();
+    let lines: Vec<&str> = text.lines().collect();
+    let body = &lines[1..lines.len().saturating_sub(1)];
+    let unindented: Vec<String> = body.iter().map(|l| l.strip_prefix(INDENT).unwrap_or(l).to_string()).collect();
+    unindented.join("
+").split("
+
+").map(|s| s.to_string()).filter(|s| !s.trim().is_empty()).collect()
 }
 
 fn notes(out: &mut String, ind: &str, notes: &[String]) {
@@ -281,6 +315,11 @@ impl<'a> Printer<'a> {
         self.model.events.iter().find(|e| e.id == id).map(|e| e.name.clone()).unwrap_or_else(|| id.rsplit('.').next().unwrap_or(id).to_string())
     }
 
+    /// A frame's name from its identity, `M.frame.turning` (D-105).
+    fn frame_name(&self, id: &str) -> String {
+        id.rsplit('.').next().unwrap_or(id).to_string()
+    }
+
     fn space_name(&self, id: &str) -> String {
         self.doc.spaces.iter().find(|s| s.id == id).map(|s| s.name.clone()).unwrap_or_else(|| id.to_string())
     }
@@ -433,7 +472,12 @@ impl<'a> Printer<'a> {
                     Func::Min => "min",
                     Func::Max => "max",
                     Func::Atan2 => "atan2",
+                    Func::Floor => "floor",
+                    Func::Ceil => "ceil",
+                    Func::Round => "round",
+                    Func::Mod => "mod",
                     Func::Dot => "dot",
+                    Func::Cross => "cross",
                     Func::Laplacian => "laplacian",
                     Func::Gradient => "gradient",
                     Func::Integral => "integral",
@@ -451,6 +495,12 @@ impl<'a> Printer<'a> {
                 let name = self.axes.get(*axis).cloned().unwrap_or_else(|| axis.to_string());
                 format!("{}.{name}", w(comp, P_ATOM))
             }
+            // `v.in(F).x` (D-105).
+            Expr::In { r#in, frame, axis, .. } => {
+                let name = self.axes.get(*axis).cloned().unwrap_or_else(|| axis.to_string());
+                let f = self.model.frames.iter().find(|f| &f.id == frame).map(|f| f.name.clone()).unwrap_or_else(|| frame.rsplit('.').next().unwrap_or(frame).to_string());
+                format!("{}.in({f}).{name}", w(r#in, P_ATOM))
+            }
             Expr::Lambda { lambda } => self.expr_p(&lambda.body, &lambda.names),
             Expr::Otherwise { otherwise, default } => format!("{} otherwise {}", w(otherwise, P_OR), w(default, P_OR)),
             Expr::Payload { payload } => self.model.events.iter().find(|e| &e.id == payload).and_then(|e| e.payload.as_ref()).map(|p| p.name.clone()).unwrap_or_else(|| "payload".into()),
@@ -461,11 +511,14 @@ impl<'a> Printer<'a> {
             Expr::Field { field, of } => format!("{}.{}", self.member(of, params), self.field_name(field)),
             Expr::Part { .. } | Expr::Item { .. } | Expr::Var { .. } | Expr::End { .. } | Expr::Other { .. } => self.member(e, params),
             Expr::Has { has, rel } => format!("{}.has({})", self.member(rel, params), self.member(has, params)),
-            // Made by elaboration only (D-058).
-            Expr::Pick { pick, from } => format!("pick({}, {})", p(pick), from.iter().map(&p).collect::<Vec<_>>().join(", ")),
-            Expr::Aggregate { aggregate, var, over, body, filter } => {
+            // An item of a list of values by its number (D-101); also made by elaboration (D-058).
+            Expr::Pick { pick, from } => format!("({})[{}]", from.iter().map(&p).collect::<Vec<_>>().join(", "), p(pick)),
+            Expr::Aggregate { aggregate, var, over, body, filter, by } => {
                 let coll = self.part_name(over);
-                let filter = filter.as_ref().map(|f| format!(" if {}", p(f))).unwrap_or_default();
+                let mut filter = filter.as_ref().map(|f| format!(" if {}", p(f))).unwrap_or_default();
+                if let Some(k) = by {
+                    filter.push_str(&format!(" by {}", p(k)));
+                }
                 match body {
                     None if filter.is_empty() => format!("{}({coll})", aggregate.name()),
                     None => format!("{}({var} for {var} in {coll}{filter})", aggregate.name()),
@@ -473,7 +526,7 @@ impl<'a> Printer<'a> {
                 }
             }
             // Made by elaboration only (D-057).
-            Expr::Extreme { extreme, terms } => {
+            Expr::Extreme { extreme, terms, .. } => {
                 let name = if *extreme == prismal_ir::Func::Min { "min" } else { "max" };
                 format!("{name}({})", terms.iter().map(|g| p(&g.value)).collect::<Vec<_>>().join(", "))
             }
@@ -516,6 +569,18 @@ impl<'a> Printer<'a> {
             .collect();
         if !grids.is_empty() {
             sections.push(grids.join("\n"));
+        }
+        // Frames (D-105).
+        let frames: Vec<String> = m
+            .frames
+            .iter()
+            .map(|f| {
+                let y = f.y.as_ref().map(|y| format!(", y: {}", self.expr(y))).unwrap_or_default();
+                format!("{INDENT}frame {}(at: {}, x: {}{y})", f.name, self.expr(&f.at), self.expr(&f.x))
+            })
+            .collect();
+        if !frames.is_empty() {
+            sections.push(frames.join("\n"));
         }
         for o in &m.objects {
             sections.push(self.object(o));
@@ -799,6 +864,8 @@ impl<'a> Printer<'a> {
             Op::Make { alive, values } => format!("make {alive} {{ {} }}", values.iter().map(|v| format!("{} = {}", v.binding, self.expr(&v.value))).collect::<Vec<_>>().join("; ")),
             // Made by elaboration only; printed for reading, not for parsing (D-057).
             Op::If { r#if, then } => format!("if {} {{ {} }}", self.expr(r#if), then.iter().map(|o| self.op(o)).collect::<Vec<_>>().join("; ")),
+            // Made by elaboration only (D-102).
+            Op::Rebound { constraint } => format!("rebound {constraint}"),
         }
     }
 
@@ -816,6 +883,48 @@ impl<'a> Printer<'a> {
                 s
             }
         }
+    }
+
+    /// An algorithm's statements as a block, one per line (D-101).
+    fn stmts(&self, stmts: &[Stmt], depth: usize) -> String {
+        let ind = INDENT.repeat(depth + 1);
+        let mut s = "{\n".to_string();
+        for st in stmts {
+            match st {
+                Stmt::Do { ops } => {
+                    for o in ops {
+                        let _ = writeln!(s, "{ind}{}", self.op(o));
+                    }
+                }
+                Stmt::If { r#if, then, r#else } => {
+                    let _ = write!(s, "{ind}if {} {}", self.expr(r#if), self.stmts(then, depth + 1));
+                    match r#else.as_slice() {
+                        [] => {}
+                        [inner @ Stmt::If { .. }] => {
+                            let nested = self.stmts(std::slice::from_ref(inner), depth);
+                            // `else if`: the nested statement without its block's braces.
+                            let body = nested.trim_start_matches("{\n").trim_end_matches('}').trim_end();
+                            let _ = write!(s, " else {}", body.trim_start());
+                        }
+                        other => {
+                            let _ = write!(s, " else {}", self.stmts(other, depth + 1));
+                        }
+                    }
+                    s.push('\n');
+                }
+                Stmt::While { r#while, body } => {
+                    let _ = writeln!(s, "{ind}while {} {}", self.expr(r#while), self.stmts(body, depth + 1));
+                }
+                Stmt::For { var, from, to, body } => {
+                    let _ = writeln!(s, "{ind}for {} in [{}, {}] {}", self.binding_name(var), self.expr(from), self.expr(to), self.stmts(body, depth + 1));
+                }
+                Stmt::Step => {
+                    let _ = writeln!(s, "{ind}step");
+                }
+            }
+        }
+        let _ = write!(s, "{}}}", INDENT.repeat(depth));
+        s
     }
 
     fn trigger(&self, t: &Trigger) -> String {
@@ -843,12 +952,16 @@ impl<'a> Printer<'a> {
         let ind = INDENT.repeat(depth);
         let mut s = String::new();
         notes(&mut s, &ind, &e.notes);
-        let _ = write!(s, "{ind}event {} on {}", e.name, self.trigger(&e.trigger));
+        let word = if e.algorithm.is_some() { "algorithm" } else { "event" };
+        let _ = write!(s, "{ind}{word} {} on {}", e.name, self.trigger(&e.trigger));
         if let Some(p) = &e.payload {
             let _ = write!(s, "({})", self.payload_decl(p));
         }
         if let Some(c) = &e.enable {
             let _ = write!(s, " if {}", self.expr(c));
+        }
+        if let Some(a) = &e.algorithm {
+            let _ = write!(s, " {}", self.stmts(a, depth));
         }
         if !e.handler.is_empty() {
             let _ = write!(s, " {}", self.ops(&e.handler, depth));
@@ -882,6 +995,15 @@ impl<'a> Printer<'a> {
             Policy::Reject => s.push_str(" policy reject"),
             Policy::Stop => s.push_str(" policy stop"),
             Policy::Enforce => s.push_str(" policy enforce"),
+        }
+        if let Some(f) = &c.force {
+            let _ = write!(s, " with {}", self.binding_name(f));
+            if let Some(b) = &c.bound {
+                let _ = write!(s, " where |{}| <= {}", self.binding_name(f), self.expr(b));
+            }
+        }
+        if let Some(e) = &c.restitution {
+            let _ = write!(s, " restitution {}", self.expr(e));
         }
         s
     }
@@ -966,7 +1088,10 @@ impl<'a> Printer<'a> {
             let _ = write!(s, " {{ {c} }}");
         }
         if let Some(inv) = &r.inverse {
-            let part = inv.part.as_ref().map(|p| format!(" {p}")).unwrap_or_default() + if inv.live { " live" } else { "" };
+            let mut part = inv.part.as_ref().map(|p| format!(" {p}")).unwrap_or_default() + if inv.live { " live" } else { "" };
+            if let Some(n) = &inv.across {
+                let _ = write!(part, " across {}", self.expr(n));
+            }
             let bind = if inv.part.as_deref() == Some("head") { "h" } else { "p" };
             let props: Vec<String> =
                 inv.proposals.iter().map(|pr| format!("propose {} = {}", self.target(&Target { binding: pr.target.clone(), component: None, member: pr.member.clone() }), self.expr_p(&pr.value, &[bind.to_string()]))).collect();
@@ -1033,13 +1158,25 @@ impl<'a> Printer<'a> {
         }
         for v in &p.views {
             let head = match &v.kind {
-                ViewKind::Spatial { space, scale, y_up } => format!(
-                    "view {}: spatial({}, scale: {} -> {} px, y: {})",
+                // A view of a space of three dimensions has `z` up and its look (D-100).
+                ViewKind::Spatial { space, scale, look, distance, frame, .. } if self.doc.spaces.iter().any(|s| &s.id == space && s.dimension == 3) => {
+                    let mut turn = look.as_ref().map(|[a, e]| format!(", azimuth: {}, elevation: {}", self.expr(a), self.expr(e))).unwrap_or_default();
+                    if let Some(d) = distance {
+                        let _ = write!(turn, ", distance: {}", self.expr(d));
+                    }
+                    if let Some(f) = frame {
+                        let _ = write!(turn, ", frame: {}", self.frame_name(f));
+                    }
+                    format!("view {}: spatial({}, scale: {} -> {} px{turn})", v.name, self.space_name(space), self.expr(&scale.quantity), number(scale.px))
+                }
+                ViewKind::Spatial { space, scale, y_up, frame, .. } => format!(
+                    "view {}: spatial({}, scale: {} -> {} px, y: {}{})",
                     v.name,
                     self.space_name(space),
                     self.expr(&scale.quantity),
                     number(scale.px),
-                    if *y_up { "up" } else { "down" }
+                    if *y_up { "up" } else { "down" },
+                    frame.as_ref().map(|f| format!(", frame: {}", self.frame_name(f))).unwrap_or_default()
                 ),
                 ViewKind::Plot { x, y, follow, units, window } => {
                     // `follow: y` or `follow: (x, y)`, and display units, after the ranges (D-070).
@@ -1274,7 +1411,7 @@ impl<'a> Printer<'a> {
                 let _ = write!(s, " {}", block(reps.iter().map(|r| self.rep(r, depth + 1)).collect()));
                 s
             }
-            Action::Camera { view, center, zoom, duration, ease } => {
+            Action::Camera { view, center, zoom, azimuth, elevation, duration, ease } => {
                 let name = p.views.iter().find(|x| &x.id == view).map(|x| x.name.clone()).unwrap_or_else(|| view.clone());
                 let mut s = format!("camera {name}");
                 if let Some(c) = center {
@@ -1282,6 +1419,12 @@ impl<'a> Printer<'a> {
                 }
                 if let Some(z) = zoom {
                     let _ = write!(s, " zoom {}", self.expr(z));
+                }
+                if let Some(a) = azimuth {
+                    let _ = write!(s, " azimuth {}", self.expr(a));
+                }
+                if let Some(e) = elevation {
+                    let _ = write!(s, " elevation {}", self.expr(e));
                 }
                 if let Some(d) = duration {
                     let _ = write!(s, " for {}", self.expr(d));

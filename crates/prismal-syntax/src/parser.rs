@@ -26,7 +26,8 @@ pub const CONTEXTUAL: &[&str] = &[
     "timeline", "layout", "row", "column", "scene", "beat", "sequence", "rate", "until", "hold", "seek", "reset", "branch", "intervene", "wait",
     "explore", "limit", "keep", "fallback", "narrate", "highlight", "hide", "reveal", "zoom", "animate", "camera", "bind", "release", "config",
     "expect", "exactly", "rel", "of", "with", "learner", "continue", "press", "undo", "redo", "combine", "ease", "title", "random", "runs", "reseed", "restart",
-    "instrument", "grid", "boundary", "periodic", "unknown", "enforce",
+    "instrument", "grid", "boundary", "periodic", "unknown", "enforce", "use", "algorithm", "while", "step", "restitution", "across", "azimuth",
+    "elevation", "frame", "by",
 ];
 
 /// Operators that join two operands; a line that starts with one is reported with a hint
@@ -358,7 +359,38 @@ impl<'a> Parser<'a> {
         if self.eat_word("run") {
             return self.run_decl(start).map(Item::Run);
         }
-        Err(self.unexpected("`space`, `model`, `presentation` or `run`"))
+        // D-099: object types, enumerations and functions written outside models.
+        if self.is_word("object") || self.is_word("enum") || self.is_word("fn") {
+            let mut ms = self.member()?;
+            return Ok(Item::Shared(ms.remove(0)));
+        }
+        // `use name`, `use a.b`, `use a.b.{X, Y}`; `use` is a word only here.
+        if self.is_word("use") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            self.bump();
+            let mut path = vec![self.name("a module name")?];
+            let mut names = None;
+            while self.is_punct(".") {
+                self.bump();
+                if self.is_punct("{") {
+                    self.bump();
+                    let mut ns = vec![];
+                    loop {
+                        ns.push(self.name("a name the module defines")?);
+                        if self.is_punct(",") {
+                            self.bump();
+                            continue;
+                        }
+                        self.expect_punct("}")?;
+                        break;
+                    }
+                    names = Some(ns);
+                    break;
+                }
+                path.push(self.name("a module name")?);
+            }
+            return Ok(Item::Use(UseDecl { path, names, span: self.since(start) }));
+        }
+        Err(self.unexpected("`space`, `model`, `presentation`, `run`, `use`, `object`, `enum` or `fn`"))
     }
 
     // ------------------------------------------------------------ model members
@@ -401,12 +433,23 @@ impl<'a> Parser<'a> {
         if self.is_word("event") {
             return Ok(vec![Member::Event(self.event_decl()?)]);
         }
+        // `algorithm sort on every 0.5 s { ... }` (D-101); contextual, before a name.
+        if self.is_word("algorithm") && matches!(self.peek_at(1), Tok::Ident(_)) {
+            return Ok(vec![Member::Event(self.algorithm_decl()?)]);
+        }
         // `grid rod(x: [0 m, 1 m], cells: 100)` (D-091); contextual, before a name.
         if self.is_word("grid") && matches!(self.peek_at(1), Tok::Ident(_)) {
             self.bump();
             let name = self.name("a grid name")?;
             let args = self.args()?;
             return Ok(vec![Member::Grid { name, args, span: self.since(start) }]);
+        }
+        // `frame turning(at: origin, x: u)` (D-105); contextual, before a name and options.
+        if self.is_word("frame") && matches!(self.peek_at(1), Tok::Ident(_)) && self.is_punct_at(2, "(") {
+            self.bump();
+            let name = self.name("a frame name")?;
+            let args = self.args()?;
+            return Ok(vec![Member::Frame { name, args, span: self.since(start) }]);
         }
         // `boundary T { left = e; right = e }`, `boundary T periodic` (D-091).
         if self.is_word("boundary") && matches!(self.peek_at(1), Tok::Ident(_)) {
@@ -516,15 +559,18 @@ impl<'a> Parser<'a> {
                 None
             };
             let cond = self.expr()?;
-            let (mut within, mut policy, mut seen) = (None, None, vec![]);
-            while let Some(w) = self.clause(&["within", "policy"], &mut seen)? {
-                if w == "within" {
-                    within = Some(self.expr()?);
-                } else {
-                    policy = Some(self.any_name("a policy")?);
+            let (mut within, mut policy, mut force, mut seen) = (None, None, None, vec![]);
+            let (mut bound, mut restitution) = (None, None);
+            while let Some(w) = self.clause(&["within", "policy", "with", "where", "restitution"], &mut seen)? {
+                match w {
+                    "within" => within = Some(self.expr()?),
+                    "policy" => policy = Some(self.any_name("a policy")?),
+                    "where" => bound = Some(self.expr()?),
+                    "restitution" => restitution = Some(self.expr()?),
+                    _ => force = Some(self.name("the unknown that holds the constraint")?),
                 }
             }
-            return Ok(vec![Member::Constraint(ConstraintDecl { name, cond, within, policy, span: self.since(start) })]);
+            return Ok(vec![Member::Constraint(ConstraintDecl { name, cond, within, policy, force, bound, restitution, span: self.since(start) })]);
         }
         if self.eat_word("object") {
             let notes = self.notes_before(start.line);
@@ -745,7 +791,7 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        Ok(EventDecl { each: None, name, trigger, enable, handler, zeno, notes, span: self.since(start) })
+        Ok(EventDecl { each: None, name, trigger, enable, handler, zeno, algorithm: None, notes, span: self.since(start) })
     }
 
     fn trigger(&mut self) -> P<TriggerExpr> {
@@ -824,6 +870,72 @@ impl<'a> Parser<'a> {
         }
         self.expect_punct(")")?;
         Ok(out)
+    }
+
+    /// `algorithm name on trigger [if c] { statements }` (D-101): an event whose work is
+    /// statements run in order, paused at each `step`.
+    fn algorithm_decl(&mut self) -> P<EventDecl> {
+        let start = self.span();
+        let notes = self.notes_before(start.line);
+        self.expect_word("algorithm")?;
+        let name = self.name("an algorithm name")?;
+        self.expect_word("on")?;
+        let trigger = self.trigger()?;
+        let enable = if self.eat_word("if") { Some(self.expr()?) } else { None };
+        let body = self.algo_block()?;
+        Ok(EventDecl { each: None, name, trigger, enable, handler: vec![], zeno: None, algorithm: Some(body), notes, span: self.since(start) })
+    }
+
+    fn algo_block(&mut self) -> P<Vec<AlgoStmt>> {
+        self.block(|p| Self::one(p.algo_stmt()))
+    }
+
+    /// A statement of an algorithm: an operation, `if`, `while`, `for`, or `step` (D-101).
+    fn algo_stmt(&mut self) -> P<AlgoStmt> {
+        let start = self.span();
+        if self.eat_word("if") {
+            let cond = self.expr()?;
+            let then = self.algo_block()?;
+            // `else` may follow the closing brace on the next line.
+            if matches!(self.peek(), Tok::Newline) && self.is_word_at(1, "else") {
+                self.bump();
+            }
+            let otherwise = if self.eat_word("else") {
+                if self.is_word("if") {
+                    vec![self.algo_stmt()?]
+                } else {
+                    self.algo_block()?
+                }
+            } else {
+                vec![]
+            };
+            return Ok(AlgoStmt::If { cond, then, otherwise, span: self.since(start) });
+        }
+        if self.is_word("while") && !matches!(self.peek_at(1), Tok::Punct("=") | Tok::Punct(".")) {
+            self.bump();
+            let cond = self.expr()?;
+            let body = self.algo_block()?;
+            return Ok(AlgoStmt::While { cond, body, span: self.since(start) });
+        }
+        if self.eat_word("for") {
+            let var = self.name("a discrete binding that counts")?;
+            self.expect_word("in")?;
+            self.expect_punct("[")?;
+            let from = self.expr()?;
+            self.expect_punct(",")?;
+            let to = self.expr()?;
+            self.expect_punct("]")?;
+            let body = self.algo_block()?;
+            return Ok(AlgoStmt::For { var, from, to, body, span: self.since(start) });
+        }
+        if self.is_word("step") && matches!(self.peek_at(1), Tok::Newline | Tok::Punct("}") | Tok::Punct(";")) {
+            self.bump();
+            return Ok(AlgoStmt::Step(self.since(start)));
+        }
+        match self.op() {
+            Ok(op) => Ok(AlgoStmt::Op(op)),
+            Err(_) => Err(self.unexpected("a statement of an algorithm (`set`, `emit`, `create`, `destroy`, `if`, `while`, `for`, `step`)")),
+        }
     }
 
     /// `(v)` or `(v, w)` right after an event name in `emit` and `request`: the payload it
@@ -1289,8 +1401,10 @@ impl<'a> Parser<'a> {
                     self.expect_word("in")?;
                     let over = self.part_path()?;
                     let filter = if self.eat_word("if") { Some(Box::new(self.expr()?)) } else { None };
+                    // `first(e for b in row by k)` (D-106).
+                    let by = if self.eat_word("by") { Some(Box::new(self.expr()?)) } else { None };
                     let agg = Name { text: String::new(), span: s };
-                    value = Expr { kind: ExprKind::Aggregate { agg, body: Box::new(value), var, over, filter }, span: self.since(s) };
+                    value = Expr { kind: ExprKind::Aggregate { agg, body: Box::new(value), var, over, filter, by }, span: self.since(s) };
                 }
                 let every = if self.eat_word("every") { Some(self.expr()?) } else { None };
                 // An ensemble source (D-084): `n at t0 + 7 s over 200 runs`.
@@ -1596,7 +1710,7 @@ impl<'a> Parser<'a> {
                 p.expect_word("request")?;
                 let event = p.name("an event name")?;
                 let payload = p.payload_args()?;
-                return Ok(vec![Err(Interaction { gesture, part: None, live: false, bind, proposals: vec![], request: Some((event, payload)), span: p.since(start) })]);
+                return Ok(vec![Err(Interaction { gesture, part: None, live: false, across: None, bind, proposals: vec![], request: Some((event, payload)), span: p.since(start) })]);
             }
             Ok(p.rep_item()?.into_iter().map(Ok).collect())
         })?;
@@ -1658,14 +1772,16 @@ impl<'a> Parser<'a> {
             let event = self.name("an event name")?;
             let payload = self.payload_args()?;
             let bind = gesture.clone();
-            return Ok(Interaction { gesture, part: None, live: false, bind, proposals: vec![], request: Some((event, payload)), span: self.since(start) });
+            return Ok(Interaction { gesture, part: None, live: false, across: None, bind, proposals: vec![], request: Some((event, payload)), span: self.since(start) });
         }
-        let part = if !self.is_word("as") && !self.is_word("live") { Some(self.name("a part")?) } else { None };
+        let part = if !self.is_word("as") && !self.is_word("live") && !self.is_word("across") { Some(self.name("a part")?) } else { None };
         // `on drag [part] live as p`: commits while the run advances (D-071).
         let live = self.is_word("live");
         if live {
             self.bump();
         }
+        // `on drag across n as p`: moves in the plane of normal `n` (D-104).
+        let across = if self.eat_word("across") { Some(self.expr()?) } else { None };
         self.expect_word("as")?;
         let bind = self.name("a name for the gesture value")?;
         let proposals = self.block(|p| {
@@ -1674,7 +1790,7 @@ impl<'a> Parser<'a> {
             p.expect_punct("=")?;
             Ok(vec![(n, p.expr()?)])
         })?;
-        Ok(Interaction { gesture, part, live, bind, proposals, request: None, span: self.since(start) })
+        Ok(Interaction { gesture, part, live, across, bind, proposals, request: None, span: self.since(start) })
     }
 
     fn scene(&mut self) -> P<SceneDecl> {
@@ -1756,8 +1872,8 @@ impl<'a> Parser<'a> {
         }
         if self.eat_word("camera") {
             let view = self.name("a view name")?;
-            let (mut center, mut zoom, mut duration, mut ease, mut seen) = (None, None, None, None, vec![]);
-            while let Some(w) = self.clause(&["to", "zoom", "for", "ease"], &mut seen)? {
+            let (mut center, mut zoom, mut azimuth, mut elevation, mut duration, mut ease, mut seen) = (None, None, None, None, None, None, vec![]);
+            while let Some(w) = self.clause(&["to", "zoom", "azimuth", "elevation", "for", "ease"], &mut seen)? {
                 if w == "ease" {
                     ease = Some(self.any_name("an easing function (`linear`, `smooth`, `in`, `out`)")?);
                     continue;
@@ -1766,10 +1882,12 @@ impl<'a> Parser<'a> {
                 match w {
                     "to" => center = e,
                     "zoom" => zoom = e,
+                    "azimuth" => azimuth = e,
+                    "elevation" => elevation = e,
                     _ => duration = e,
                 }
             }
-            return Ok(Action::Camera { view, center, zoom, duration, ease });
+            return Ok(Action::Camera { view, center, zoom, azimuth, elevation, duration, ease });
         }
         if self.eat_word("seek") {
             return Ok(Action::Seek(self.expr()?));

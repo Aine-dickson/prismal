@@ -224,6 +224,7 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
         // Field operators as physics texts write them (D-091): ∇²T, ∇T, ∫T dx.
         // The dot product as texts write it (D-093): a · b.
         Expr::Call { call: Func::Dot, args } => row(vec![wrap(&args[0], 7), op("·", OpKind::Binary), wrap(&args[1], 7)]),
+        Expr::Call { call: Func::Cross, args } => row(vec![wrap(&args[0], 7), op("×", OpKind::Binary), wrap(&args[1], 7)]),
         Expr::Call { call: Func::Laplacian, args } => row(vec![upright("∇²"), wrap(&args[0], 8)]),
         Expr::Call { call: Func::Gradient, args } => row(vec![upright("∇"), wrap(&args[0], 8)]),
         Expr::Call { call: Func::Integral, args } => row(vec![upright("∫"), MathBox::Space { em: 0.15 }, wrap(&args[0], 8), MathBox::Space { em: 0.15 }, upright("dx")]),
@@ -238,7 +239,11 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
                 Func::Max => "max",
                 Func::Atan2 => "atan2",
                 Func::Mean => "mean",
-                Func::Sqrt | Func::Abs | Func::Dot | Func::Laplacian | Func::Gradient | Func::Integral => unreachable!(),
+                Func::Floor => "floor",
+                Func::Ceil => "ceil",
+                Func::Round => "round",
+                Func::Mod => "mod",
+                Func::Sqrt | Func::Abs | Func::Dot | Func::Cross | Func::Laplacian | Func::Gradient | Func::Integral => unreachable!(),
             };
             row(vec![upright(name), parens(list(args.iter().map(p).collect()))])
         }
@@ -250,6 +255,13 @@ pub fn boxes(e: &Expr, cm: &CModel, params: &[String]) -> MathBox {
             ],
         },
         Expr::Tuple { tuple } => parens(list(tuple.iter().map(p).collect())),
+        // `v.in(F).x` (D-105): the component, subscripted with its axis and frame.
+        Expr::In { r#in, frame, axis, .. } => {
+            let names = cm.ir.default_space.as_deref().and_then(|s| cm.spaces.iter().find(|x| x.id == s)).map(|s| s.axes.clone()).unwrap_or_else(|| vec!["x".into(), "y".into(), "z".into()]);
+            let axis = names.get(*axis).cloned().unwrap_or_else(|| axis.to_string());
+            let f = cm.ir.frames.iter().find(|f| &f.id == frame).map(|f| f.name.clone()).unwrap_or_else(|| frame.clone());
+            MathBox::Sub { base: Box::new(wrap(r#in, 8)), sub: Box::new(ident(&format!("{axis},{f}"))) }
+        }
         Expr::Comp { comp, axis } => {
             let space = match &**comp {
                 Expr::Ref { r#ref } => cm.ir.binding(r#ref).and_then(|b| match &b.ty {

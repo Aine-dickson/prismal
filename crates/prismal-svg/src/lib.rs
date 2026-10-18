@@ -151,7 +151,7 @@ pub fn render(layout: &Json, frame: &Json, opts: &Options) -> String {
     let (w, h) = (body.w + 2.0 * pad, body.h + 2.0 * pad);
     let mut out = String::new();
     let title = format!("{}: {} run, simulation time {} s", s(&layout["presentation"]), s(&frame["run"]), fmt(f(&frame["t"])));
-    let desc: Vec<String> = all_reps(frame).into_iter().filter(|r| r["shape"] != "axes" && r["shape"] != "grid").map(|r| s(&r["text"]).to_string()).collect();
+    let desc: Vec<String> = all_reps(frame).into_iter().filter(|r| r["kind"] != "axes" && r["kind"] != "grid").map(|r| s(&r["text"]).to_string()).collect();
     let _ = writeln!(
         out,
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\" role=\"img\" aria-labelledby=\"title desc\">\
@@ -307,7 +307,7 @@ impl Map {
     }
 }
 
-const DRAWN: [&str; 9] = ["point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note", "raster"];
+const DRAWN: [&str; 11] = ["lines", "point", "arrow", "segment", "polyline", "polygon", "ellipse", "group", "note", "raster", "ray"];
 
 fn view_block(vl: &Json, vf: &Json, clip: usize, opts: &Options) -> Block {
     let th = &opts.theme;
@@ -406,7 +406,8 @@ fn spatial_chrome(out: &mut String, vl: &Json, reps: &[Json], bx: [f64; 4], u: f
     let ppm = f(&vl["px_per_m"]);
     let step = nice_step((60.0 * u) / ppm) * ppm;
     let metres = step / ppm;
-    let has = |k: &str| reps.iter().any(|r| r["kind"] == k);
+    // In a view of three dimensions the axes and grid come drawn as projected lines (D-100).
+    let has = |k: &str| reps.iter().any(|r| r["shape"] == k);
     let line = |out: &mut String, cls: &str, a: [f64; 2], b: [f64; 2]| {
         let color = if cls == "axis" { th.muted } else { th.faint };
         let _ = write!(
@@ -569,7 +570,8 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
         "polyline" if r["kind"] == "trace" => th.muted,
         _ => th.accent,
     };
-    let author = r["color"].as_str().and_then(|c| th.color(c));
+    // A colour of light is given as `#rrggbb` (D-106); other colours are palette names.
+    let author = r["color"].as_str().and_then(|c| if c.starts_with('#') { Some(c) } else { th.color(c) });
     let custom: Option<String> = match (r["color_to"].as_str().and_then(|c| th.color(c)), r["color_mix"].as_f64()) {
         (Some(to), Some(k)) => Some(mix_hex(author.unwrap_or(own), to, k)),
         _ => author.map(String::from),
@@ -620,6 +622,18 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
     };
     let pts = |k: &str| arr(&r[k]).iter().map(|p| map.to(pt(p))).map(|p| format!("{},{}", n(p[0]), n(p[1]))).collect::<Vec<_>>().join(" ");
     match shape {
+        // Axes and grid of a view of three dimensions, projected by the engine (D-100).
+        "lines" => {
+            let (cls, color) = if r["kind"] == "axes" { ("axis", th.muted) } else { ("gridline", th.faint) };
+            for l in arr(&r["lines"]) {
+                let (a, b) = (map.to(pt(&l[0])), map.to(pt(&l[1])));
+                let _ = write!(out, "<line class=\"{cls}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{color}\" stroke-width=\"{}\"/>", n(a[0]), n(a[1]), n(b[0]), n(b[1]), n(u));
+            }
+            for l in arr(&r["labels"]) {
+                let p = map.to(pt(&l["at"]));
+                *out += &text(p[0], p[1], s(&l["text"]), 10.0 * u, false, th.muted, " text-anchor=\"middle\" class=\"tick\"");
+            }
+        }
         "point" => {
             let p = map.to(pt(&r["at"]));
             ring(out, p);
@@ -731,10 +745,47 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
             }
             out.push_str("</g>");
         }
-        "polygon" => {
+        // A ray (D-106): to the edge of the drawing, and back behind its start when asked.
+        "ray" => {
+            let (f, d) = (pt(&r["from"]), pt(&r["toward"]));
+            let far = 1e5;
             let _ = write!(
                 out,
-                "<polygon class=\"shape\" points=\"{}\" fill=\"{accent}\" fill-opacity=\"0.12\" stroke=\"{accent}\" stroke-width=\"{}\"{dash}/>",
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{}\"{style}/>",
+                n(f[0]),
+                n(f[1]),
+                n(f[0] + d[0] * far),
+                n(f[1] + d[1] * far),
+                custom.as_deref().unwrap_or(th.reps[0]),
+                n(2.0 * u * thick)
+            );
+            if let Some(b) = r["back"].as_str().filter(|b| *b != "none") {
+                let dash = match b {
+                    "dashed" => format!(" stroke-dasharray=\"{} {}\"", n(6.0 * u), n(4.0 * u)),
+                    "dotted" => format!(" stroke-dasharray=\"{} {}\" stroke-linecap=\"round\"", n(0.01 * u), n(4.0 * u)),
+                    _ => String::new(),
+                };
+                let _ = write!(
+                    out,
+                    "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{}\"{dash}/>",
+                    n(f[0]),
+                    n(f[1]),
+                    n(f[0] - d[0] * far),
+                    n(f[1] - d[1] * far),
+                    custom.as_deref().unwrap_or(th.reps[0]),
+                    n(1.5 * u * thick)
+                );
+            }
+        }
+        "polygon" => {
+            // An opaque body (D-104) hides what is behind it: the surface under its tint.
+            let (op, tint) = if r["opaque"] == true { (true, "0.3") } else { (false, "0.12") };
+            if op {
+                let _ = write!(out, "<polygon points=\"{}\" fill=\"{}\"/>", pts("points"), th.surface);
+            }
+            let _ = write!(
+                out,
+                "<polygon class=\"shape\" points=\"{}\" fill=\"{accent}\" fill-opacity=\"{tint}\" stroke=\"{accent}\" stroke-width=\"{}\"{dash}/>",
                 pts("points"),
                 n(2.0 * u * thick),
                 accent = custom.as_deref().unwrap_or(th.accent)
@@ -744,7 +795,13 @@ fn draw_rep(out: &mut String, map: &Map, r: &Json, u: f64, ci: usize, th: &Theme
             // A circle, ellipse or arc (PK-6.3c): a whole one filled as a polygon is, an
             // arc stroked only.
             let accent = custom.as_deref().unwrap_or(th.accent);
-            let fill = if r["closed"] == true { format!("fill=\"{accent}\" fill-opacity=\"0.12\"") } else { "fill=\"none\"".to_string() };
+            // An opaque body (D-104) hides what is behind it: the surface under its tint.
+            let opaque = r["opaque"] == true && r["closed"] == true;
+            if opaque {
+                let _ = write!(out, "<path d=\"{}\" fill=\"{}\"/>", curve_path(r), th.surface);
+            }
+            let tint = if opaque { "0.3" } else { "0.12" };
+            let fill = if r["closed"] == true { format!("fill=\"{accent}\" fill-opacity=\"{tint}\"") } else { "fill=\"none\"".to_string() };
             let cls = if r["closed"] == true { "shape" } else { "curve" };
             let _ = write!(out, "<path class=\"{cls}\" d=\"{}\" {fill} stroke=\"{}\" stroke-width=\"{}\"{dash}/>", curve_path(r), accent, n(2.0 * u * thick));
         }
@@ -1145,6 +1202,17 @@ fn arr(j: &Json) -> &[Json] {
     j.as_array().map(|v| v.as_slice()).unwrap_or(&[])
 }
 
+/// `#rrggbb` colors mixed: `k` of the way from `a` to `b`.
+fn mix_hex(a: &str, b: &str, k: f64) -> String {
+    let rgb = |h: &str| -> [f64; 3] {
+        let v = u32::from_str_radix(h.trim_start_matches('#'), 16).unwrap_or(0);
+        [((v >> 16) & 255) as f64, ((v >> 8) & 255) as f64, (v & 255) as f64]
+    };
+    let (x, y) = (rgb(a), rgb(b));
+    let c: Vec<u32> = (0..3).map(|i| (x[i] + (y[i] - x[i]) * k.clamp(0.0, 1.0)).round() as u32).collect();
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1162,15 +1230,3 @@ mod tests {
         assert_eq!(nice_step(1.5), 2.0);
     }
 }
-
-/// `#rrggbb` colors mixed: `k` of the way from `a` to `b`.
-fn mix_hex(a: &str, b: &str, k: f64) -> String {
-    let rgb = |h: &str| -> [f64; 3] {
-        let v = u32::from_str_radix(h.trim_start_matches('#'), 16).unwrap_or(0);
-        [((v >> 16) & 255) as f64, ((v >> 8) & 255) as f64, (v & 255) as f64]
-    };
-    let (x, y) = (rgb(a), rgb(b));
-    let c: Vec<u32> = (0..3).map(|i| (x[i] + (y[i] - x[i]) * k.clamp(0.0, 1.0)).round() as u32).collect();
-    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
-}
-

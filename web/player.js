@@ -303,8 +303,8 @@ function buildViews() {
       entry.W = 560; entry.H = 360; entry.m = 44;
       entry.svg = svg('svg', { viewBox: `0 0 ${entry.W} ${entry.H}`, role: 'group', 'aria-label': `${v.name}: plot` });
     }
-    // Plots zoom and pan like spatial views (D-070).
-    if (entry.svg && (st.layout.permits.includes('zoom') || st.layout.permits.includes('pan'))) {
+    // Plots zoom and pan like spatial views (D-070); views of three dimensions turn (D-104).
+    if (entry.svg && ['zoom', 'pan', 'orbit'].some((w) => st.layout.permits.includes(w))) {
       const reset = el('button', { type: 'button', class: 'hint', text: 'Reset view' });
       reset.addEventListener('click', () => { st.player.view_reset(v.id); refresh(); });
       cap.append(reset);
@@ -354,8 +354,9 @@ function drawSpatialChrome(v, g, reps, u) {
   const [x, y, w, h] = v.box;
   const step = niceStep((60 * u) / v.px_per_m) * v.px_per_m; // at least ~60 screen px
   const metres = step / v.px_per_m;
-  const hasGrid = reps.some((r) => r.kind === 'grid');
-  const hasAxes = reps.some((r) => r.kind === 'axes');
+  // In a view of three dimensions the axes and grid come drawn as projected lines (D-100).
+  const hasGrid = reps.some((r) => r.shape === 'grid');
+  const hasAxes = reps.some((r) => r.shape === 'axes');
   if (hasGrid) {
     for (let gx = Math.ceil(x / step) * step; gx <= x + w; gx += step) svg('line', { class: 'gridline', x1: gx, y1: y, x2: gx, y2: y + h, 'stroke-width': u }, g);
     for (let gy = Math.ceil(y / step) * step; gy <= y + h; gy += step) svg('line', { class: 'gridline', x1: x, y1: gy, x2: x + w, y2: gy, 'stroke-width': u }, g);
@@ -485,7 +486,8 @@ function drawRep(v, g, r, u, colorIndex) {
   if (colored) cls.push('styled');
   const grp = svg('g', { class: cls.join(' '), 'data-rep': r.id }, g);
   if (colored) {
-    const from = r.color ? `var(--color-${r.color})` : ownColor(r, colorIndex);
+    // A colour of light comes as `#rrggbb` (D-106); other colours are palette names.
+    const from = r.color ? (r.color.startsWith('#') ? r.color : `var(--color-${r.color})`) : ownColor(r, colorIndex);
     const c = r.color_to ? `color-mix(in srgb, ${from} ${Math.round((1 - r.color_mix) * 1000) / 10}%, var(--color-${r.color_to}))` : from;
     grp.style.setProperty('--c', c);
   }
@@ -496,6 +498,20 @@ function drawRep(v, g, r, u, colorIndex) {
   title.textContent = r.text;
   let focusable = null;
   switch (r.shape) {
+    case 'lines': {
+      // Axes and grid of a view of three dimensions, projected by the engine (D-100).
+      const cls = r.kind === 'axes' ? 'axis' : 'gridline';
+      for (const [a, b] of r.lines) {
+        const [A, B] = [m.to(a), m.to(b)];
+        svg('line', { class: cls, x1: A[0], y1: A[1], x2: B[0], y2: B[1], 'stroke-width': u }, grp);
+      }
+      for (const l of r.labels) {
+        const [X, Y] = m.to(l.at);
+        const t = svg('text', { class: 'tick', x: X, y: Y, 'font-size': 10 * u, 'text-anchor': 'middle' }, grp);
+        t.textContent = l.text;
+      }
+      break;
+    }
     case 'point': {
       const [X, Y] = m.to(r.at);
       if (r.highlighted) svg('circle', { class: 'ring', cx: X, cy: Y, r: 13 * u, 'stroke-width': 3 * u }, grp);
@@ -577,14 +593,29 @@ function drawRep(v, g, r, u, colorIndex) {
       svg('image', { class: 'raster', href: canvas.toDataURL(), x: Math.min(fx, tx), y: Math.min(fy, ty), width: Math.abs(tx - fx), height: Math.abs(ty - fy), preserveAspectRatio: 'none', style: 'image-rendering: pixelated' }, grp);
       break;
     }
+    case 'ray': {
+      // A ray (D-106): to the edge of the view, and back behind its start when asked.
+      const [fx, fy] = m.to(r.from), far = 1e5;
+      const [dx, dy] = r.toward;
+      svg('line', { class: 'segment', x1: fx, y1: fy, x2: fx + dx * far, y2: fy + dy * far, 'stroke-width': 2 * u }, grp);
+      if (r.back && r.back !== 'none') {
+        const back = svg('line', { class: 'segment back', x1: fx, y1: fy, x2: fx - dx * far, y2: fy - dy * far, 'stroke-width': 1.5 * u }, grp);
+        if (r.back !== 'solid') back.style.strokeDasharray = r.back === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
+        if (r.back === 'dotted') back.style.strokeLinecap = 'round';
+      }
+      break;
+    }
     case 'polygon': {
       const pts = r.points.map((p) => m.to(p).join(',')).join(' ');
-      svg('polygon', { class: 'shape', points: pts, 'stroke-width': 2 * u }, grp);
+      // An opaque body (D-104) hides what is behind it: the surface under its tint.
+      if (r.opaque) svg('polygon', { class: 'solid', points: pts }, grp);
+      svg('polygon', { class: r.opaque ? 'shape opaque' : 'shape', points: pts, 'stroke-width': 2 * u }, grp);
       break;
     }
     case 'ellipse': {
       // A circle, ellipse or arc (PK-6.3c), exact in view coordinates.
-      svg('path', { class: r.closed ? 'shape' : 'curve', d: curvePath(r), 'stroke-width': 2 * u }, grp);
+      if (r.opaque && r.closed) svg('path', { class: 'solid', d: curvePath(r) }, grp);
+      svg('path', { class: r.closed ? (r.opaque ? 'shape opaque' : 'shape') : 'curve', d: curvePath(r), 'stroke-width': 2 * u }, grp);
       break;
     }
     case 'group': {
@@ -607,9 +638,9 @@ function drawRep(v, g, r, u, colorIndex) {
     }
   }
   if (r.line && r.drawn == null && r.valid !== false) {
-    // The author's line style (D-061), as prismal-svg draws it.
+    // The author's line style (D-061), as prismal-svg draws it; a ray's extension keeps its own.
     const dash = r.line === 'solid' ? 'none' : r.line === 'dashed' ? `${6 * u} ${4 * u}` : `${0.01 * u} ${4 * u}`;
-    for (const e of grp.querySelectorAll('line, polyline, polygon, path')) {
+    for (const e of grp.querySelectorAll('line:not(.back), polyline, polygon, path')) {
       if (e.parentNode.classList.contains('arrow') && e.tagName === 'polygon') continue;
       e.style.strokeDasharray = dash;
       if (r.line === 'dotted') e.style.strokeLinecap = 'round';
@@ -903,7 +934,7 @@ function renderFrame(frame) {
       const top = svg('g', {}, v.svg);
       let arrows = 0;
       for (const r of vf.reps) {
-        if (['point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note', 'raster'].includes(r.shape)) {
+        if (['lines', 'point', 'arrow', 'segment', 'polyline', 'polygon', 'ellipse', 'group', 'note', 'raster', 'ray'].includes(r.shape)) {
           // Draggable and clickable representations are drawn last and outside the plot's clip.
           drawRep(v, r.drag || r.click ? top : reps, r, u, r.shape === 'arrow' ? arrows++ : 0);
         } else if (!['axes', 'grid', 'title'].includes(r.shape)) {
@@ -948,7 +979,7 @@ function renderDescription(frame) {
   lastDescription = now;
   const list = $('#description');
   const lines = [`${frame.run} run, simulation time ${fmt(frame.t)} s`];
-  for (const [, r] of allReps(frame)) if (r.shape !== 'axes' && r.shape !== 'grid') lines.push(r.text);
+  for (const [, r] of allReps(frame)) if (r.kind !== 'axes' && r.kind !== 'grid') lines.push(r.text);
   list.replaceChildren(...lines.map((t) => el('li', { text: t })));
 }
 

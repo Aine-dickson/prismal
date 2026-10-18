@@ -191,6 +191,8 @@ svg .arrow.c2 line { stroke: var(--rep-3); } svg .arrow.c2 polygon { fill: var(-
 svg .arrow.c3 line { stroke: var(--rep-4); } svg .arrow.c3 polygon { fill: var(--rep-4); }
 svg .segment { stroke: var(--rep); }
 svg .shape { fill: color-mix(in srgb, var(--accent) 12%, transparent); stroke: var(--accent); }
+svg .solid { fill: var(--surface); stroke: none; }
+svg .shape.opaque { fill: color-mix(in srgb, var(--accent) 30%, transparent); }
 svg .handle { fill: var(--surface); stroke: var(--accent); }
 svg .ring { fill: none; stroke: var(--hl); }
 svg g.highlighted { filter: drop-shadow(0 0 3px var(--hl)); }
@@ -199,6 +201,7 @@ svg .styled .marker { fill: var(--c); }
 svg .styled line, svg .styled .segment, svg .styled .graph, svg .styled .trace, svg .styled .curve { stroke: var(--c); }
 svg .arrow.styled line { stroke: var(--c); } svg .arrow.styled polygon { fill: var(--c); }
 svg .styled .shape { fill: color-mix(in srgb, var(--c) 12%, transparent); stroke: var(--c); }
+svg .styled .shape.opaque { fill: color-mix(in srgb, var(--c) 30%, transparent); }
 svg .invalid line, svg .invalid .marker, svg .invalid .handle { stroke: var(--bad); stroke-dasharray: 4 3; }
 svg .invalid .marker { fill: none; }
 svg .rep-label { fill: var(--muted); font-family: var(--sans); }

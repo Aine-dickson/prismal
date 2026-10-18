@@ -149,8 +149,68 @@ for (const [key, pres] of [['g18-doublependulum', 'DoubleLab@6'], ['g18-bead', '
   await shot(key);
 }
 
+// A view of three dimensions (D-100): projected axes and floor, the path of a spiral.
+await open('g20-cyclotron/Spiral@30');
+const axes = await count('#views line.axis');
+const floor = await count('#views line.gridline');
+check('a view of three dimensions draws its three axes and its floor', axes >= 3 && floor > 4, `${axes} axes, ${floor} grid lines`);
+await shot('g20-cyclotron');
+
+// Views of three dimensions (D-104): opaque bodies filled solid; dragging an empty point turns
+// the view, so the orbit's path is drawn anew.
+await open('g20-tiltedorbit/Sky@3');
+const solid = await count('#views .shape.opaque');
+check('opaque bodies are filled solid', solid === 2, `${solid} opaque shapes`);
+const pathPoints = () => ev(`[...document.querySelectorAll('[data-rep="Sky.view.room.path"] polyline')].map((p) => p.getAttribute('points')).join('|')`);
+const before = await pathPoints();
+const [ox, oy] = await ev(`(() => { const r = document.querySelector('#views svg').getBoundingClientRect(); return [r.x + 30, r.y + 30]; })()`);
+await mouse('mousePressed', ox, oy);
+await mouse('mouseMoved', ox + 80, oy + 30);
+await mouse('mouseReleased', ox + 80, oy + 30);
+await sleep(300);
+const after = await pathPoints();
+check('dragging an empty point turns a view of three dimensions', before.length > 0 && after !== before, `${before.length} and ${after.length} characters of points`);
+await shot('g20-tiltedorbit');
+await open('g20-door/Hinge');
+check('a door in a group is drawn as an opaque polygon', (await count('#views polygon.shape.opaque')) === 1);
+await shot('g20-door');
+
+// Frames (D-105): the carousel drawn from the ground and from its seat; the path seen from
+// the seat is not the straight one seen from the ground.
+await open('g23-carousel/Ride@3');
+const traces = await ev(`[...document.querySelectorAll('#views svg')].map((s) => [...s.querySelectorAll('polyline')].map((p) => p.getAttribute('points')).join('|'))`);
+check('a view drawn from a turning frame draws its own path', traces.length >= 2 && traces[0] && traces[1] && traces[0] !== traces[1], `${traces.length} views`);
+await shot('g23-carousel');
+
+// An algorithm (D-101): bars as segments in a plot view; after 3 s, four comparisons made,
+// two bars drawn as the pair compared.
+await open('g21-sorting/SortLab@3');
+const bars = await count('#views line.segment');
+const compared = await ev(`(() => { const c = [...document.querySelectorAll('#views line.segment')].map((l) => getComputedStyle(l).stroke); const n = {}; c.forEach((x) => n[x] = (n[x] || 0) + 1); return Math.min(...Object.values(n)); })()`);
+check('a sorting algorithm draws one bar per value', bars === 8 && compared === 2, `${bars} bars, ${compared} in another colour`);
+await shot('g21-sorting');
+
+// Optics (D-103): the rays of the refraction, lens and prism labs are drawn.
+for (const [key, pres, want] of [['g22-refraction', 'RefractionLab', 4], ['g22-lens', 'LensLab', 8], ['g22-prism', 'PrismLab', 6]]) {
+  await open(`${key}/${pres}`);
+  const segs = await count('#views line.segment');
+  check(`${key} draws its rays`, segs >= want, `${segs} segments`);
+  await shot(key);
+}
+
+// Ray optics continued (D-106): a ray to the edge with a dotted back-extension; wave optics
+// (D-107): a moving interference field.
+await open('g22-concave/MirrorLab');
+const backs = await count('#views line.back');
+check('a mirror lab draws dotted back-extensions of its rays', backs === 2, `${backs} back-extensions`);
+await shot('g22-concave');
+await open('g24-ripples/RippleLab@2');
+check('two sources interfere in a heatmap', (await count('#views image.raster')) === 1);
+await shot('g24-ripples');
+
 // The spoon example (D-094): a select chooses the material; the choice survives a restart.
-const md = readFileSync(join(web, '..', 'examples', 'heat.md'), 'utf8');
+// Line ends normalized: a checkout on Windows may write \r\n.
+const md = readFileSync(join(web, '..', 'examples', 'heat.md'), 'utf8').replace(/\r\n/g, '\n');
 const spoon = [...md.matchAll(/```text\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
 await open('rp01');
 await ev(`document.querySelector('#source').value = ${JSON.stringify(spoon)}; document.querySelector('#compile').click(); true`);
