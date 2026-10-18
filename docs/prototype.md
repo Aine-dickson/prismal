@@ -2,7 +2,7 @@
 
 The first implementation of Prismal's core semantics, built kernel-first (D-002): a Rust library and API that runs the first-slice reference programs (D-012) against the specification (`docs/spec/`). Programs are written in the working syntax (D-028) and lowered to the IR by the text parser, or built through the IR API.
 
-- **Status:** v0 prototype, 2026-09-30. Every expectation of RP-01 to RP-08 is checked, model side and presentation side. The text parser reads all eight programs from their documents and lowers them, presentations and runs included, to the IR. The web player runs them in a browser.
+- **Status:** first written 2026-09-30; release 0.2.0 tagged 2026-10-14 (D-096); version 0.3 in progress on the branch `v0.3`, covering D-092 to D-107 as of 2026-10-15. Every expectation of RP-01 to RP-08 is checked, model side and presentation side. The text parser reads all eight programs from their documents and lowers them, presentations and runs included, to the IR. The web player runs them in a browser.
 - **Build and test:** `cargo test` at the repository root (Rust 1.94 or later). `cargo run --release -p prismal-runtime --example report` prints the measured errors quoted below.
 
 ## Structure
@@ -265,6 +265,31 @@ Found on the way: a type error in a `create` override was reported once for each
 
 Acceptance: `prismal-media/tests/export.rs` checks frame instants, WebVTT, canvases, encoder arguments and that parallel work keeps the frames' order; exports RP-08 in the video medium (no report, captions from the narration, drawn or not, identical on a second export, frames of different sizes on one opaque canvas); reports a lesson whose explore beat has no fallback; records RP-04's session; writes a still and a frame directory; names a missing encoder; names cues after their beats (`intro`, `intro.2`), writes the recording script, finds recordings by cue and reports silent cues, and builds the mixing arguments. When ffmpeg is found (`PRISMAL_FFMPEG` or the path), RP-08 is encoded as MP4, WebM and GIF, and ffprobe counts the MP4's frames and finds its caption track; generated tones stand in for recordings of `b1` and `b3`, the longer `b3` is reported, and the video is loud inside both cues and silent between them. Otherwise those tests say so and pass. In the browser, `node web/check-voice.mjs` plays RP-08 with speech and audio playback recorded: every cue spoken once at its start and at the playback speed, none when joining a cue part way, a recording started at the offset into its cue, notes on missing and overlong recordings, and silence on pause.
 
+## Capabilities of 0.2 and 0.3
+
+Each capability below is one register entry, built on a feature branch and merged into the version branch. The register entry holds the design, its options, what is not yet covered and the full list of code it touched; this table gives where to look.
+
+| Decision | Capability | Acceptance | Guide |
+|---|---|---|---|
+| D-092 | Solved equations: unknowns, equations that give rates, the solve in the run's order | `prismal-present/tests/solve.rs` | 17 |
+| D-093 | Enforced constraints: differentiated to the holding force, projected onto after each step and transition; `dot` | `prismal-present/tests/constraints.rs` | 18 |
+| D-094 | `select` controls for a choice of kind; the fifth complete example (`examples/heat.md`) | `prismal-web/tests/select.rs` | 7 |
+| D-095 | Easing, line width, text alignment, narration speed, flows computing only the derived values they read | existing suites | 5, 7, 9 |
+| D-097 | Unknowns of vector and point type, counted by component (`CSolve.widths`) | `prismal-present/tests/vector_unknowns.rs` | 17 |
+| D-098 | Enforced inequalities: contact, release, slack ropes; the holding force named by `with` | `prismal-present/tests/inequality.rs` | 18 |
+| D-099 | Shared definitions, `use`, modules from files, the first-party library (`lib/`) | `prismal-present/tests/modules.rs` | 19 |
+| D-100 | Spaces of three dimensions, `cross`, views from an azimuth and an elevation | `prismal-present/tests/space3d.rs` | 20 |
+| D-101 | Algorithms: statements in order with `if`, `while` and `for`, one step per occurrence | `prismal-present/tests/algorithms.rs` | 21 |
+| D-102 | Friction (holding forces bounded by `where`) and restitution at impacts | `prismal-present/tests/friction.rs` | 18 |
+| D-103 | Geometric optics as the first-party module `optics`; units `nm` and `um` | `prismal-present/tests/optics.rs` | 22 |
+| D-104 | Perspective, turns by author, timeline and learner, depth order and hidden lines, drags across planes | `prismal-present/tests/views3d.rs`, `prismal-host/tests/orbit.rs` | 20 |
+| D-105 | Declared frames, components read in them, frames that turn, views drawn from them, fictitious forces | `prismal-present/tests/frames.rs` | 23 |
+| D-106 | `first ... by`, derived values holding a status, rays to a view's edge, colours from wavelengths, curved mirrors | `prismal-present/tests/optics_more.rs` | 22 |
+| D-107 | Wave optics functions in `optics` (interference, diffraction, polarization), waves drawn as fields | `prismal-present/tests/optics_more.rs` | 24 |
+
+D-096 is the release of 0.2.0 and the scope of 0.3; it adds no capability.
+
+## Coverage of the reference programs
 
 | Program | Covered by the prototype | Not yet covered |
 |---|---|---|
@@ -327,15 +352,20 @@ The energy drifts agree with the predictions of `tools/refvals.py` (RP-04: 7.8e-
 | Item | Where specified |
 |---|---|
 | Keeping comments that are not notes when formatting (the formatter prints from the IR) | D-036 |
-| Relations between relations, relation sets with at most one relation per pair, relation types declared in object types (D-074), creation and destruction as interventions (set aside by D-059), native growable state for very large populations (D-066 option 1); function libraries shared between models | MK sections 8, 16, 17, MK section 2, R-55 |
+| Relations between relations, relation sets with at most one relation per pair, relation types declared in object types (D-074), creation and destruction as interventions (set aside by D-059), native growable state for very large populations (D-066 option 1) | MK sections 8, 16, 17 |
+| Modules: qualified names and aliases, spaces and relation types in modules, module versions recorded with a document, modules supplied through the host protocol | MK-7.1a (D-099) |
 | Sampled sources `over I`; a button's value read from a control (D-072 option 3) | PK-6.3, PK-6.3b |
 | Easing for `reveal`, `hide` and `camera`; animated line width (D-075); narration speed as a learner control separate from playback speed (the web player offers pause, seek, replay, speed, zoom and pan) | PK-8.4, PK-9.7 |
 | Learner predictions as expected values; instrument options read from parameters (a slider of measurement noise); higher-order stochastic integrators (Milstein, stochastic Runge-Kutta); a reading's uncertainty as data (it is stated in text alternatives) | PK-4.3, PK-7.4, PK-3.7, RC-13.9 |
 | Combinations supplied by types (D-073 option 2) | MK-14.9 |
 | Failure policies chosen per category in a run's configuration (D-071) | RC-10.3 |
-| Frames of spaces (D-022), affine temperature units | MK sections 3.4, 4 |
+| Affine temperature units | MK section 3.4 |
+| Frames in object types, frames defined from other frames, the angular velocity of a frame read from its axes (`F.spin`) | MK-4.6a (D-105) |
+| Views of three dimensions: a centre other than the origin, surfaces and fields on grids of three axes, shading, bodies that cut through each other drawn exactly | PK-7.2a (D-100, D-104) |
+| Algorithms: recursion and procedures with arguments, local variables, loops over a collection's members, stepping backwards | D-101 |
+| Optics: an unbounded number of bounces, rays cut by opaque bodies in three dimensions, colours of mixed light, thin films, complex amplitudes, near-field diffraction | D-106, D-107 |
 | Fields: noise and draws per cell, fields of vectors, fields in object types, meshes, implicit solvers for stiff fields on fine grids, computing a lab's run as it is shown (heavy fields now shorten the default horizon instead) | MK-9.4 to MK-9.8, RC-6.2a, HI-5.1a (D-091) |
-| Solved equations and constraints: solved equations over fields, friction at contacts, enforced constraints whose rates read `der` | MK-11.6 to MK-11.9, MK-12.6 to MK-12.10 (D-092, D-093) |
+| Solved equations and constraints: solved equations over fields, enforced constraints whose rates read `der`, constraints on fields; a static coefficient of friction above the kinetic one, friction in two directions, contacts that switch together and depend on each other, collisions between moving bodies | MK-11.6 to MK-11.9, MK-12.6 to MK-12.13 (D-092, D-093, D-098, D-102) |
 
 ## History
 
@@ -376,3 +406,8 @@ The energy drifts agree with the predictions of `tools/refvals.py` (RP-04: 7.8e-
 - 2026-10-13 stochastic leftovers: rates that vary between events (D-086), instruments (D-087), `restart` and `reseed` in explore beats (D-088), histograms of one run (D-089), noise in flows by Euler-Maruyama (D-090).
 - 2026-10-13 fields on grids of one and two axes (D-091): pointwise evaluation, vectorized where the form allows; compact storage of large states.
 - 2026-10-14 enforced constraints (D-093): constraints differentiated along the flows to the rate that reads the holding force, solved with the model's equations, and the state projected onto the constraint after each step and transition; `dot`; residuals judged against the size of their terms; `prismal-present/tests/constraints.rs`.
+- 2026-10-14 solved equations (D-092, specified 2026-10-13, merged from `acausal`): unknowns, equations that give rates, the solve.
+- 2026-10-14 `select` and the fifth complete example, `examples/heat.md` (D-094); leftovers closed (D-095); release 0.2.0 and the scope of 0.3 (D-096).
+- 2026-10-14 vector and point unknowns (D-097); enforced inequalities (D-098); shared definitions, modules and the first-party library (D-099).
+- 2026-10-15 spaces of three dimensions (D-100); algorithms (D-101); friction and restitution (D-102); geometric optics (D-103).
+- 2026-10-15 views of three dimensions (D-104); declared and turning frames (D-105); ray optics continued (D-106) and wave optics (D-107); a ray along a flat mirror no longer divides by zero in `meets_segment`.

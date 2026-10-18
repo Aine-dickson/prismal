@@ -112,7 +112,7 @@ New to simulations and mathematical programming? Read [Start here](docs/guide/00
 | [What goes where](docs/guide/00-structure.md) | every block of a program labelled by its purpose: keep it open while reading examples |
 | [I want to...](docs/guide/14-i-want-to.md) | a goal, and the words to combine for it, with the block each goes in |
 | [A tour](docs/guide/00-tour.md) | one program in four steps: a model, a test, a lab, a narrated lesson and its video; ten minutes |
-| [The guide](docs/guide/README.md) | the language chapter by chapter: units, space, motion, events, tests, presentations, lessons, systems of objects |
+| [The guide](docs/guide/README.md) | the language chapter by chapter: units, space, motion, events, tests, presentations, lessons, systems of objects; then chance, fields, solving equations, constrained motion, modules, three dimensions, algorithms, optics and frames |
 | [Recipes](docs/guide/12-recipes.md) | short answers to "how do I ...": graphs, time plots, dragging, many objects, exports, embedding |
 | [Common mistakes](docs/guide/13-common-mistakes.md) | the errors you will meet first, what they mean and how to fix them |
 | [Reference](docs/guide/10-reference.md) | every form, word and diagnostic code on one page |
@@ -151,4 +151,6 @@ The [host interface](docs/spec/05-host-interface.md) describes every operation.
 | `crates/prismal-host`, `crates/prismal-stdio` | the engine hosts embed, and its process binding |
 | `crates/prismal-web`, `web/` | the WebAssembly binding and the web player |
 | `crates/prismal-svg`, `crates/prismal-media` | SVG frames, images and videos |
+| `lib/` | the first-party library: `mechanics` and `optics`, imported with `use` |
+| `examples/` | complete labs and lessons |
 | `docs/` | guide, specification, decisions |
