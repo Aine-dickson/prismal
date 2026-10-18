@@ -785,7 +785,7 @@ impl CExpr {
     /// `a` near `b` has a value near 0 and the size `|a| + |b|`, the scale its rounding is
     /// measured against (RC-5.6). Sizes multiply through products, quotients and dot
     /// products, and follow components and vectors; other forms have the size of their value.
-    pub fn eval_sized(&self, c: &Ctx, width: usize) -> Result<(Value, [f64; 3]), Status> {
+    pub fn eval_sized(&self, c: &Ctx) -> Result<(Value, [f64; 3]), Status> {
         let plain = |v: Value| {
             let mut x = [0.0; 3];
             let w = v.width();
@@ -797,11 +797,11 @@ impl CExpr {
         let size = |v: &Value| v.width().min(3);
         Ok(match self {
             CExpr::Bin(op @ (BinOp::Add | BinOp::Sub), l, r) => {
-                let ((a, sa), (b, sb)) = (l.eval_sized(c, width)?, r.eval_sized(c, width)?);
+                let ((a, sa), (b, sb)) = (l.eval_sized(c)?, r.eval_sized(c)?);
                 (binary(*op, a, b)?, [sa[0] + sb[0], sa[1] + sb[1], sa[2] + sb[2]])
             }
             CExpr::Bin(op @ (BinOp::Mul | BinOp::Div), l, r) => {
-                let ((a, sa), (b, sb)) = (l.eval_sized(c, width)?, r.eval_sized(c, width)?);
+                let ((a, sa), (b, sb)) = (l.eval_sized(c)?, r.eval_sized(c)?);
                 let (na, nb) = (size(&a), size(&b));
                 // A product's size is the product of its factors' sizes; a quotient's, its
                 // numerator's over the divisor.
@@ -819,27 +819,27 @@ impl CExpr {
                 (v, s)
             }
             CExpr::Call(F::Dot, args) => {
-                let ((a, sa), (_, sb)) = (args[0].eval_sized(c, 3)?, args[1].eval_sized(c, 3)?);
+                let ((a, sa), (_, sb)) = (args[0].eval_sized(c)?, args[1].eval_sized(c)?);
                 let n = a.width().min(3);
                 (self.eval(c)?, [(0..n).map(|k| sa[k] * sb[k]).sum(), 0.0, 0.0])
             }
             CExpr::Call(F::Cross, args) => {
-                let ((_, a), (_, b)) = (args[0].eval_sized(c, 3)?, args[1].eval_sized(c, 3)?);
+                let ((_, a), (_, b)) = (args[0].eval_sized(c)?, args[1].eval_sized(c)?);
                 (self.eval(c)?, [a[1] * b[2] + a[2] * b[1], a[2] * b[0] + a[0] * b[2], a[0] * b[1] + a[1] * b[0]])
             }
             CExpr::Comp(e, k) => {
-                let (_, s) = e.eval_sized(c, 3)?;
+                let (_, s) = e.eval_sized(c)?;
                 (self.eval(c)?, [s[(*k).min(2)], 0.0, 0.0])
             }
             CExpr::MakeVec(items) => {
                 let mut s = [0.0; 3];
                 for (k, e) in items.iter().take(3).enumerate() {
-                    s[k] = e.eval_sized(c, 1)?.1[0];
+                    s[k] = e.eval_sized(c)?.1[0];
                 }
                 (self.eval(c)?, s)
             }
             CExpr::Neg(e) => {
-                let (_, s) = e.eval_sized(c, width)?;
+                let (_, s) = e.eval_sized(c)?;
                 (self.eval(c)?, s)
             }
             _ => plain(self.eval(c)?),

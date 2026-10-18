@@ -1237,7 +1237,7 @@ pub fn compile_rep(cm: &CModel, ctx: &ViewCtx, full: &Rep, instruments: &[prisma
             let e = source(rep, 0).ok_or_else(|| needs("a field in the plane: `heatmap(T)`"))?;
             let (_, t) = ce(e, None)?;
             let (Type::Field { grid, of }, Expr::Ref { .. }) = (&t, e) else { return Err(needs("a field in the plane: `heatmap(T)`")) };
-            if !cm.grids.get(grid).is_some_and(|g| g.y.is_some()) {
+            if cm.grids.get(grid).is_none_or(|g| g.y.is_none()) {
                 return Err(d("PK-E05", "a heatmap draws a field in the plane; a field on a line is drawn by `function_graph(T)` in a plot".into()));
             }
             let range = match rep.prop("range") {
@@ -2766,23 +2766,6 @@ pub fn rep_view(p: &prismal_ir::present::Presentation, id: &str) -> Option<Optio
     p.timeline.iter().flat_map(|t| t.scenes.iter().flat_map(|s| &s.beats)).find_map(|b| in_actions(&b.actions, id))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rounding_near_zero_is_shown_as_zero() {
-        let ground = ViewCtx::Spatial { space: "S".into(), px_per_m: 50.0, y_up: true, look: None, moving: None };
-        assert_eq!(ground.shown(&[0.0, -3.74851e-10]), vec![0.0, 0.0]);
-        assert_eq!(ground.shown(&[2.0, 0.5]), vec![2.0, 0.5]);
-        // Atoms drawn at 1e11 px/m keep a length of 1e-10 m.
-        let atoms = ViewCtx::Spatial { space: "S".into(), px_per_m: 1e11, y_up: true, look: None, moving: None };
-        assert_eq!(atoms.shown(&[1e-10, 0.0]), vec![1e-10, 0.0]);
-        let plot = ViewCtx::Plot { x: (0.0, 10.0), y: (-1.0, 1.0), dims: (Dim::default(), Dim::default()), follow: [false; 2], units: [None, None], window: None, sample_x: None };
-        assert_eq!(plot.shown(&[1e-12, 0.25]), vec![0.0, 0.25]);
-    }
-}
-
 /// The pieces of a `text` template between its `{}` or `{:.N}` (literal braces written
 /// doubled), and the decimals of each value (D-076, D-078).
 pub fn split_template(t: &str) -> (Vec<String>, Vec<Option<usize>>) {
@@ -2811,3 +2794,19 @@ pub fn split_template(t: &str) -> (Vec<String>, Vec<Option<usize>>) {
     (pieces, places)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rounding_near_zero_is_shown_as_zero() {
+        let ground = ViewCtx::Spatial { space: "S".into(), px_per_m: 50.0, y_up: true, look: None, moving: None };
+        assert_eq!(ground.shown(&[0.0, -3.74851e-10]), vec![0.0, 0.0]);
+        assert_eq!(ground.shown(&[2.0, 0.5]), vec![2.0, 0.5]);
+        // Atoms drawn at 1e11 px/m keep a length of 1e-10 m.
+        let atoms = ViewCtx::Spatial { space: "S".into(), px_per_m: 1e11, y_up: true, look: None, moving: None };
+        assert_eq!(atoms.shown(&[1e-10, 0.0]), vec![1e-10, 0.0]);
+        let plot = ViewCtx::Plot { x: (0.0, 10.0), y: (-1.0, 1.0), dims: (Dim::default(), Dim::default()), follow: [false; 2], units: [None, None], window: None, sample_x: None };
+        assert_eq!(plot.shown(&[1e-12, 0.25]), vec![0.0, 0.25]);
+    }
+}

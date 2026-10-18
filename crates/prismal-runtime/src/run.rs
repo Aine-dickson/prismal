@@ -844,7 +844,7 @@ impl<'a> Engine<'a> {
                         ));
                     }
                     if !vals[on].boolean() {
-                        if let (Ok((a, sa)), Ok((b, sb))) = (gap.lhs.eval_sized(&c, 1), gap.rhs.eval_sized(&c, 1)) {
+                        if let (Ok((a, sa)), Ok((b, sb))) = (gap.lhs.eval_sized(&c), gap.rhs.eval_sized(&c)) {
                             if side * (a.num() - b.num()) < -(1e-6 * (sa[0] + sb[0]) + 1e-6) {
                                 return Err(self.diag(
                                     Category::Constraint,
@@ -1842,7 +1842,7 @@ impl Run {
                     // belongs to, before any logged action applied at the same instant.
                     None => {
                         let at = || self.committed.iter().filter(|s| s.t == l.t);
-                        at().filter(|s| s.n >= l.n).take_while(|s| !s.by_action).last().or_else(|| at().last()).expect("event instant")
+                        at().filter(|s| s.n >= l.n).take_while(|s| !s.by_action).last().or_else(|| at().next_back()).expect("event instant")
                     }
                 };
                 self.eval_on(&c, &state.vals, l.t).expect("observation value")
@@ -1881,6 +1881,35 @@ impl Run {
 /// The type of an observation expression.
 pub fn observation_type(cm: &CModel, e: &Expr) -> Type {
     compile_expr(cm, e, None).expect("checks").1
+}
+
+/// Contributions combined with the value before the transition (MK-14.9, D-073): `sum`
+/// and `product` of numbers (`sum` of vectors by component), `min` and `max` of numbers,
+/// `any` and `all` of Booleans. The checker has matched each combination to its type.
+fn combine(how: &str, before: &Value, vs: &[Value]) -> Value {
+    match (how, before) {
+        ("sum", Value::Vec(a)) => {
+            let mut a = *a;
+            for v in vs {
+                let b = v.arr();
+                for k in 0..a.n as usize {
+                    a.v[k] += b.v[k];
+                }
+            }
+            Value::Vec(a)
+        }
+        ("any", _) => Value::Bool(before.boolean() || vs.iter().any(|v| v.boolean())),
+        ("all", _) => Value::Bool(before.boolean() && vs.iter().all(|v| v.boolean())),
+        _ => {
+            let f = |x: f64, y: f64| match how {
+                "sum" => x + y,
+                "product" => x * y,
+                "min" => x.min(y),
+                _ => x.max(y),
+            };
+            Value::Num(vs.iter().fold(before.num(), |acc, v| f(acc, v.num())))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1975,33 +2004,3 @@ mod tests {
         assert_eq!(out.committed.last().unwrap().n, 0, "no partial commit (RC-10.1)");
     }
 }
-
-/// Contributions combined with the value before the transition (MK-14.9, D-073): `sum`
-/// and `product` of numbers (`sum` of vectors by component), `min` and `max` of numbers,
-/// `any` and `all` of Booleans. The checker has matched each combination to its type.
-fn combine(how: &str, before: &Value, vs: &[Value]) -> Value {
-    match (how, before) {
-        ("sum", Value::Vec(a)) => {
-            let mut a = *a;
-            for v in vs {
-                let b = v.arr();
-                for k in 0..a.n as usize {
-                    a.v[k] += b.v[k];
-                }
-            }
-            Value::Vec(a)
-        }
-        ("any", _) => Value::Bool(before.boolean() || vs.iter().any(|v| v.boolean())),
-        ("all", _) => Value::Bool(before.boolean() && vs.iter().all(|v| v.boolean())),
-        _ => {
-            let f = |x: f64, y: f64| match how {
-                "sum" => x + y,
-                "product" => x * y,
-                "min" => x.min(y),
-                _ => x.max(y),
-            };
-            Value::Num(vs.iter().fold(before.num(), |acc, v| f(acc, v.num())))
-        }
-    }
-}
-

@@ -86,8 +86,8 @@ fn rays_by_the_optics_module() {
     let e = v("entry");
     close(e[0], -(0.75f64).sqrt(), "entry x");
     close(e[1], 0.5, "entry y");
-    let (sr, i) = (0.5 / 1.5, (0.5f64).asin());
-    let r_ang = (sr as f64).asin();
+    let (sr, i) = (0.5f64 / 1.5, (0.5f64).asin());
+    let r_ang = sr.asin();
     // The chord turns the radius by π - 2r; the entry radius is at angle π - i from +x.
     let a_exit = std::f64::consts::PI - i - (std::f64::consts::PI - 2.0 * r_ang);
     let q = v("exit");

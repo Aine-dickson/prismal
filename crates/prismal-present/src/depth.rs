@@ -181,7 +181,7 @@ fn cut_path(bodies: &[(&Body, usize)], me: Option<usize>, ctx: &ViewCtx, look: &
         for &(s0, s1) in ps {
             let (a, b) = (lerp(&pts[i], &pts[j], s0), lerp(&pts[i], &pts[j], s1));
             // A piece that starts where the last one ended continues it.
-            if !(joined && s0 == 0.0) && !out.is_empty() {
+            if !(out.is_empty() || joined && s0 == 0.0) {
                 brk.push(out.len());
             }
             if !(joined && s0 == 0.0) {

@@ -1734,7 +1734,7 @@ fn check_grids(spaces: &[Space], model: &Model, index: &HashMap<Id, usize>, func
         };
         // A grid in the plane lies in the model's space of two dimensions, in lengths.
         let plane = g.axes.len() == 2;
-        if plane && !model.default_space.as_ref().and_then(|s| spaces.iter().find(|x| &x.id == s)).is_some_and(|s| s.dimension == 2) {
+        if plane && model.default_space.as_ref().and_then(|s| spaces.iter().find(|x| &x.id == s)).is_none_or(|s| s.dimension != 2) {
             tc.err("MK-E01", format!("grid `{}` has two axes, so it lies in the model's plane: `model M in Plane` with `space Plane = euclidean(2)` (MK-9.5)", g.name));
             continue;
         }

@@ -1202,6 +1202,17 @@ fn arr(j: &Json) -> &[Json] {
     j.as_array().map(|v| v.as_slice()).unwrap_or(&[])
 }
 
+/// `#rrggbb` colors mixed: `k` of the way from `a` to `b`.
+fn mix_hex(a: &str, b: &str, k: f64) -> String {
+    let rgb = |h: &str| -> [f64; 3] {
+        let v = u32::from_str_radix(h.trim_start_matches('#'), 16).unwrap_or(0);
+        [((v >> 16) & 255) as f64, ((v >> 8) & 255) as f64, (v & 255) as f64]
+    };
+    let (x, y) = (rgb(a), rgb(b));
+    let c: Vec<u32> = (0..3).map(|i| (x[i] + (y[i] - x[i]) * k.clamp(0.0, 1.0)).round() as u32).collect();
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1219,15 +1230,3 @@ mod tests {
         assert_eq!(nice_step(1.5), 2.0);
     }
 }
-
-/// `#rrggbb` colors mixed: `k` of the way from `a` to `b`.
-fn mix_hex(a: &str, b: &str, k: f64) -> String {
-    let rgb = |h: &str| -> [f64; 3] {
-        let v = u32::from_str_radix(h.trim_start_matches('#'), 16).unwrap_or(0);
-        [((v >> 16) & 255) as f64, ((v >> 8) & 255) as f64, (v & 255) as f64]
-    };
-    let (x, y) = (rgb(a), rgb(b));
-    let c: Vec<u32> = (0..3).map(|i| (x[i] + (y[i] - x[i]) * k.clamp(0.0, 1.0)).round() as u32).collect();
-    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
-}
-

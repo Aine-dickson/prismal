@@ -397,8 +397,8 @@ pub fn ddt(m: &Model, e: &Expr) -> Result<Option<Expr>, String> {
                     };
                     let Some(da) = d(a)? else { return Ok(None) };
                     let base = match *n - 1.0 {
-                        k if k == 0.0 => None,
-                        k if k == 1.0 => Some(a.clone()),
+                        0.0 => None,
+                        1.0 => Some(a.clone()),
                         k => Some(bin(BinOp::Pow, a.clone(), num(k))),
                     };
                     let scaled = match base {

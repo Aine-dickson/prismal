@@ -411,7 +411,7 @@ impl CModel {
             let c = Ctx { vals, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
             let (mut r, mut size) = (vec![], vec![]);
             for (_, l) in rows {
-                let ((a, sa), (b, sb)) = (l.lhs.eval_sized(&c, l.width)?, l.rhs.eval_sized(&c, l.width)?);
+                let ((a, sa), (b, sb)) = (l.lhs.eval_sized(&c)?, l.rhs.eval_sized(&c)?);
                 let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
                 a.write_to(&mut x[..l.width]);
                 b.write_to(&mut y[..l.width]);
@@ -639,7 +639,7 @@ impl CModel {
                 scratch[i] = v;
             }
             let c = Ctx { vals: &scratch, der: None, t, t0, args: &[], payloads: &[], draws: None, noise: &[], point: None };
-            let ((a, sa), (b, sb)) = (rate.lhs.eval_sized(&c, 1)?, rate.rhs.eval_sized(&c, 1)?);
+            let ((a, sa), (b, sb)) = (rate.lhs.eval_sized(&c)?, rate.rhs.eval_sized(&c)?);
             let opening = side * (a.num() - b.num());
             if opening > 1e-9 * (sa[0] + sb[0]) + 1e-12 {
                 vals[on] = Value::Bool(false);
@@ -698,7 +698,7 @@ impl CModel {
                     size.push(vals[*force].num().abs() + b.abs());
                     continue;
                 }
-                let ((a, sa), (b, sb)) = (q.lhs.eval_sized(&c, q.width)?, q.rhs.eval_sized(&c, q.width)?);
+                let ((a, sa), (b, sb)) = (q.lhs.eval_sized(&c)?, q.rhs.eval_sized(&c)?);
                 let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
                 a.write_to(&mut x[..q.width]);
                 b.write_to(&mut y[..q.width]);
