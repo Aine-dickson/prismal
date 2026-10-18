@@ -305,6 +305,77 @@ algorithm sort on every 0.5 s {
 
 See [chapter 21](21-algorithms.md).
 
+### Make something happen at random times
+
+**Use** an **event** whose trigger is **`random(rate)`**: it happens at random instants, on average `rate` times per unit of time. The rate is read again after every event.
+
+```prismal
+// model / discrete
+n: Real = n0
+// model
+event decay on random(lambda * n) { set n = n - 1 }
+```
+
+See [chapter 15](15-chance.md).
+
+### Draw a random value
+
+**Use** a **distribution** (`normal(m, s)`, `uniform(a, b)`, `bernoulli(p)`) in an **event's** operations, and keep the result in **discrete** state. A distribution is never written in a derived value or a flow; for a random push at every instant, write **`noise`** in a flow.
+
+```prismal
+// model / discrete
+pos: Point = origin
+// model
+event step on every 0.2 s { set pos = pos + normal(0, s) }
+```
+
+See [chapter 15](15-chance.md).
+
+### Use the same definitions in several models or files
+
+**Use** **shared definitions** (an `object` type or a `fn` written outside any model) and **`use`** at the top of each file that needs them. The first-party modules `mechanics` and `optics` come with Prismal.
+
+```prismal
+// file
+use mechanics
+// model / parts
+ball: Body { m = 0.5 kg; vel = (2 m/s, 0 m/s); force = (0 N, -0.5 kg * g) }
+// model / derived
+period: Time = pendulum_period(L, g)
+```
+
+See [chapter 19](19-modules.md).
+
+### Model and show motion in three dimensions
+
+**Use** a **space** of three dimensions, a model **in** it, points and vectors of three components, and a **spatial** view turned by `azimuth` and `elevation` (`distance:` for perspective). `cross` gives the cross product.
+
+```prismal
+// file
+space Room = euclidean(3)
+// model / derived
+force: Vector<Force> = q * cross(vel, B)
+// presentation
+view room: spatial(Room, scale: 1 m -> 45 px, azimuth: -60 deg, elevation: 25 deg, distance: 14 m) { ... }
+```
+
+`permit learner { orbit }` lets the learner turn the view. See [chapter 20](20-three-dimensions.md).
+
+### Read a vector along a slope, or describe motion from a turning seat
+
+**Use** a **frame** beside the model's blocks, and read components in it with **`.in(frame)`**. A frame whose axes read time turns; a view with **`frame:`** shows everything as seen from it. For a model written in a turning frame, add the forces `coriolis` and `centrifugal` from `mechanics`.
+
+```prismal
+// model
+frame slope(at: origin, x: along)
+// model / derived
+down: Acceleration = gravity.in(slope).x
+// presentation
+view seat: spatial(Plane, scale: 1 m -> 50 px, y: up, frame: turning) { ... }
+```
+
+See [chapter 23](23-frames.md).
+
 ### Trace light through a lens, a mirror or a prism
 
 **Use** the first-party module **optics**: each surface a ray meets is one derived value, its new direction another.
@@ -318,6 +389,20 @@ out: Vector<1> = thin_lens(aim, q, origin, (1, 0), f)
 ```
 
 See [chapter 22](22-light-and-rays.md).
+
+### Show interference and diffraction fringes
+
+**Use** the wave functions of **optics** (`two_slit`, `single_slit`, `grating`) as **derived functions** of a position on the screen, drawn by **`function_graph`**; `color: λ` draws them in the colour of their light. For waves spreading across a region, a derived **field** drawn by **`heatmap`**.
+
+```prismal
+// file
+use optics
+// model / derived
+θ(y: Real): Angle  = atan2(y * 1 mm, L)
+two(y: Real): Real = two_slit(d, λ, θ(y))
+```
+
+See [chapter 24](24-light-as-a-wave.md).
 
 ## Show things
 

@@ -1,6 +1,6 @@
 # 20. Three Dimensions
 
-Every space so far was a plane. Some motion does not stay in one: a charge in a magnetic field spirals along it, a top's axis sweeps a cone, a satellite's orbit is tilted. This chapter declares a space of three dimensions, computes with vectors in it, and shows it in a view turned to look from any side (D-100), in perspective, with bodies that hide what is behind them (D-104).
+Every space so far was a plane. Some motion does not stay in one: a charge in a magnetic field spirals along it, a top's axis sweeps a cone, a satellite's orbit is tilted. This chapter declares a space of three dimensions, computes with vectors in it, and shows it in a view turned to look from any side, in perspective, with bodies that hide what is behind them.
 
 > **In plain words.**
 > - `space Room = euclidean(3)` is a space with three axes, `x`, `y` and `z`. Points have three coordinates and vectors three components: `(1 m, 0 m, 2 m)`.
@@ -193,3 +193,5 @@ presentation Hinge for Door {
 3. Write a torque `τ = r × F` for a force `F` applied at a point `r` from a pivot, and draw both and the torque as arrows. Which way does the torque point when the force would turn the lever anticlockwise seen from above?
 4. In the tilted orbit, give the view `azimuth: 6 deg/s * (t - t0)`: what does the view do while the planet moves? Try `distance: 5 m`: why does the near side of the orbit look so much larger?
 5. Add a second door to the hinge model that opens the other way, `rotate: -swing`. Drag the ball between the doors.
+
+Worked solutions to these exercises are in [chapter 11](11-solutions.md#chapter-20).

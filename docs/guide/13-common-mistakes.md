@@ -122,7 +122,36 @@ model Loop {
 }
 ```
 
-Prismal computes formulas in one direction (D-007). If the two equations are meant to be solved together, solve them by hand (`a = -1`, `b = -2`), or make one of the values state that changes over time.
+A derived value is computed in one direction, from values already known, so two derived values cannot be defined from each other. If the two formulas are meant to hold together, declare the values as **unknowns** and state the formulas as equations; the runtime solves them together ([chapter 17](17-solving-equations.md)):
+
+```text
+model Pair {
+  unknown {
+    a: Real
+    b: Real
+  }
+  equation first:  a == b + 1
+  equation second: b == 2 * a
+}
+
+presentation Values for Pair {
+  observe {
+    a_value = a at t0
+    b_value = b at t0
+  }
+}
+```
+
+```cases
+run together of Pair with Values {
+  expect {
+    a_value == -1 within 1e-9
+    b_value == -2 within 1e-9
+  }
+}
+```
+
+If one of the values instead changes over time, make it state with a flow.
 
 **A bounce without a Zeno policy.** A ball that bounces with less speed each time bounces infinitely often in a finite time. Prismal refuses an event that may repeat like this unless the model says what to do when it happens:
 
@@ -218,3 +247,172 @@ run too_steep of Ramp {
 The run is refused before it starts; a test can expect that, as here. In the player the same value from a slider is refused with the range in the message, and the previous value stays.
 
 **A run that stops.** A constraint with `policy stop`, a collection that reaches its capacity, or an event that keeps firing at one instant stops the run with a diagnostic naming the cause and the instant. The player shows it under the transport; a case can observe it with the observation source `diagnostics` (or `diagnostics of` a constraint) and check what happened before it. Chapter 6 covers constraints and run diagnostics.
+
+## Later chapters
+
+The mistakes met first in chapters 15 to 24. Each section names the chapter that teaches the form.
+
+### Chance (chapter 15)
+
+**A random draw in a derived value.** A distribution gives a new value each time it is drawn, so a value computed from one would change whenever it is read. Draws happen at events:
+
+```error
+// error: MK-E28
+model Walk {
+  param { s: Length = 1 m }
+  derived { step: Length = normal(0 m, s) }
+}
+```
+
+Draw in an event's operations and keep the result in discrete state: `event move on every 1 s { set pos = pos + normal(0 m, s) }`.
+
+**`noise` outside a flow.** White noise is a random push at every instant; it only has a meaning as part of a rate:
+
+```error
+// error: MK-E29
+model Jitter {
+  param { D: Real = 1 }
+  state { x: Real = 0 }
+  derived { kick: Real = sqrt(2 * D) * noise }
+  flow der(x) = kick
+}
+```
+
+Write it in the flow itself: `flow der(x) = sqrt(2 * D) * noise`.
+
+### Fields (chapter 16)
+
+**`laplacian` of a field read where no field is computed.** `laplacian(T)` compares each cell with its neighbours, so it gives a value per cell. It belongs where a value per cell is computed: a field's flow or a field's definition.
+
+```error
+// error: MK-E32
+model Rod {
+  grid rod(x: [0 m, 1 m], cells: 50)
+  state { T(x in rod): Real = 20 }
+  derived { bend: Real = laplacian(T) }
+  flow der(T) = 0
+}
+```
+
+Write it in the field's flow, `flow der(T) = alpha * laplacian(T)`, or define a field of the grid with it, `bend(x in rod): Real = laplacian(T)`.
+
+### Solving equations (chapter 17)
+
+**Fewer equations than unknowns.** Every unknown needs an equation to determine it. Here there are two unknowns and one equation:
+
+```error
+// error: MK-E34
+model Divider {
+  param {
+    V0: Voltage    = 9 V
+    R1: Resistance = 100 Ω
+  }
+  unknown {
+    I:  Current
+    V2: Voltage
+  }
+  equation loop: V0 == I * R1 + V2
+}
+```
+
+The message counts both and names them. Add the missing fact, here the second resistor's law, `equation load: V2 == I * R2` with `R2` a parameter. A vector or point unknown counts once per component.
+
+### Constrained motion (chapter 18)
+
+**An enforced constraint with nothing to hold it.** To keep a bob on its circle, something must pull it: the runtime finds that force, so the force must be an `unknown` that the flows read. Without one, the constraint cannot be enforced:
+
+```error
+// error: MK-E36
+space Plane = euclidean(2)
+
+model Bob in Plane {
+  param {
+    L: Length       = 1 m
+    g: Acceleration = 9.81 m/s^2
+  }
+  state {
+    bob: Point            = origin + (1 m, 0 m)
+    vel: Vector<Velocity> = 0
+  }
+  flow {
+    der(bob) = vel
+    der(vel) = (0 m/s^2, -g)
+  }
+  constraint rod: |bob - origin| == L policy enforce
+}
+```
+
+Declare the rod's pull, `unknown { tension: Force = 10 N }`, and add it to the flow along the rod, as chapter 18's first program does.
+
+### Shared definitions and modules (chapter 19)
+
+**A library definition used without `use`.** `Body` is defined in the first-party module `mechanics`, which a file must import:
+
+```error
+// error: SX-E03
+space Plane = euclidean(2)
+
+model Throw in Plane {
+  parts { ball: Body { m = 2 kg } }
+}
+```
+
+Put `use mechanics` at the top of the file. The same holds for the functions of `optics` (chapter 22): `refract`, `thin_lens` and the others are unknown names until the file says `use optics`.
+
+### Three dimensions (chapter 20)
+
+**`cross` in a plane.** The cross product is a vector at right angles to both its arguments, which only exists in a space of three dimensions:
+
+```error
+// error: MK-E01
+space Plane = euclidean(2)
+
+model Spin in Plane {
+  param {
+    u: Vector<1> = (1, 0)
+    v: Vector<1> = (0, 1)
+  }
+  derived { w: Vector<1> = cross(u, v) }
+}
+```
+
+Declare the model in a space of three dimensions, `space Room = euclidean(3)`, with vectors of three components. In a plane, the turning effect of two vectors is the number `u.x * v.y - u.y * v.x`.
+
+### Algorithms (chapter 21)
+
+**A counter that is continuous state.** An algorithm's counters change in steps, so they are discrete state; chapter 21 ends with this mistake (MK-E37).
+
+### Frames (chapter 23)
+
+**A frame of three dimensions with one axis.** In a plane, a frame's second axis is the first turned a quarter turn. In a space of three dimensions that leaves a choice, so the second axis is given:
+
+```error
+// error: SX-E08
+space Room = euclidean(3)
+
+model Tilt in Room {
+  param { a: Vector<1> = (1, 0, 0) }
+  frame tilted(at: origin, x: a)
+}
+```
+
+Give it, `frame tilted(at: origin, x: a, y: (0, 1, 0))`; the third axis follows, at right angles to both.
+
+### Light (chapters 22 and 24)
+
+**A wavelength without a unit.** The functions of `optics` take wavelengths and distances as lengths, so a bare number is refused:
+
+```error
+// error: MK-E03
+use optics
+
+model Fringes {
+  param {
+    d: Length = 0.1 mm
+    θ: Angle  = 0.2 deg unit deg
+  }
+  derived { brightness: Real = two_slit(d, 500, θ) }
+}
+```
+
+Write the unit: `two_slit(d, 500 nm, θ)`.

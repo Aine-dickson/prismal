@@ -172,3 +172,5 @@ presentation TankLab for Tank {
 1. Make the rod's right end insulated instead of held at 20 (remove it from `boundary T`). What temperature does the whole rod reach in the end?
 2. Pluck the string in the middle instead of bending it into an arc: start `u` as a triangle, `0.02 m * (1 - |x - 0.5 m| / 0.5 m)`. What does it look like after a quarter period?
 3. In the tank, make the walls absorb nothing and wrap around instead: `boundary h periodic`. Drop a stone near a wall and watch where the ripple comes back.
+
+Worked solutions to these exercises are in [chapter 11](11-solutions.md#chapter-16).

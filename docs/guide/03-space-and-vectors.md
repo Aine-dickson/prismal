@@ -22,7 +22,7 @@ declares a two-dimensional Euclidean space named `Plane`, with axes `x` and `y` 
 |---|---|---|
 | `origin` | `Point` | the space's origin |
 | `origin + (4 m, 0 m)` | `Point` | the point 4 m along `x` |
-| `(3 m, 0 m)` | `Vector<Length>` when a vector is expected | values in brackets (a **tuple**) are a vector where a vector is needed (D-032) |
+| `(3 m, 0 m)` | `Vector<Length>` when a vector is expected | values in brackets (a **tuple**) are a vector where a vector is needed |
 | `B - A` | `Vector<Length>` | from `A` to `B` |
 | `A + v` | `Point` | `A` moved by `v` |
 | `2 * v`, `v / 2` | `Vector<Length>` | scaled |

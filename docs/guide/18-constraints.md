@@ -433,7 +433,7 @@ run bounce of Bouncing with BounceLab {
 - `F` is positive in whichever direction the flows say: the runtime finds which way opposes the slip, also for a crate that is sliding from the start.
 - The bound can read the other unknowns: `mu * N` is the normal force of the floor, solved at the same instant. Off the floor `N` is 0, and so is the friction.
 - `restitution e` on an inequality: each impact reverses the speed into the boundary and keeps the share `e` of it. With `e = 0.5` the ball rises to a quarter of its height, and each bounce lasts half as long as the one before; they add up to a finite time, `3 sqrt(2 h / g)`, after which the ball rests (when bounces accumulate, the contact becomes lasting, as `zeno settle` does in chapter 5). `restitution 0` is the inelastic impact of the floor without it.
-- One coefficient of friction serves for holding and for sliding; a static coefficient larger than the sliding one is not yet written this way (D-102).
+- One coefficient of friction serves for holding and for sliding; a static coefficient larger than the sliding one is not yet written this way.
 
 ## How constraints are enforced
 
@@ -450,3 +450,5 @@ run bounce of Bouncing with BounceLab {
 1. Give the rod pendulum a starting speed: `vel = (1 m/s, 0 m/s)`. Does the bob start on its circle with this velocity? What does the runtime do to it? (Hint: the velocity along the rod.)
 2. Bend the wire of the bead into a bowl, `pos.y == k * pos.x^2`, starting the bead at `x = 1 m`. In which direction does the wire push now? (Hint: at right angles to the curve, `(-2 k x, 1)` divided by its length.)
 3. Replace the upper rod of the double pendulum by a spring (a flow force `-k (|p1| - L1) u1`, no constraint, no `T1`). Which errors does the checker give if you keep `T1`?
+
+Worked solutions to these exercises are in [chapter 11](11-solutions.md#chapter-18).

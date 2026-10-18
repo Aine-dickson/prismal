@@ -40,7 +40,7 @@ model Oscillator {
 - `flow { der(x) = v }` is a **flow**: the rate of change of `x` is `v`. `der(x)` has the dimension of `x` per time, so `der(x) = x` is rejected.
 - A state variable is defined by one flow (`=`) or by several **contributions** (`+=`) that are summed. Here the spring and the damping each contribute to `der(v)`; the acceleration is their sum.
 - `process spring { ... }` groups flows (and events) under a name. Processes do not change the result; they name the parts of a model so that they can be observed, highlighted and switched off in a variant.
-- A state variable with no flow stays constant.
+- A state variable with no flow, and no equation that gives its rate, stays constant. (An equation can give a rate in place of a flow: [chapter 17](17-solving-equations.md#equations-that-give-rates).)
 
 Time is available as `t` (the current instant), `t0` (the start of the run) and `elapsed` (`t - t0`).
 
@@ -179,6 +179,6 @@ run cooling of Cooling with CoolingChecks {
 }
 ```
 
-`within rel 1e-6` is a relative tolerance, matching the solver's default relative tolerance. Temperatures are written as plain numbers here. Absolute temperatures with units are affine quantities (D-014), which the prototype does not implement yet.
+`within rel 1e-6` is a relative tolerance, matching the solver's default relative tolerance. Temperatures are written as plain numbers here. Absolute temperatures with units are affine quantities, which the prototype does not implement yet.
 
 </details>

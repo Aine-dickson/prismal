@@ -30,7 +30,7 @@ The kind of thing a quantity measures (length, time, speed, mass) is its **dimen
 
 ## Model values: settings, state and calculations
 
-The named values a model works with are its **model values**. (The reference chapters call them *bindings*: a name bound to a value.) Each plays one of three roles. Think of a bathtub:
+The named values a model works with are its **model values**. (The reference chapters call them *bindings*: a name bound to a value.) Most play one of three main roles. Think of a bathtub:
 
 - A **parameter** is a setting chosen before things start, like how wide the drain is. It stays the same during a run unless the learner moves a slider. Written in a `param` block.
 - **State** is the information the model carries forward from one moment to the next: its memory of how things are right now, like the water level. To know the level a second from now, the model needs the level now. Each state value is written with its starting value. State comes in two forms:
@@ -51,6 +51,8 @@ The named values a model works with are its **model values**. (The reference cha
                continuous        discrete
                (`state`)       (`discrete`)
 ```
+
+These three roles are enough for most models and for every program in the first chapters. Two more kinds appear later: **constants**, values fixed by nature that no slider may change, such as the speed of light (`const`, [chapter 2](02-quantities-and-units.md)); and **unknowns**, values found by solving equations together, such as the currents in a circuit (`unknown`, [chapter 17](17-solving-equations.md)).
 
 ## Change over time: rates
 
@@ -83,7 +85,7 @@ The part of Prismal that takes these steps is the **solver**. It chooses the ste
 
 Some things do not change smoothly. They happen at one instant: a ball hits the floor, a tank runs dry, a switch flips. These are **events**.
 
-An event says when it happens and what changes at that instant:
+An event says when it happens and, usually, what changes at that instant:
 
 ```prismal
 event nearly_empty on falling(h - 1 cm) {

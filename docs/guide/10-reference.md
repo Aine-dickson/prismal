@@ -112,7 +112,7 @@ Operators: `+ - * / ^`, `== != < <= > >=`, `and or not`. Units: `m cm mm km μm 
 
 ## Options and clauses
 
-Two forms add details to a form, one for each place they appear (D-081):
+Two forms add details to a form, one for each place they appear:
 
 - **Inside parentheses**, a representation or a view takes **named options**, `name: value`, after its positional arguments: `marker(pos, color: red, label: none)`, `plot(x: [0 s, 5 s], y: [0 m, 2 m], follow: y)`. Each kind takes the options below and no others; a misspelled or repeated option is an error (SX-E08, SX-E09).
 - **After a statement's head**, a declaration, event, constraint or timeline action takes **clauses**, a word and its value without a colon: `param g: Acceleration = 9.81 m/s^2 in [1 m/s^2, 20 m/s^2] symbol "g"`, `camera scene to P zoom 2 for 1 s`. Clauses come in any order, each at most once (an event keeps the order shown, since its block sits among its clauses); the formatter prints them in the order of this page.
@@ -169,6 +169,58 @@ run Name of Model with Presentation {
 ```
 
 **Expectations** (chapter 6): `a == b within tol`, `a == b within rel r`, `a == b exactly`, `a in [lo, hi]`, `obs[k]`, `mean(obs)`, `deviation(obs)` (of an observation's values, chapter 15), `(e on E [microstep 0])`, `log == [E1, E2]`, `start of b`, `end of b`, `initialization fails`, `configuration rejected`.
+
+## First-party modules
+
+Modules that come with Prismal, written in Prismal as any author's library is (`lib/`). `use mechanics` or `use optics` at the top of a file makes their definitions visible; `use optics.{refract, thin_lens}` imports only those named. Chapters lists where a definition is used in the guide; `-` marks a helper the other definitions use.
+
+### `mechanics`
+
+| Definition | Gives | Chapters |
+|---|---|---|
+| `object Body` | A point mass moved by the force on it, `der(vel) = force / m`. Connect `force` to the sum of the forces acting on it. | 19 |
+| `kinetic_energy(m: Mass, v: Velocity): Energy` | The kinetic energy of a mass `m` moving at speed `v`: `m v² / 2`. | - |
+| `spring_force(k: Quantity<M/T^2>, x: Length): Force` | The force of a spring of stiffness `k` stretched by `x` beyond its rest length: `-k x`, toward its rest length. | - |
+| `pendulum_period(L: Length, g: Acceleration): Time` | The period of small swings of a pendulum of length `L` where gravity is `g`. | 19 |
+| `coriolis(m: Mass, w: Vector<1/T>, v: Vector<Velocity>): Vector<Force>` | The Coriolis force on a mass `m` moving at velocity `v`, measured in a frame that turns at angular velocity `w` (along the axis it turns about, as long as its rate): `-2 m w × v`. It turns what moves in the frame without changing its speed. Spaces of three dimensions. | 23 |
+| `centrifugal(m: Mass, w: Vector<1/T>, r: Vector<Length>): Vector<Force>` | The centrifugal force on a mass `m` at displacement `r` from a point on the axis of a frame turning at angular velocity `w`: `-m w × (w × r)`, away from the axis, `m \|w\|² d` at a distance `d` from it. Spaces of three dimensions. | 23 |
+
+### `optics`
+
+| Definition | Gives | Chapters |
+|---|---|---|
+| `direction(d: Vector<1>): Vector<1>` | The direction `d` scaled to length 1. | 22 |
+| `facing(n: Vector<1>, d: Vector<1>): Vector<1>` | The normal `n` of a surface turned against a ray along `d`, scaled to length 1: it points back to the side the ray comes from. | - |
+| `reflect(d: Vector<1>, n: Vector<1>): Vector<1>` | A ray along `d` reflected by a surface of normal `n`: the angle of reflection equals the angle of incidence. | 22 |
+| `incidence_cos(d: Vector<1>, n: Vector<1>): Real` | The cosine of the angle of incidence of a ray along `d` on a surface of normal `n`, between the ray and the normal: 1 head on, 0 grazing. | 22 |
+| `incidence(d: Vector<1>, n: Vector<1>): Angle` | The angle of incidence of a ray along `d` on a surface of normal `n`. | 22 |
+| `totally_reflected(d: Vector<1>, n: Vector<1>, n1: Real, n2: Real): Boolean` | Whether a ray along `d` going from a medium of index `n1` into one of index `n2` through a surface of normal `n` is totally reflected: `n1 sin θ1 > n2`. | 22 |
+| `critical_angle(n1: Real, n2: Real): Angle` | The critical angle from index `n1` into a smaller index `n2`: `sin θc = n2 / n1`. | 22 |
+| `refract(d: Vector<1>, n: Vector<1>, n1: Real, n2: Real): Vector<1>` | Snell's law, `n1 sin θ1 = n2 sin θ2`: the direction of a ray along `d` after it passes from index `n1` into index `n2` through a surface of normal `n` (pointing either way). Beyond the critical angle the ray is reflected instead. | 22 |
+| `hit_plane(p: Point, d: Vector<1>, a: Point, n: Vector<1>): Point` | Where a ray from `p` along `d` meets the plane (in a plane, the line) through `a` with normal `n`. | 22, 14 |
+| `plane_distance(p: Point, d: Vector<1>, a: Point, n: Vector<1>): Length` | How far along a ray from `p` along `d` it meets the plane (in a plane, the line) through `a` with normal `n`: negative behind `p`, infinite when the ray runs along the plane. With `first(... by plane_distance(...))` a ray finds the nearest of several surfaces. | 22 |
+| `meets_segment(p: Point, d: Vector<1>, a: Point, n: Vector<1>, half: Length): Boolean` | Whether a ray from `p` along `d` meets, ahead of `p`, the flat mirror (in a plane, a segment) through `a` with normal `n` reaching `half` from `a` each way. A ray along the mirror never meets it. | 22 |
+| `closest_along(p: Point, d: Vector<1>, c: Point): Length` | How far along a ray from `p` along `d` its line passes closest to `c`. | - |
+| `half_chord_sq(p: Point, d: Vector<1>, c: Point, r: Length): Area` | The square of half the chord a ray's line cuts from the sphere of centre `c` and radius `r`; negative when it misses. | - |
+| `sphere_distance(p: Point, d: Vector<1>, c: Point, r: Length): Length` | How far along a ray from `p` along `d` it first meets the sphere (in a plane, the circle) of centre `c` and radius `r`, ahead of `p`: the near side from outside, the far side from inside or from a point on the sphere. | - |
+| `hit_sphere(p: Point, d: Vector<1>, c: Point, r: Length): Point` | Where a ray from `p` along `d` first meets the sphere of centre `c` and radius `r`. A ray that misses it has no such point. | 22 |
+| `meets_sphere(p: Point, d: Vector<1>, c: Point, r: Length): Boolean` | Whether a ray from `p` along `d` meets the sphere of centre `c` and radius `r` ahead of `p`. | 22 |
+| `sphere_normal(q: Point, c: Point): Vector<1>` | The outward normal of the sphere of centre `c` at a point `q` on it. | 22 |
+| `thin_lens(d: Vector<1>, q: Point, c: Point, a: Vector<1>, f: Length): Vector<1>` | An ideal thin lens of focal length `f` (negative for a diverging lens), centre `c` and axis `a`: the direction of a ray along `d` after it crosses the lens at `q`, a point of the lens's plane. Rays parallel to the axis then pass through the focus; a ray through the centre goes straight on. | 22, 14 |
+| `thin_mirror(d: Vector<1>, q: Point, c: Point, a: Vector<1>, f: Length): Vector<1>` | A curved mirror in the paraxial approximation: the direction of a ray along `d` after it meets, at `q`, the mirror of centre `c`, axis `a` (pointing back toward the light) and focal length `f` (positive for a concave mirror, negative for a convex one). Rays parallel to the axis come back through the focus, `f` in front of the mirror. | 22 |
+| `mirror_focus(R: Length): Length` | The focal length of a spherical mirror of radius `R`: half its radius. | 22 |
+| `image_distance(u: Length, f: Length): Length` | The distance of the image of an object at distance `u` in front of a thin lens or mirror of focal length `f`: `1/u + 1/v = 1/f`. Positive for a real image (behind a lens, in front of a mirror), negative for a virtual one. | 22 |
+| `magnification(u: Length, f: Length): Real` | The magnification of that image: `-v / u`, negative when it is upside down. | 22 |
+| `lensmaker(n: Real, r1: Length, r2: Length): Length` | The focal length of a thin lens of index `n` in air whose faces have radii `r1` and `r2` (positive when the centre of the face is behind the lens): the lensmaker's equation. | 22 |
+| `cauchy(A: Real, B: Area, λ: Length): Real` | The refractive index of a glass at wavelength `λ` by Cauchy's formula, `A + B / λ²`: blue light is bent more than red. | 22 |
+| `wavenumber(λ: Length): Quantity<1/L>` | The wavenumber of a wave of wavelength `λ`: `2 π / λ`, the phase it gains per length travelled. | 24 |
+| `two_slit(d: Length, λ: Length, θ: Angle): Real` | The brightness, as a share of the brightest, that two narrow slits `d` apart send at angle `θ` with light of wavelength `λ`: `cos²(π d sin θ / λ)`. The two waves arrive in step where their paths differ by a whole number of wavelengths. | 24 |
+| `single_slit(a: Length, λ: Length, θ: Angle): Real` | The brightness, as a share of the middle's, that one slit of width `a` sends at angle `θ`: `(sin β / β)²` with `β = π a sin θ / λ`; dark where `a sin θ` is a whole number of wavelengths. | 24 |
+| `grating(N: Real, d: Length, λ: Length, θ: Angle): Real` | The brightness, as a share of the brightest, of a grating of `N` narrow slits `d` apart: `(sin(N φ) / (N sin φ))²` with `φ = π d sin θ / λ`. Its bright lines are where two slits do, `d sin θ = m λ`, and grow sharper with more slits. | 24 |
+| `bright_angle(m: Real, d: Length, λ: Length): Angle` | The angle of the bright line of order `m` of slits `d` apart: `d sin θ = m λ`. | 24 |
+| `malus(θ: Angle): Real` | Malus's law: the share of polarized light a polarizer passes when turned `θ` from the light's polarization, `cos² θ`. | 24 |
+| `brewster(n1: Real, n2: Real): Angle` | Brewster's angle from index `n1` into index `n2`, `tan θ = n2 / n1`: light reflected at it is polarized along the surface. | 24 |
+| `angle_between(u: Vector<1>, v: Vector<1>): Angle` | The angle between two directions, from 0 to 180 degrees: how far a ray has been turned. | 22 |
 
 ## Glossary
 
@@ -315,7 +367,7 @@ Every word of the language, what it does, and the chapter that teaches it.
 | MK-E24 | event payload with no source |
 | MK-E25 | `index` read outside the overrides of a collection |
 | MK-E26 | a member that does not exist, a part used as a value, or an aggregate that has no value |
-| MK-E27 | retired (D-086): rates may read continuous state and `t` |
+| MK-E27 | retired: rates may read continuous state and `t` |
 | MK-E28 | a distribution outside an event's condition and operations |
 | MK-E29 | `noise` outside a flow, or in a field's flow |
 | MK-E30 | a flow that is not linear in `noise` |

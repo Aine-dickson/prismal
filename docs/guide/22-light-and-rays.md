@@ -1,6 +1,6 @@
 # 22. Light and Rays
 
-Light travels in straight lines until it meets a surface: there it is reflected, or it bends as it passes into another material. Ray diagrams follow a few rays through mirrors, lenses and prisms to show where images form and why a prism splits white light. This chapter draws them with the first-party module `optics`, written in Prismal like the `mechanics` module of chapter 19 (D-103).
+Light travels in straight lines until it meets a surface: there it is reflected, or it bends as it passes into another material. Ray diagrams follow a few rays through mirrors, lenses and prisms to show where images form and why a prism splits white light. This chapter draws them with the first-party module `optics`, written in Prismal like the `mechanics` module of chapter 19.
 
 > **In plain words.**
 > - A **ray** is a starting point and a **direction**, a vector without a unit, `Vector<1>`, such as `(1, -1)`: as far right as down.
@@ -408,3 +408,5 @@ A thick lens, or a mirror beyond the paraxial approximation, is a chain of `hit_
 1. Make the prism's angle of incidence a slider and find the angle where the red ray turns least (the **minimum deviation**). How does it compare with the angle where it leaves symmetrically?
 2. Draw a concave mirror as a circle of radius 40 cm centred 40 cm in front of it, send rays parallel to its axis at several heights with `hit_sphere` and `reflect`, and find where they cross the axis. Why do the rays far from the axis cross nearer the mirror? (Spherical aberration.)
 3. Give the lens lab a fourth ray from the object's tip at any angle, and check it also passes through the image.
+
+Worked solutions to these exercises are in [chapter 11](11-solutions.md#chapter-22).

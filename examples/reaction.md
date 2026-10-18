@@ -148,7 +148,7 @@ presentation IsomerLesson for Isomer {
 ```
 
 - `intervene { set n0 = 20 }` changes the number of molecules at the instant shown; `restart` then runs the reaction again from all A with that number. Without `restart` the run would go on with the thousand molecules it has, and `reset` would replay the run from its start, where there were still a thousand.
-- In the explore beat, "Try it" (`button(restart)`) starts the reaction again with the learner's `n0`, and "Another run" (`button(reseed)`) draws another run with it, as often as the learner likes (D-088). The beat keeps the learner's `n0` (`keep n0`); the beat after it restarts with it, so a video, which plays the fallback (200 molecules), shows the same.
+- In the explore beat, "Try it" (`button(restart)`) starts the reaction again with the learner's `n0`, and "Another run" (`button(reseed)`) draws another run with it, as often as the learner likes. The beat keeps the learner's `n0` (`keep n0`); the beat after it restarts with it, so a video, which plays the fallback (200 molecules), shows the same.
 
 ```cases
 run lesson of Isomer with IsomerLesson {
@@ -166,4 +166,4 @@ run lesson of Isomer with IsomerLesson {
 cargo run --release -p prismal-media -- examples/reaction.md IsomerLesson reaction.mp4 --speech system
 ```
 
-The narrations are timed for the system voice: the exporter reports any narration whose voice lasts longer than its `for` (D-079). Without [ffmpeg](https://ffmpeg.org), give a folder name instead of `reaction.mp4` to get the frames as images.
+The narrations are timed for the system voice: the exporter reports any narration whose voice lasts longer than its `for`. Without [ffmpeg](https://ffmpeg.org), give a folder name instead of `reaction.mp4` to get the frames as images.
