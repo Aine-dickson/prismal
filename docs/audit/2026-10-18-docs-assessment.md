@@ -4,7 +4,7 @@
 - **Scope:** the root `README.md`, `docs/guide/` (start pages, chapters 1 to 24, reference, solutions, recipes, common mistakes, goal index), `examples/README.md`, and the project documents a contributor reads first (`docs/PROJECT-STATE.md`, `docs/prototype.md`).
 - **Question:** can a reader who has never seen Prismal learn to use it from these pages, and what keeps the pages correct as the language grows?
 - **Sources:** two reviews merged here. (1) An independent review of the public documentation on `main`, made from the published pages without building the project; its findings P-01 to P-08 are kept by reference below. (2) A review of the `v0.3` branch with the repository checked out and the test suite run (390 tests passing, every guide program included). Every finding below was verified against `v0.3` on this date.
-- **Finding IDs:** `DQ-##`, permanent. Status is kept in section 4 and updated as findings are closed.
+- **Finding IDs:** `DQ-##`, permanent; DQ-16 was found while closing the others. Status is kept in section 4 and updated as findings are closed.
 
 ## 1. Summary verdict
 
@@ -121,23 +121,24 @@ The first view of a running presentation needs Rust, the WebAssembly target and 
 
 | ID | Class | Priority | Status |
 |---|---|---|---|
-| DQ-01 | Contradiction | High | Open |
-| DQ-02 | Contradiction | High | Open |
-| DQ-03 | Contradiction | Medium | Open |
-| DQ-04 | Missing connection | Medium | Open |
-| DQ-05 | Missing connection | Medium | Open |
-| DQ-06 | Missing connection | Low | Open |
-| DQ-07 | Missing connection | Low | Open |
-| DQ-08 | Coverage gap | High | Open |
-| DQ-09 | Coverage gap | Medium | Open |
-| DQ-10 | Coverage gap | Medium | Open |
-| DQ-11 | Coverage gap | Low | Open |
-| DQ-12 | Navigation | Medium | Open |
-| DQ-13 | Navigation | Low | Open (review) |
-| DQ-14 | Editorial | Low | Open |
-| DQ-15 | Editorial | Low | Owner decision |
+| DQ-01 | Contradiction | High | Closed 2026-10-18: chapter 6 teaches the checking policies as those of the chapter and names `enforce` with a link to chapter 18 |
+| DQ-02 | Contradiction | High | Closed 2026-10-18: chapter 6 gives the three roles of an equation in a table; chapter 4 qualifies "no flow" |
+| DQ-03 | Contradiction | Medium | Closed 2026-10-18: chapter 5 and Start here make the handler optional and say what an event without one is for |
+| DQ-04 | Missing connection | Medium | Closed 2026-10-18: the circular example points to `unknown`, with a tested program |
+| DQ-05 | Missing connection | Medium | Closed 2026-10-18: "three main roles", constants and unknowns named with links |
+| DQ-06 | Missing connection | Low | Closed 2026-10-18 |
+| DQ-07 | Missing connection | Low | Closed 2026-10-18 |
+| DQ-08 | Coverage gap | High | Closed 2026-10-18: every exercise of chapters 15 to 24 solved in chapter 11 with programs checked by the tests; each chapter links to its solutions |
+| DQ-09 | Coverage gap | Medium | Closed 2026-10-18: a "Later chapters" section with nine checked error examples |
+| DQ-10 | Coverage gap | Medium | Closed 2026-10-18: six goals for chapters 15, 19, 20, 23 and 24 |
+| DQ-11 | Coverage gap | Low | Closed 2026-10-18: a "First-party modules" section lists every definition of `mechanics` and `optics` |
+| DQ-12 | Navigation | Medium | Closed 2026-10-18: the guide index is a learning path (with what each later chapter builds on) and lookup pages |
+| DQ-13 | Navigation | Low | Closed 2026-10-18: the tour and the block map say who they are for |
+| DQ-14 | Editorial | Low | Closed 2026-10-18: decision and specification references removed from the guide, the root README and the examples; diagnostic codes kept |
+| DQ-15 | Editorial | Low | Partly closed 2026-10-18: the root README opens with an animation of the tour's lesson. A hosted web player remains an owner decision |
+| DQ-16 | Contradiction | Medium | Found and closed 2026-10-18 while solving the exercises: chapter 17's exercise 2 named a binding `on`, a reserved word; it is now `connected` |
 
-**Order of work.** First, DQ-01 to DQ-07 and DQ-12: prose edits to known lines, one session. Then DQ-08 (the largest: programs to write and test), DQ-09, DQ-10, DQ-11. DQ-13 and DQ-14 with any later pass over the affected pages. DQ-15 when the owner chooses.
+**Lesson from DQ-16.** An exercise is text that no test runs. Solving every exercise with a checked program, as section 6 requires, is what finds such mistakes.
 
 ## 5. Principles for writing the guide
 
