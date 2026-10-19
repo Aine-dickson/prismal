@@ -1,6 +1,6 @@
 # 23. Frames
 
-A vector does not depend on the axes it is measured against, but its components do. Gravity on a slope is easier to think about as a part along the slope and a part across it; a ball rolling straight across a turning carousel looks, to a rider, as if it curves. This chapter declares **frames**, axes of the model's own, reads points and vectors in them, draws a view as seen from one, and writes the forces a turning frame adds (D-022, D-105).
+A vector does not depend on the axes it is measured against, but its components do. Gravity on a slope is easier to think about as a part along the slope and a part across it; a ball rolling straight across a turning carousel looks, to a rider, as if it curves. This chapter declares **frames**, axes of the model's own, reads points and vectors in them, draws a view as seen from one, and writes the forces a turning frame adds.
 
 > **In plain words.**
 > - A **frame** is an origin and a set of axes. Every space has its standard frame (`origin`, `x`, `y`, `z`); a model can declare others, turned or moving.
@@ -212,3 +212,5 @@ run released of Turntable with Spin {
 1. In the slope model, add a frame whose first axis is horizontal and read the ball's velocity in it. When is its vertical part largest?
 2. In the carousel, set the ball's start velocity to `(0 m/s, 0.5 m/s)` and `w` to `0.5 /s`. Why does the ball seem to stay put on the carousel at first? (Hint: compare its speed with the speed of the carousel under it.)
 3. Write the turntable puck again in the ground's frame, with no forces at all, and draw it in a view with `frame:` a turning frame. Compare its path with the one the forces give.
+
+Worked solutions to these exercises are in [chapter 11](11-solutions.md#chapter-23).

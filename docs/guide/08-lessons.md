@@ -1,6 +1,6 @@
 # 8. Lessons
 
-A **lesson** is a presentation with a **timeline**: a sequence of scenes and beats that narrate, run the simulation, pause it, show and highlight things, and give the learner moments to explore. The timeline directs the simulation (play, pause, seek, change); the model never depends on it (D-009).
+A **lesson** is a presentation with a **timeline**: a sequence of scenes and beats that narrate, run the simulation, pause it, show and highlight things, and give the learner moments to explore. The timeline directs the simulation (play, pause, seek, change); the model never depends on it.
 
 > **In plain words.**
 > - A **timeline** is the script of a lesson, like the script of a short film. It is split into **scenes**, and each scene into **beats**: small steps such as "say this", "let the ball fall", "pause and highlight it".
@@ -20,7 +20,7 @@ timeline {
 }
 ```
 
-Beats play one after another. Within a beat, the actions that direct the run (`run`, `hold`, `seek`, `reset`, `branch`, `intervene`, `request`) apply first, in written order, at the beat's start; then the other actions start together, and the beat ends when the last of them ends (D-033). `sequence { ... }` runs actions one after another inside a beat.
+Beats play one after another. Within a beat, the actions that direct the run (`run`, `hold`, `seek`, `reset`, `branch`, `intervene`, `request`) apply first, in written order, at the beat's start; then the other actions start together, and the beat ends when the last of them ends. `sequence { ... }` runs actions one after another inside a beat.
 
 ## Actions
 
@@ -37,7 +37,7 @@ Beats play one after another. Within a beat, the actions that direct the run (`r
 | `in view { reps }` | adds representations to a view from now on | none |
 | `show rep` | adds a representation over the presentation (for example a formula) | none |
 | `intervene { set p = value }` | changes a parameter at the instant shown | none |
-| `request E` | makes an `on request` event of the model happen now (D-027) | none |
+| `request E` | makes an `on request` event of the model happen now | none |
 | `wait 2 s` | waits | the given time |
 | `explore limit L keep p { controls } fallback { actions }` | the learner's turn (below) | until the learner continues, or `L` |
 | `wait learner [limit L] [fallback { actions }]` | a continue point (below) | until the learner continues, or `L` |
@@ -72,10 +72,10 @@ beat choose {
 }
 ```
 
-- During an explore beat the learner may use the listed controls, and only those (D-025). Outside explore beats the learner controls the timeline and the view, never the model.
+- During an explore beat the learner may use the listed controls, and only those. Outside explore beats the learner controls the timeline and the view, never the model.
 - The explore beat runs on a **branch** of the lesson's run: the learner's changes do not rewrite the lesson. `keep h` carries the learner's `h` into the rest of the lesson; without `keep`, the lesson returns to its own run where the beat started.
 - The beat ends when the learner continues, or after `limit`.
-- `fallback { ... }` is what plays instead in media without interaction (a video export, PK-9.10).
+- `fallback { ... }` is what plays instead in media without interaction (a video export).
 
 ### Buttons in explore beats
 
@@ -300,14 +300,14 @@ An explore beat without a `limit` waits for the learner in the same way.
 
 ## Animation
 
-Three actions animate the presentation itself, never the model (D-042):
+Three actions animate the presentation itself, never the model:
 
 | Action | Effect | Duration |
 |---|---|---|
 | `reveal fade [for d] [in view] { reps }` | shows representations, their opacity rising from 0 to 1 | `d`, 1 s by default |
 | `reveal draw [for d] [in view] { reps }` | shows lines and paths drawn from start to end (points fade) | `d`, 1 s by default |
 | `hide name for d` | fades a representation out | `d` |
-| `camera view [to P] [zoom z] [for d]` | moves a view's camera to centre on `P` and magnify `z` times: a point in a spatial view, a pair of axis values in a plot (`camera graph to (5 s, 0 m) zoom 2`, D-075) | `d`, 1 s by default |
+| `camera view [to P] [zoom z] [for d]` | moves a view's camera to centre on `P` and magnify `z` times: a point in a spatial view, a pair of axis values in a plot (`camera graph to (5 s, 0 m) zoom 2`) | `d`, 1 s by default |
 
 The camera's point is evaluated at every frame: `camera scene to pos` keeps following the ball after the move. `zoom 1` returns to the view's own scale. Animations are functions of presentation time, so a lesson looks the same every time it plays and in a video export.
 
@@ -341,7 +341,7 @@ run movie of FreeFall with DropMovie {
 
 ## Moving, fading and handing back
 
-`animate` changes a presentation property of a representation over time (D-068). It never changes the model: the ball's position is the model's, so an animation moves the drawing, not the ball.
+`animate` changes a presentation property of a representation over time. It never changes the model: the ball's position is the model's, so an animation moves the drawing, not the ball.
 
 | Action | Effect | Duration |
 |---|---|---|
@@ -390,7 +390,7 @@ Without `release`, `seek t0` would make the ball jump to the top at once. Run-di
 
 ## Exporting a video
 
-A lesson can be exported as a video file (D-052). The export opens the lesson in the video medium, so explore beats play their `fallback`, and draws every frame at a fixed rate:
+A lesson can be exported as a video file. The export opens the lesson in the video medium, so explore beats play their `fallback`, and draws every frame at a fixed rate:
 
 ```sh
 cargo run --release -p prismal-media -- lesson.md DropMovie drop.mp4 --fps 30 --scale 2
@@ -408,7 +408,7 @@ Since frames depend only on the program and presentation time, exporting twice g
 
 ## Narration sound
 
-A program carries narration as text; sound is added by whatever plays it (D-053). Each narration is a **cue** named after its beat: `b3` for the narration of beat `b3`, and `b3.2`, `b3.3` for further narrations in the same beat. A voice is a folder of recordings named by cue (`b1.mp3`, `b3.wav` ...), or a speech synthesizer for cues without a recording.
+A program carries narration as text; sound is added by whatever plays it. Each narration is a **cue** named after its beat: `b3` for the narration of beat `b3`, and `b3.2`, `b3.3` for further narrations in the same beat. A voice is a folder of recordings named by cue (`b1.mp3`, `b3.wav` ...), or a speech synthesizer for cues without a recording.
 
 ```sh
 cargo run --release -p prismal-media -- lesson.md DropLesson script.txt
@@ -568,7 +568,7 @@ The end of `roll` is found by locating the event `done`, so it is checked within
 ## Color, size and shape
 
 **Goal.** A lesson draws attention to parts of a figure: a side turns red, a point grows, a square becomes a circle, and a graph is looked at more closely.
-**How it is built.** Each change is an `animate` action on a named representation, with the property to change: `color`, `line`, `scale` or `morph`. `ease` chooses how the change speeds up and slows down; `camera` on a plot zooms its axes (D-075).
+**How it is built.** Each change is an `animate` action on a named representation, with the property to change: `color`, `line`, `scale` or `morph`. `ease` chooses how the change speeds up and slows down; `camera` on a plot zooms its axes.
 
 | Action | Effect |
 |---|---|

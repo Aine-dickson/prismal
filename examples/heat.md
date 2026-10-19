@@ -141,7 +141,7 @@ presentation SpoonLesson for Spoon {
 ```
 
 - `run rate 5 until warm` plays five seconds of the model per second of the lesson until the handle is warm. `run rate 20` plays twenty seconds per second for as long as the beat lasts, here its narration: 7 s of narration show 140 s of the spoon.
-- `intervene { set material = steel }` changes the material; `restart` then puts a cold spoon into the water, keeping the change (D-085).
+- `intervene { set material = steel }` changes the material; `restart` then puts a cold spoon into the water, keeping the change.
 - The explore beat keeps the learner's material (`keep material`), and the beat after it starts again with it. The video plays the fallback: a glass spoon.
 
 ```cases
@@ -159,4 +159,4 @@ run lesson of Spoon with SpoonLesson {
 cargo run --release -p prismal-media -- examples/heat.md SpoonLesson spoon.mp4 --speech system
 ```
 
-The narrations are timed for the system voice: the exporter reports any narration whose voice lasts longer than its `for` (D-079). Without [ffmpeg](https://ffmpeg.org), give a folder name instead of `spoon.mp4` to get the frames as images.
+The narrations are timed for the system voice: the exporter reports any narration whose voice lasts longer than its `for`. Without [ffmpeg](https://ffmpeg.org), give a folder name instead of `spoon.mp4` to get the frames as images.

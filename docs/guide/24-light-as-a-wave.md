@@ -1,6 +1,6 @@
 # 24. Light as a Wave
 
-Rays explain shadows, mirrors and lenses, but not the bright and dark lines light makes after passing two close slits, nor why a polarizing filter turned across another blocks the light. Those come from light being a wave: waves that meet add up, crest on crest or crest on trough. This chapter draws waves from two sources as a field, the patterns that slits and gratings throw on a screen, and polarizers, with the wave functions of the `optics` module (D-107).
+Rays explain shadows, mirrors and lenses, but not the bright and dark lines light makes after passing two close slits, nor why a polarizing filter turned across another blocks the light. Those come from light being a wave: waves that meet add up, crest on crest or crest on trough. This chapter draws waves from two sources as a field, the patterns that slits and gratings throw on a screen, and polarizers, with the wave functions of the `optics` module.
 
 > **In plain words.**
 > - A wave repeats every **wavelength** `λ` along its way. Two waves that meet **interfere**: where their crests arrive together they add to a brighter wave, where a crest meets a trough they cancel.
@@ -201,3 +201,5 @@ The patterns are those of a far screen (Fraunhofer diffraction) and of narrow sl
 1. In the ripple tank, put a third source on the middle line behind the other two. Which lines of calm survive?
 2. On the screen, draw `two(y) * one(y)`, the fringes of two real slits, and change `a`. How many bright fringes fit inside the middle band when `a = d / 5`?
 3. Find, with a slider for `middle`, the angle that lets the most light through three filters. Why is it halfway?
+
+Worked solutions to these exercises are in [chapter 11](11-solutions.md#chapter-24).

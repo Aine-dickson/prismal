@@ -1,6 +1,6 @@
 # 19. Shared Definitions and Modules
 
-Chapter 9 wrote an object type inside the model that uses it. A kind of thing worth describing once (a body moved by forces, a spring, a formula for kinetic energy) is often needed by several models, and by other authors. This chapter writes definitions **outside** any model, so that every model of the file can use them, and puts them in a **module** that other files import with `use` (D-099).
+Chapter 9 wrote an object type inside the model that uses it. A kind of thing worth describing once (a body moved by forces, a spring, a formula for kinetic energy) is often needed by several models, and by other authors. This chapter writes definitions **outside** any model, so that every model of the file can use them, and puts them in a **module** that other files import with `use`.
 
 > **In plain words.**
 > - A **shared definition** is an `object`, `enum` or `fn` written at the top level of a file, not inside a model. Every model in the file can use it by name.
@@ -128,3 +128,5 @@ run facts of Swing with SwingFacts {
 
 1. Move the `Ball` object type of chapter 9's row of balls out of its model, so that a second model can drop balls on the Moon with it. What has to become an input?
 2. Write a module `snell` with a function `refraction_angle(n1: Real, n2: Real, θ: Angle): Angle` from Snell's law, and use it in a model of a light ray. (Hint: `asin` is not built in; `atan2` and `sqrt` are.) Compare it with the first-party `optics` module of chapter 22.
+
+Worked solutions to these exercises are in [chapter 11](11-solutions.md#chapter-19).

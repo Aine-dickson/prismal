@@ -49,7 +49,7 @@ presentation Name for Model {
 | `text("... {e} ...")` | an author's text, with values in braces (see Text and titles) | any; `at: P` in spatial and plot views |
 | `title("...")` | the caption of its view or panel | any |
 
-A marker, an arrow or a graph is labelled with its name (`as ball`) or its source. `label: "Ball"` writes another label, and `label: none` draws none: a representation named only so that a lesson can highlight it need not show its name (D-078). Its text alternative keeps the name.
+A marker, an arrow or a graph is labelled with its name (`as ball`) or its source. `label: "Ball"` writes another label, and `label: none` draws none: a representation named only so that a lesson can highlight it need not show its name. Its text alternative keeps the name.
 | `formula(f [, live: true])` | the definition of a derived binding or function, typeset | any |
 | `formula("R", expression [, live: true])` | a labeled expression, `R = ...`, typeset | any |
 | `equation(name [, live: true])` | a model equation, typeset, with its symbols' current values | any |
@@ -69,7 +69,7 @@ A `marker` is a dot of fixed size on the screen. A `circle`, `ellipse` or `arc` 
 
 ### Color and line
 
-A drawn representation may say how it looks: `color:` names a color, and `line:` how a stroke is drawn (D-061).
+A drawn representation may say how it looks: `color:` names a color, and `line:` how a stroke is drawn.
 
 ```prismal
 segment(origin, pos, color: blue, line: dashed) as rod
@@ -81,9 +81,9 @@ marker(pos, color: red) as ball
 - Lines are `solid`, `dashed` or `dotted`. `width: 2` draws the strokes twice as thick as the kind's own (a positive number, a multiple of the usual width).
 - Markers take a color; arrows, segments, polylines, polygons, circles, ellipses, arcs, traces, graphs, series and histograms take a color, a line and a width. Other kinds, and groups, take neither.
 - Without them, each kind is drawn its own way (arrows take turns through a few colors, a trace is dashed).
-- Color never carries meaning alone (D-026): what a color distinguishes is also named (`as rod`) or labeled, and the text alternative does not mention it.
+- Color never carries meaning alone: what a color distinguishes is also named (`as rod`) or labeled, and the text alternative does not mention it.
 
-Every representation has a **text alternative** generated from what it shows ("slider for θ = 45 deg, from 5 deg to 85 deg"), for screen readers and the player's Description tab (D-026).
+Every representation has a **text alternative** generated from what it shows ("slider for θ = 45 deg, from 5 deg to 85 deg"), for screen readers and the player's Description tab.
 
 ## Controls and inverses
 
@@ -99,7 +99,7 @@ arrow(u, from: A)  { on drag head as h { propose u = h - A } }
 - Proposals go through the model's checks. While dragging, an invalid proposal (outside a range, violating a `reject` constraint) is shown as invalid with the reason; releasing commits the last valid one. Each commit is one intervention, which undo removes.
 - While the learner drags, a running model is held at the instant shown and goes on after the release (drag mode `hold`). `on drag live as p` keeps it running instead, so the learner can steer it (see Steering a running model, below).
 
-What the learner may change: **parameters**, by default; **state**, only when the model declares it `intervenable` (`state { x: Length = 0 m intervenable }`); never constants, derived bindings or inputs (D-023). A control on anything else is rejected when the presentation is checked (PK-E03).
+What the learner may change: **parameters**, by default; **state**, only when the model declares it `intervenable` (`state { x: Length = 0 m intervenable }`); never constants, derived bindings or inputs. A control on anything else is rejected when the presentation is checked (PK-E03).
 
 ## A program
 
@@ -200,7 +200,7 @@ presentation CannonPage for Cannon {
 ```
 
 - The plot is on the left; the controls sit above the readout on its right.
-- A layout says where views go and how they share the page, never what they show (PK-7.4). A medium adapts it to its size: on a narrow screen the web player turns a row into a column.
+- A layout says where views go and how they share the page, never what they show. A medium adapts it to its size: on a narrow screen the web player turns a row into a column.
 - Every name in a layout is a view or panel of the presentation, placed once. Views a layout leaves out follow it, in the order they are declared.
 
 ```cases
@@ -278,7 +278,7 @@ run quarter_turn of Wheel with WheelView {
 }
 ```
 
-A member of a group may be dragged. The gesture's value is then the pointer's point **in the group's frame**, the frame the member is written in (D-062):
+A member of a group may be dragged. The gesture's value is then the pointer's point **in the group's frame**, the frame the member is written in:
 
 **Goal.** The learner sets a radius by dragging the tip of a dial that is drawn turned.
 **How it is built.** The tip is a member of a turned `group`; its drag gives the pointer in the group's frame, so `p.x` is the radius whichever way the dial is turned.
@@ -356,7 +356,7 @@ presentation Bad for Moving {
 }
 ```
 
-A velocity arrow in a view that maps lengths needs its own scale: `arrow(vel, from: origin, scale: 1 m/s -> 10 px)` (PK-5.5).
+A velocity arrow in a view that maps lengths needs its own scale: `arrow(vel, from: origin, scale: 1 m/s -> 10 px)`.
 
 ## Exercises
 
@@ -405,7 +405,7 @@ run compare of Cannon2 with Compare {
 
 ## Plots that grow, zoom and pan
 
-A plot's ranges say what part of the curve is drawn. A curve that leaves them is cut off at the frame. Two things help when the curve does not stay where the author expected (D-070):
+A plot's ranges say what part of the curve is drawn. A curve that leaves them is cut off at the frame. Two things help when the curve does not stay where the author expected:
 
 - `follow: y` lets the `y` axis grow to hold everything the view draws; `follow: x` does the same for `x`, and `follow: (x, y)` for both. The declared range is where the axis starts and the least it shows: it grows, it never shrinks.
 - `window: 10 s` suits long runs: once the data passes the declared `x` range, the axis shows the latest 10 s and moves along with the data, like a heart monitor. Growing with `follow: x` instead keeps the whole run visible, squeezed into the same width.
@@ -489,7 +489,7 @@ run drift of Puck with Rink {
 
 ## When a run fails in a lab
 
-A run can fail: a `constraint` with `policy stop` is broken, an event cascade does not end, a value becomes undefined. A test then stops and reports it. A lab **pauses** instead (RC-10.3): the run holds at the last valid state, just before the failure, and the player says what failed and when. The learner can look at it, then change something at that instant (a slider, a drag, a button) and the run continues from there with the change, or press Reset.
+A run can fail: a `constraint` with `policy stop` is broken, an event cascade does not end, a value becomes undefined. A test then stops and reports it. A lab **pauses** instead: the run holds at the last valid state, just before the failure, and the player says what failed and when. The learner can look at it, then change something at that instant (a slider, a drag, a button) and the run continues from there with the change, or press Reset.
 
 ```prismal
 model Rise {
@@ -505,7 +505,7 @@ In a lab of `Rise` with a slider for `limit`, the run pauses at 2 s with "constr
 ## Text and titles
 
 **Goal.** Tell the learner what they are looking at: a title for the page, captions for the views, a sentence that reports a value, and a message that appears only when something has happened.
-**How it is built.** `title "..."` names the presentation; `title("...")` inside a view or panel replaces its caption; `text("...")` writes a sentence, with any value of the model in braces; `when:` on any representation shows it only while a condition holds (D-076).
+**How it is built.** `title "..."` names the presentation; `title("...")` inside a view or panel replaces its caption; `text("...")` writes a sentence, with any value of the model in braces; `when:` on any representation shows it only while a condition holds.
 
 ```text
 space Plane = euclidean(2)
@@ -550,7 +550,7 @@ run drop of Dropped with DropLab {
 ```
 
 - Inside the quotes, `{...}` holds any value of the model: a binding, a component (`{pos.y}`), a calculation (`{|vel|}`). It is shown with its unit, in the binding's display unit when it has one. To write a brace itself, double it: `{{` and `}}`.
-- `{pos.y:.1}` shows the value with one decimal (`8.3 m`), `{angle:.0}` with none (`45 deg`). Without it a value has up to six significant digits, more than a learner usually needs. Powers in units are written as people read them: an area shows as `25 m²`, an acceleration as `9.81 m/s²` (D-079).
+- `{pos.y:.1}` shows the value with one decimal (`8.3 m`), `{angle:.0}` with none (`45 deg`). Without it a value has up to six significant digits, more than a learner usually needs. Powers in units are written as people read them: an area shows as `25 m²`, an acceleration as `9.81 m/s²`.
 - `at: P` places a text in a spatial view (`P` a point) or a plot (`P` a pair of axis values); without it, the text is a line in the panel or below the view. A placed text starts at `P`; `align: center` centres it on `P` and `align: right` ends it there (a label under a point, a note left of a wall).
 - `when: c` works on every representation, not only text: `marker(pos, when: airborne)` hides the marker once the ball has landed, `slider(h, ..., when: not airborne)` offers the slider only then. The condition is read at the instant shown.
 - There is no text that is chosen by a condition inside one sentence; write one text per case, each with its `when`, as above.
@@ -558,7 +558,7 @@ run drop of Dropped with DropLab {
 ## Words for values
 
 **Goal.** Let a learner read the state of a system in words, not only in numbers: "Comfortable" rather than "293 K", a slider that runs from "cold" to "hot", a share shown as "40 %".
-**How it is built.** `ends:` on a slider names its two ends; the display unit `%` shows a share as a percentage; and one `text` per band, each with its own `when:`, tells a value in words (D-076, D-077).
+**How it is built.** `ends:` on a slider names its two ends; the display unit `%` shows a share as a percentage; and one `text` per band, each with its own `when:`, tells a value in words.
 
 ```text
 model Room {

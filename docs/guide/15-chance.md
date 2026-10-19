@@ -116,7 +116,7 @@ presentation ManyRuns for Sample2 {
 - An ensemble source is written `value at instant over count runs`, inside a representation's parentheses or after an observation's `=`. Run `k` uses the seed of the run shown plus `k - 1`, so the first run is the one shown. Each run stops at the instant, so a long lab stays quick.
 - The histogram's `x` axis is the value, its `y` axis how many runs fall in each bin; `bins: 16` divides the `x` range into 16 equal bins. Its text alternative gives the mean and the deviation.
 - When the learner moves the slider, the histogram is computed again for the new rate; `reseed` moves it to 200 other runs.
-- A slider that sets a starting value (how many nuclei there are, `n0`) changes nothing in a run under way: the count was set at the start. `button(restart)` starts a new run from `t0` with the parameters as the learner has set them; `reseed` does the same with the next seed; `reset` goes back to the presentation's own starting values. In a lesson, the timeline action `restart` does the same after an `intervene`, and an explore beat may offer `button(restart)` and `button(reseed)` to the learner (D-088; `examples/reaction.md`).
+- A slider that sets a starting value (how many nuclei there are, `n0`) changes nothing in a run under way: the count was set at the start. `button(restart)` starts a new run from `t0` with the parameters as the learner has set them; `reseed` does the same with the next seed; `reset` goes back to the presentation's own starting values. In a lesson, the timeline action `restart` does the same after an `intervene`, and an explore beat may offer `button(restart)` and `button(reseed)` to the learner (`examples/reaction.md`).
 
 ```cases
 run spread of Sample2 with ManyRuns {
@@ -215,7 +215,7 @@ run wanders of Walk with WalkLab {
 }
 ```
 
-After 100 steps of deviation `0.5 m`, `pos.x` has a deviation of `0.5 m * sqrt(100) = 5 m`; the range is five deviations wide. The draws of one event are independent of each other and of other events (RC-13.5).
+After 100 steps of deviation `0.5 m`, `pos.x` has a deviation of `0.5 m * sqrt(100) = 5 m`; the range is five deviations wide. The draws of one event are independent of each other and of other events.
 
 **Distributions.** Each takes its arguments in parentheses and is written in an event's condition or operations only.
 
@@ -271,7 +271,7 @@ run settles of Isomer with IsomerLab {
 }
 ```
 
-At equilibrium `b` is near `300 * 2 / 3 = 200`, with a deviation of about 8. Each event changes both counts, so the rates of both change at every event; the runtime keeps one clock per event, which is exact however the rates change (D-083).
+At equilibrium `b` is near `300 * 2 / 3 = 200`, with a deviation of about 8. Each event changes both counts, so the rates of both change at every event; the runtime keeps one clock per event, which is exact however the rates change.
 
 ## Rates that change between events
 
@@ -315,7 +315,7 @@ run thins_out of Counter with CounterLab {
 }
 ```
 
-- The rate reads `x`, which flows, so it is different at every instant. The event happens when the rate, added up over time, reaches a random amount drawn from the event's stream; the runtime adds it up along the solver's steps (RC-13.8a). The result is exact up to the solver's accuracy, not a sampling on a grid.
+- The rate reads `x`, which flows, so it is different at every instant. The event happens when the rate, added up over time, reaches a random amount drawn from the event's stream; the runtime adds it up along the solver's steps. The result is exact up to the solver's accuracy, not a sampling on a grid.
 - Over 10 s the expected number of clicks is `r0 d0^2 (1/x(0) - 1/x(10 s)) / v = 40 * (1 - 1/6) / 0.5`, about 67, with a deviation of about 8.
 - A rate that reads `t` works the same way: `random(k * elapsed / tau)` is an ageing part that fails more often the older it is.
 - A rate that turns negative stops the run at the instant it does: write rates that stay at or above 0.
@@ -412,7 +412,7 @@ run einstein of Pollen with PollenLab {
 
 - `noise` has the unit `1/s^0.5`: white noise is the rate of change of a random walk whose spread grows with the square root of time. So `sqrt(2 * D) * noise` is a velocity when `D` is an area per time, and the flow checks like any other.
 - A flow is **linear** in each noise: `der(x) = a + b * noise`, with `a` and `b` free of noise (MK-E30). `a` is the drift, the push that does not average out; `b` scales the noise. Several noises are added as several terms. `noise` is written only in flows (MK-E29).
-- The runtime steps such a model by the Euler-Maruyama method, every millisecond unless the case gives `h` in `config` (RC-13.9). Averages over many runs, like `mean(spread)`, are then accurate to about the step.
+- The runtime steps such a model by the Euler-Maruyama method, every millisecond unless the case gives `h` in `config`. Averages over many runs, like `mean(spread)`, are then accurate to about the step.
 - A drift and a noise together give much of statistical physics: `der(v) = -v / tau + s * sqrt(2 / tau) * noise` is a velocity relaxing to a random spread `s` (Langevin's equation, Ornstein-Uhlenbeck), and `der(S) = mu * S + sigma * S * noise` is geometric Brownian motion, where `sigma` has the unit `1/s^0.5`. The noise is read in Itô's sense: the coefficient takes the value at the start of each step.
 - Events see noisy paths: `event hit on falling(x)` finds the first instant a noisy `x` reaches 0.
 
@@ -479,3 +479,5 @@ run measured of Drop with DropLab {
 1. Change the population's rate so that the half-life is 20 s. What is `lambda`?
 2. Write a die: an event every second that sets `face` to `integer(1, 6)`, and a test that `face` is in `[1, 6]`.
 3. Make the walker of the random walk step only with probability one half: add `if bernoulli(0.5)` to its event.
+
+Worked solutions to these exercises are in [chapter 11](11-solutions.md#chapter-15).

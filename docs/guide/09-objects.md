@@ -1,6 +1,6 @@
 # 9. Systems of objects
 
-Many systems are made of several things of one kind: balls in a box, planets around a star, masses on a chain of springs. This chapter declares a kind of thing once, as an **object type**, and puts objects of that type in a model: one at a time, or as a **collection** of members (D-055).
+Many systems are made of several things of one kind: balls in a box, planets around a star, masses on a chain of springs. This chapter declares a kind of thing once, as an **object type**, and puts objects of that type in a model: one at a time, or as a **collection** of members.
 
 > **In plain words.**
 > - An **object type** is a description of one kind of thing, written once: what a ball has (a position, a speed) and how it behaves. Each **object** made from it is one actual ball.
@@ -223,7 +223,7 @@ The tolerance is a relative `2e-12`: the sums are computed in floating point, an
 
 ## Members that come and go
 
-The collections so far keep their members for the whole run. A fountain does not: it throws a drop every half second, and each drop is gone when it falls back. A collection whose membership changes declares the most members it makes in one run, with `max` (D-057):
+The collections so far keep their members for the whole run. A fountain does not: it throws a drop every half second, and each drop is gone when it falls back. A collection whose membership changes declares the most members it makes in one run, with `max`:
 
 **Goal.** A fountain that throws a drop every half second, each drop gone when it lands.
 **How it is built.** A collection with a capacity, `Drop[max ...]`; a time event `create`s a drop; an event repeated per drop `destroy`s it at the ground.
@@ -307,11 +307,11 @@ run early of Fountain with Spray {
 
 The capacity is part of the model: it says how long the fountain can run. 40 drops, one every half second, last until 19.5 s; a run past 20 s stops there with the diagnostic that `drops.capacity` is exceeded. Choose a capacity that covers the longest run the presentation shows.
 
-When no limit belongs in the model, say so: `drops: Drop[max inf]` (D-066). Prismal then chooses room for the members itself and makes more whenever a run needs it, in tests, sessions and lessons alike, so a fountain left running in a lab never stops. A run is the same as with the room it ended up with written as the capacity, and runs again identically. The room grows by elaborating the model again, so a lab with thousands of members made over a long session pays for it with a pause each time the room doubles; a capacity written in the model costs nothing at run time.
+When no limit belongs in the model, say so: `drops: Drop[max inf]`. Prismal then chooses room for the members itself and makes more whenever a run needs it, in tests, sessions and lessons alike, so a fountain left running in a lab never stops. A run is the same as with the room it ended up with written as the capacity, and runs again identically. The room grows by elaborating the model again, so a lab with thousands of members made over a long session pays for it with a pause each time the room doubles; a capacity written in the model costs nothing at run time.
 
 ## Relations between members
 
-A spring joins two balls; a thread ties one bead to another. The spring is not a ball, and it is not a line drawn between them: it is a **relation**, with its own values (a stiffness, a rest length) and two **endpoints**, each a member of a collection (MK-8.5, D-058).
+A spring joins two balls; a thread ties one bead to another. The spring is not a ball, and it is not a line drawn between them: it is a **relation**, with its own values (a stiffness, a rest length) and two **endpoints**, each a member of a collection.
 
 **Goal.** Two balls joined by a spring that can be cut and joined again.
 **How it is built.** A `relation Spring(a in balls, b in balls)` with its stiffness and rest length; a relation set `springs`; the model's flow adds each spring's pull at its two ends; requested events `disconnect` and `connect` it.
@@ -461,7 +461,7 @@ A relation that is not made yet, or already disconnected, has no values: `spring
 
 ### Relations without a direction
 
-The spring above has a direction: its pull is towards `b` at its `a` end and the other way at its `b` end, so the model sums the pulls at each end separately. A spring has no real direction, though, and nothing should change if its endpoints are swapped. An **undirected** relation says so (D-064):
+The spring above has a direction: its pull is towards `b` at its `a` end and the other way at its `b` end, so the model sums the pulls at each end separately. A spring has no real direction, though, and nothing should change if its endpoints are swapped. An **undirected** relation says so:
 
 **Goal.** A chain of balls linked by springs whose two ends are alike.
 **How it is built.** An `undirected relation Link`; each ball's pull is summed over the links that have it, `s.has(o)`, towards the ball at the other end, `s.other(o)`.
@@ -536,7 +536,7 @@ run symmetric of Chain with ChainView {
 
 ### Relations across containers
 
-An endpoint's collection may belong to a contained object: a bond between atoms of two different cells is held by the model that contains both cells (D-065). The collection is named by its path, `left.atoms`, and so are its members and loops:
+An endpoint's collection may belong to a contained object: a bond between atoms of two different cells is held by the model that contains both cells. The collection is named by its path, `left.atoms`, and so are its members and loops:
 
 **Goal.** Two cells of atoms, with bonds from an atom of one cell to an atom of the other.
 **How it is built.** An object `Cell` with its own collection of atoms; the model's relation has endpoints in `left.atoms` and `right.atoms`, paths through the contained cells.
@@ -621,7 +621,7 @@ run bonded of Cells with Bonds {
 ### Making members of a contained object
 
 **Goal.** A model adds atoms to one of its cells from its own events, without the cell knowing why.
-**How it is built.** The cell holds the collection (`atoms: Atom[1, max 4]`); the model's event writes `create left.atoms { ... }`, naming the collection by its path through the contained object `left` (D-074).
+**How it is built.** The cell holds the collection (`atoms: Atom[1, max 4]`); the model's event writes `create left.atoms { ... }`, naming the collection by its path through the contained object `left`.
 
 ```text
 space Plane = euclidean(2)
@@ -663,12 +663,12 @@ run fed of Feed with FeedChecks {
 
 - The starting values (`pos = ...`) are read in the scope where `create` is written, the model's: `count(left.atoms)` is the count before the atom is made.
 - The member is made where the collection is held: it is `left.atoms[3]`, with the cell's capacity.
-- A cell's own event and the model's event creating atoms of one collection at the same instant conflict, as two creates from two events always do (MK-16.6): the run stops, or pauses in a lab.
-- `connect` takes paths the same way. In v0 relation sets are held by the model that declares the relation type (D-065), so its paths name sets of the model itself.
+- A cell's own event and the model's event creating atoms of one collection at the same instant conflict, as two creates from two events always do: the run stops, or pauses in a lab.
+- `connect` takes paths the same way. In v0 relation sets are held by the model that declares the relation type, so its paths name sets of the model itself.
 
 ## Labs with members
 
-A lab with many objects lets the learner act on one of them: drag this planet, remove that one. The learner's action has to say **which** member it is about. An event can receive a member as its payload (D-059):
+A lab with many objects lets the learner act on one of them: drag this planet, remove that one. The learner's action has to say **which** member it is about. An event can receive a member as its payload:
 
 **Goal.** A lab of planets: the learner drags a planet, clicks one to remove it, adds one with a button or a click.
 **How it is built.** Events take a planet as their payload (`on request(p in planets)`); representations repeated per planet carry a drag that proposes its position and a click that requests the removal.
@@ -718,7 +718,7 @@ model Orbits in Plane {
 - The event happens only for a planet that is alive. A request for a planet already removed, or not made yet, is refused with the reason (`planets[2]` is not alive).
 - `add` takes no payload: it makes the next planet, on a circular orbit of radius 2 m.
 - `place` takes a point and makes a planet there, on a circular orbit through it: the velocity is the direction from the sun turned a quarter turn, `(-(q - origin).y, (q - origin).x)`, at the circular speed. Its condition keeps new planets away from the sun.
-- `pos` is `intervenable`, so the learner may move a planet (D-023).
+- `pos` is `intervenable`, so the learner may move a planet.
 
 An event may take a member and a value together: `event kick on request(p in planets, j: Vector<Momentum>) { set p.vel = p.vel + j / 1 kg }` is requested as `kick(planets[1], (0 kg*m/s, 1 kg*m/s))`. `emit E(p)` passes a member on to the events that follow `E`, which receive it as `on E(q in planets)`.
 
@@ -744,7 +744,7 @@ presentation Sky for Orbits {
 - `on drag as q { propose p.pos = q }` in a representation repeated per member moves that member: dragging `planet[2]` proposes a new position for `planets[2]`. The binding must be intervenable in the object type.
 - `on click request remove(p)` requests `remove` with the planet clicked. A click is a press and release that does not move; moving further makes it a drag. A click only requests an event: what happens is written in the model.
 - With the keyboard, Tab gives focus to each planet in turn; arrow keys move it and Enter or space activates its click. The text alternative says so: `planet[2] ..., activate: remove`.
-- `on click as q request place(q)`, written in the view itself, acts on a click where no representation takes it: an empty point of the sky. `q` is the point clicked, in the view's space, and the view requests `place` with it (D-060). A click on a planet removes the planet; a click beside it places a new one. When the presentation also permits `pan`, a press that moves pans the view and a press that does not move clicks.
+- `on click as q request place(q)`, written in the view itself, acts on a click where no representation takes it: an empty point of the sky. `q` is the point clicked, in the view's space, and the view requests `place` with it. A click on a planet removes the planet; a click beside it places a new one. When the presentation also permits `pan`, a press that moves pans the view and a press that does not move clicks.
 - The button adds a planet. A host that has no pointer requests the same events with the member named: `remove` with payload `"planets[2]"`.
 
 | Form | Does |

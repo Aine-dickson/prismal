@@ -3,8 +3,8 @@
 A model can state facts that must hold (constraints) and laws it expects to satisfy (equations). A program can state what a run must produce (cases with expectations). This chapter covers all three. Tests are how a program is shown to be right: a case with an independently computed expected value is a claim that anyone can rerun.
 
 > **In plain words.**
-> - A **constraint** is a rule that must always hold, like "the water level is never negative". Prismal checks it while the model runs, and the constraint says what happens when it breaks: refuse the change (`reject`), note it and go on (`report`), or end the run (`stop`).
-> - An **equation** here is a law the model is expected to obey, like "force equals mass times acceleration". It is shown to the learner and can be checked; it does not compute anything by itself.
+> - A **constraint** is a rule that must always hold, like "the water level is never negative". In this chapter Prismal checks it while the model runs, and the constraint says what happens when it breaks: refuse the change (`reject`), note it and go on (`report`), or end the run (`stop`). A constraint can also be **enforced**: the runtime keeps it true itself ([chapter 18](18-constraints.md)).
+> - An **equation** in this chapter is a law the model is expected to obey, like "force equals mass times acceleration". It is shown to the learner and can be checked against the values the model computes. Equations can also be **solved**, to find values the model does not compute in one direction ([chapter 17](17-solving-equations.md)).
 > - A **case** (`run ... { ... }`) is a test: run the model in a stated way and compare what comes out with values worked out separately. **Independently computed** means from a formula or by hand, not by copying what the program printed: a test that copies the program's own output can never fail, so it proves nothing.
 > - A **tolerance** (`within 1e-6 m`) is how close the result must be. `1e-6` is scientific notation for 0.000001.
 
@@ -14,7 +14,7 @@ A model can state facts that must hold (constraints) and laws it expects to sati
 constraint rod: |bob - pivot| == L within 1e-9 m policy report
 ```
 
-A **constraint** is a condition on the model's values, checked by the runtime; it is never enforced by moving values (D-020). Its **policy** says what a violation does:
+A **constraint** is a condition on the model's values. Its **policy** says what the runtime does with it. The three policies of this chapter check the condition and act when it fails; they never move values to make it hold:
 
 | Policy | A violation |
 |---|---|
@@ -24,6 +24,8 @@ A **constraint** is a condition on the model's values, checked by the runtime; i
 
 `within tol` gives an equality a tolerance; it applies to `==` only. A parameter's range, `in [0, 1)` or `where x > 0`, is a `reject` constraint on that parameter.
 
+A fourth policy, `enforce`, keeps the condition true: the runtime moves the state onto it and computes the force that holds it there, as a rod holds a pendulum's bob on its circle. It needs forces and unknowns, so it has a chapter of its own: [chapter 18, Constrained motion](18-constraints.md).
+
 ## Equations
 
 ```prismal
@@ -31,7 +33,15 @@ equation period_law: T == 2π * sqrt(m / k)
 equation conservation: energy == 0.5 * k * x0^2 checked within 2e-5 J
 ```
 
-An **equation** states a relation between the model's values. It does not compute anything (models are causal in v1, D-007): it is shown in presentations and, with `checked within tol`, checked by the runtime at every step, with a diagnostic when it fails. `der(x)` may appear in an equation, to check a law of motion against the flows.
+An **equation** states a relation between the model's values. An equation whose values are all computed elsewhere (by parameters, flows and derived definitions, as in this chapter) computes nothing itself: it is shown in presentations and, with `checked within tol`, checked by the runtime at every step, with a diagnostic when it fails. `der(x)` may appear in such an equation, to check a law of motion against the flows.
+
+An equation can do more. When it reads an **unknown**, a value declared without a formula, the runtime **solves** it for that value; when it reads `der(x)` for a state that has no flow, it gives that state's rate. Both are taught in [chapter 17, Solving equations](17-solving-equations.md). The table below sums up the three roles:
+
+| An equation that reads | Does |
+|---|---|
+| only values computed elsewhere | states a law; shown, and checked with `checked within tol` |
+| an unknown (`unknown { I: Current }`) | is solved for the unknown at every instant |
+| `der(x)`, where no flow gives `x`'s rate | gives `x`'s rate |
 
 ## A program
 

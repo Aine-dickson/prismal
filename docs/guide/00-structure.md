@@ -2,6 +2,8 @@
 
 A Prismal program is a set of nested blocks, and each block accepts only certain things. This page is the map: one complete program in which every block is labelled with what it is for, then a table of what each block holds. Keep it open while reading the other chapters. When an example is hard to follow, find each line's block here and the question that block answers.
 
+**For** any reader, at any point: this is a lookup page, not a lesson. It shows more blocks than the first chapters use; each is taught in a chapter of the [learning path](README.md#the-learning-path). Read [Start here](00-start-here.md) or [the tour](00-tour.md) first for the ideas behind them.
+
 ## Three questions, three places
 
 Every program answers up to three questions, each in its own place:
@@ -44,7 +46,7 @@ model Drop in Plane {
   // DERIVED: values computed from the others, always up to date.
   derived { height: Length = pos.y }
 
-  // FLOW: how fast each state value changes. One line per state value.
+  // FLOW: how fast each state value changes. Here one line per state value; several processes may each add to a rate with += (chapter 4).
   flow {
     der(pos) = if resting then 0 else vel               // position changes at the velocity
     der(vel) = if resting then 0 else (0 m/s^2, -g)     // velocity changes by gravity

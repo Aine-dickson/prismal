@@ -1,6 +1,6 @@
 # 21. Algorithms
 
-Every model so far changed by flows and by events whose operations all happen at once. Some things worth learning are **procedures**: sorting a list, searching it, finding a greatest common divisor. A procedure is a sequence of instructions with loops and choices, and what a learner needs to see is each step of it. This chapter writes procedures as **algorithms**: statements run in order, paused after each step so a view can show it (D-101).
+Every model so far changed by flows and by events whose operations all happen at once. Some things worth learning are **procedures**: sorting a list, searching it, finding a greatest common divisor. A procedure is a sequence of instructions with loops and choices, and what a learner needs to see is each step of it. This chapter writes procedures as **algorithms**: statements run in order, paused after each step so a view can show it.
 
 > **In plain words.**
 > - An **algorithm** is a list of instructions carried out one after another, like a recipe. `while` repeats instructions as long as something holds; `for` repeats them for each number in a range; `if` chooses.
@@ -264,3 +264,5 @@ model Wrong {
 2. Give the sort lab a toggle and a button like the search's, so a learner can step the comparisons by hand.
 3. Write **insertion sort** with a `while` that moves a value left while its left neighbour is larger. Which list makes it compare the most?
 4. Euclid's algorithm with subtraction instead of `mod`: replace the larger number by the difference until they are equal. How many steps does it take for 1071 and 462?
+
+Worked solutions to these exercises are in [chapter 11](11-solutions.md#chapter-21).

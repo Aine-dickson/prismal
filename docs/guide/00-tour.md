@@ -2,6 +2,8 @@
 
 This page builds one program in four steps: a model of a thrown ball, a test that checks it, a lab where a learner can change it, and a narrated lesson that can be exported as a video. Each step adds to the program before it. The chapters that follow explain every form used here in detail; this page shows what they are for.
 
+**For** readers who know what a rate of change is and want to see what Prismal does before learning it form by form. New to simulation? Read [Start here](00-start-here.md) first; its ideas are assumed here.
+
 You need the repository built (`cargo test` passes, see the [README](../../README.md)). Save the blocks of each step one after another in a file, `throw.prismal`, and run its cases with:
 
 ```sh

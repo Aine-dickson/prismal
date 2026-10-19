@@ -1,6 +1,6 @@
 # 5. Events and Modes
 
-Flows describe smooth change. **Events** describe sudden change: a ball bounces, a pump switches off, a counter ticks. An event has a **trigger** (when it happens) and a **handler** (what it does). **Discrete state** holds values that change only at events, such as a mode (`pumping`) or a count.
+Flows describe smooth change. **Events** describe sudden change: a ball bounces, a pump switches off, a counter ticks. An event has a **trigger** (when it happens) and, usually, a **handler** (what it does). A handler is optional: an event without one changes nothing and marks an instant, so that observations, tests and other events can refer to it (`event landed on falling(h)`, then `elapsed on landed`). **Discrete state** holds values that change only at events, such as a mode (`pumping`) or a count.
 
 > **In plain words.**
 > - An **event** is a moment when something happens all at once: a switch flips, a ball hits the floor.
@@ -45,8 +45,8 @@ model Tank {
 - `discrete { pumping: Boolean = true }` is **discrete state**: constant between events, changed only by handlers. A Boolean discrete variable is a **mode**; flows can depend on it with `if ... then ... else`.
 - `event full on rising(level - high) { ... }`: the trigger `rising(g)` happens when `g` crosses zero upward, here when `level` rises through `high`. `falling(g)` is a downward crossing, `crossing(g)` either way. The runtime locates the crossing instant precisely, not at the next step.
 - The handler `{ set pumping = false }` is a list of **operations**. `set` replaces a value. All operations of a handler read the values from before the event, and commit together.
-- `event alarm on full` is triggered by another event: it happens right after `full`, at the same time, in the next **microstep** (D-041). A microstep is a step in the order of things that happen at one instant: the clock does not move, but `alarm` still comes after `full`. A handler can also signal an event explicitly with `emit E`. Events that cause events form a cascade at one instant; the runtime limits its length.
-- A continuous guard is always a crossing. `level >= high` would be a level condition, which cannot trigger an event by itself (D-004): a level condition may only enable a trigger, as in `event full on rising(level - high) if pumping { ... }`.
+- `event alarm on full` is triggered by another event: it happens right after `full`, at the same time, in the next **microstep**. A microstep is a step in the order of things that happen at one instant: the clock does not move, but `alarm` still comes after `full`. A handler can also signal an event explicitly with `emit E`. Events that cause events form a cascade at one instant; the runtime limits its length.
+- A continuous guard is always a crossing. `level >= high` would be a level condition, which cannot trigger an event by itself: a level condition may only enable a trigger, as in `event full on rising(level - high) if pumping { ... }`.
 
 With the default values the level rises at `0.01 m/s` from `0.2 m`, reaches `1 m` at 80 s, falls at `0.01 m/s` to `0.5 m` at 130 s, rises again to `1 m` at 180 s, and so on.
 
@@ -199,13 +199,13 @@ model Ball {
 }
 ```
 
-The tank's events are not repeating in this sense: after `full` switches the pump off the level falls, away from `high`. The compiler follows the flows with `pumping` set to `false` to see this (D-038).
+The tank's events are not repeating in this sense: after `full` switches the pump off the level falls, away from `high`. The compiler follows the flows with `pumping` set to `false` to see this.
 
 RP-03 in the reference programs is the complete bouncing ball, with its expected bounce times and the instant of the Zeno limit.
 
 ## Modes with more than two values
 
-A Boolean mode has two values. When a system has more, declare an **enumeration**: a type whose values are a short list of names you choose, such as `rising`, `top`, `falling` (MK-2.2, D-049).
+A Boolean mode has two values. When a system has more, declare an **enumeration**: a type whose values are a short list of names you choose, such as `rising`, `top`, `falling`.
 
 **Goal.** A ball thrown straight up whose stage (climbing, at the top, landed) is named, shown and used by the motion.
 **How it is built.** An `enum` lists the stages; a `discrete` value of it is switched by events at the top and at the ground; `match` gives a value for each stage.
@@ -274,7 +274,7 @@ run toss of Toss with TossLab {
 **Goal.** Several events that happen at the same instant each add to a score, without one overwriting the other.
 **How it is built.** The score is `discrete` state declared with `combine sum`; each event's handler uses `contribute total += ...` instead of `set`.
 
-Two `set` operations on one value at the same instant are a conflict, even when they write the same value: the run cannot know which should win (MK-16.4). `contribute` says that the values are meant to be combined. The binding declares how, with `combine`: `sum` adds, `product` multiplies, `min` and `max` keep the smallest or largest, `any` and `all` combine Booleans. The contributions combine with the value before the instant, so `contribute total += 1` adds one, whatever else happens at that instant (MK-14.9, D-073).
+Two `set` operations on one value at the same instant are a conflict, even when they write the same value: the run cannot know which should win. `contribute` says that the values are meant to be combined. The binding declares how, with `combine`: `sum` adds, `product` multiplies, `min` and `max` keep the smallest or largest, `any` and `all` combine Booleans. The contributions combine with the value before the instant, so `contribute total += 1` adds one, whatever else happens at that instant.
 
 ```text
 model Score {
@@ -322,7 +322,7 @@ model Tally {
 
 ## Events that carry values, and values from outside
 
-An event can carry a value, its **payload** (MK-15.1, D-050): a kick carries how hard it is, a click carries where it was. And a model can receive values from its environment while it runs: a sensor, a game controller, a host application. These are **inputs** (RC-11.6, D-051).
+An event can carry a value, its **payload**: a kick carries how hard it is, a click carries where it was. And a model can receive values from its environment while it runs: a sensor, a game controller, a host application. These are **inputs**.
 
 **Goal.** A cart moved by kicks of chosen strength and by a thrust from outside the model (a slider of a host application, a game controller).
 **How it is built.** An event `on request(j: Momentum)` receives the kick's strength as its payload; `input { thrust: Force }` is read by the flow and changed by the run's `input` block or the host's `set_input`.
@@ -387,7 +387,7 @@ run push of Cart with CartChecks {
 
 A host supplies inputs through its interface (`set_input`, `docs/spec/05-host-interface.md`), at the instant it shows.
 
-A learner requests an event with a payload by pressing a button that gives the value: the event's name with the value after it, as in a timeline's `request` (D-072).
+A learner requests an event with a payload by pressing a button that gives the value: the event's name with the value after it, as in a timeline's `request`.
 
 ```text
 presentation CartLab for Cart {

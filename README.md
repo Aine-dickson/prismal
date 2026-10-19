@@ -4,9 +4,9 @@ Prismal is a modeling language for mathematics, science and interactive systems.
 
 One model, many representations: the same model can be a lab in the browser, a narrated lesson, a video, and a set of tests.
 
-![A frame of the tour's lesson: a ball's path traced over the plane, the ball highlighted at its first bounce, and the caption "A bounce keeps 80 percent of the upward speed."](docs/images/tour-lesson.png)
+![The tour's narrated lesson playing: a thrown ball traces its path over the plane, is highlighted as it bounces, and the caption reads "A bounce keeps 80 percent of the upward speed."](docs/images/tour-lesson.gif)
 
-The language is young. Its syntax is at version 1 (D-081): programs written for version 1 keep compiling, with the same meaning, while the language grows.
+The language is young. Its syntax is at version 1: programs written for version 1 keep compiling, with the same meaning, while the language grows.
 
 ## What a program looks like
 
@@ -41,7 +41,7 @@ run drop of Fall with Watch {
 }
 ```
 
-- `model` says what exists: parameters, state, how the state changes (`flow`), and events. It never says how anything is drawn.
+- `model` says what exists: parameters, state, how the state changes (`flow`), and events. It never says how anything is drawn. The event `landed` has no handler: it changes nothing and only marks the instant the height falls through zero, so that the presentation can record it.
 - `presentation` says what to observe or show. Here it records the time of landing.
 - `run` is a test case: it runs the model and checks the result against `sqrt(2 h0 / g)`.
 
@@ -99,7 +99,7 @@ cargo run --release -p prismal-media -- rp08 ProjectileLesson lesson.png --at 5
 cargo run --release -p prismal-media -- rp08 ProjectileLesson lesson.mp4 --fps 30 --speech system
 ```
 
-The first argument is a program file or a built-in example; the second names a presentation. Videos need [ffmpeg](https://ffmpeg.org) (or `--encoder PATH`); without it, give a folder name instead of `lesson.mp4` to get the frames as images. The picture above is `cargo run --release -p prismal-media -- docs/guide/00-tour.md Story tour-lesson.png --at 5 --scale 2`.
+The first argument is a program file or a built-in example; the second names a presentation. Videos need [ffmpeg](https://ffmpeg.org) (or `--encoder PATH`); without it, give a folder name instead of `lesson.mp4` to get the frames as images. The animation at the top of this page is the tour's lesson, made with `cargo run --release -p prismal-media -- docs/guide/00-tour.md Story tour-lesson.gif --fps 12 --scale 2`.
 
 ## Learn Prismal
 
